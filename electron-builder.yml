@@ -8,6 +8,11 @@ protocols:
 asar: true
 artifactName: ${productName}-${version}-${arch}.${ext}
 electronUpdaterCompatibility: ">=2.16"
+# FORK: explicitly disable auto-update.
+# (Deleting the publish block is NOT enough: electron-builder re-derives the
+# GitHub publish config from package.json `repository`. `null` disables it.)
+publish: null
+
 electronFuses:
   resetAdHocDarwinSignature: true
   runAsNode: false
@@ -18,10 +23,6 @@ electronFuses:
   onlyLoadAppFromAsar: true
   loadBrowserProcessSpecificV8Snapshot: false
   grantFileProtocolExtraPrivileges: false
-publish:
-  provider: github
-  owner: nightly-labs
-  repo: openbot
 files:
   - out/**/*
   - package.json
