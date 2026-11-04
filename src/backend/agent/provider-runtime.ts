@@ -33,7 +33,7 @@ import { createOpenBotLogger, redactText } from "@openbot/logging";
 import { classifyUserError } from "@openbot/user-errors";
 import { Deferred, Effect, Exit, Fiber, Result, Schema, Scope, Semaphore } from "effect";
 import { isOpenCodeInternalFailure } from "./../acp-flavor-opencode";
-import { googleSignInByOpenBot, startAcpAuthentication } from "./../acp-sign-in";
+import { startAcpAuthentication } from "./../acp-sign-in";
 import { type AgentClient, AgentProcessExitError, type AgentProvider } from "./../agent-client";
 import { CodexAppServerClient } from "./../app-server-client";
 import {
@@ -46,8 +46,6 @@ import {
 } from "./../cli";
 import { readCursorUsage } from "./../cursor-usage";
 import { causeHelpers } from "../effect-boundary";
-import { isPythonKimiCli, type SignInRegion } from "../kimi-region";
-import { readKimiUsage } from "../kimi-usage";
 import { McpHandoffLog } from "./../mcp-handoff-log";
 import { providerMcpServerName } from "./../mcp-provider-shapes";
 import { customProvidersOn, openCodeSignInMessage } from "./../opencode-config";
@@ -90,7 +88,6 @@ import { defaultUsageModel, ProviderAccountFailed, ProviderAccounts } from "./pr
 import {
   createAcpRequestEchoReader,
   isAcpHandlerDiagnostic,
-  isGitSpawnDiagnostic,
   isGlogBelowErrorDiagnostic,
   isIgnoredConfigDiagnostic,
   isMcpSubsystemDiagnostic,
@@ -138,12 +135,12 @@ const USAGE_RESET_PROVIDERS: ReadonlySet<AgentProvider> = new Set(["codex"]);
  */
 const LONG_START_TIMEOUT_MS = 180_000;
 /** How long a provider CLI stays running with nothing to do before its process is stopped. */
-const PROVIDER_IDLE_RELEASE_MS = 10 * 60_000;
+const PROVIDER_IDLE_RELEASE_MS = 30_000_000;
 /**
  * The same for a provider no agent is set to. Every signed-in provider starts at launch to read its
  * models, and an unused OpenCode process alone held about 300 MB for the full idle time.
  */
-const PROVIDER_UNASSIGNED_RELEASE_MS = 60_000;
+const PROVIDER_UNASSIGNED_RELEASE_MS = 30_000_000;
 const PROVIDER_IDLE_CHECK_MS = 60_000;
 /** How often the host reads a signed-out provider's sign-in file. A read is one `stat`. */
 const SIGN_IN_FILE_POLL_MS = 2_000;
@@ -187,7 +184,6 @@ const SPAWN_ENVIRONMENT_PROVIDERS: readonly AgentProvider[] = [
   "cursor",
   "cline",
   "kimi",
-  "devin",
   "hermes",
   "acp",
 ];
@@ -565,10 +561,7 @@ export class ProviderRuntime implements ProviderPort {
           scope: () => this.#scope,
           cli: (provider) =>
             this.#clients.has(provider) || this.#released.has(provider) ? this.#cli.get(provider) : undefined,
-          defaultLogin: (provider) => {
-            const account = this.#accounts.get(provider);
-            return account ? { email: account.email ?? null, organization: account.organization ?? null } : null;
-          },
+          defaultEmail: (provider) => this.#accounts.get(provider)?.email ?? null,
           apiKey: (provider) => this.#credentials.apiKey(provider),
           defaultUsesApiKey: (provider) => this.ownSignInUsesKey(provider),
           signInTemp: (provider) => {
@@ -980,16 +973,6 @@ export class ProviderRuntime implements ProviderPort {
           } else if (provider === "cursor") {
             // Cursor's usage is two HTTPS requests with the CLI's token, so do not start the CLI for it.
             usage = normalizeAccountUsage(yield* readCursorUsage().pipe(toProviderOperationFailed, deadline));
-          } else if (provider === "kimi") {
-            // Kimi's usage is one HTTPS request with the CLI's token. Only a turn refreshes that token, so
-            // a started CLI adds nothing, and a poll that starts it keeps it from going idle. The CLI
-            // version selects the token's folder: with no client in this run, there is no reading yet.
-            const cli = this.#cli.get(provider);
-            if (!cli) return null;
-            const env = { ...process.env, ...this.#credentials.agentEnvironment?.() };
-            usage = normalizeAccountUsage(
-              yield* readKimiUsage(isPythonKimiCli(cli), env).pipe(toProviderOperationFailed, deadline),
-            );
           } else {
             // Starting a provider that has no usage reading only to get nothing back cost a cold
             // start on every dock poll.
@@ -1456,21 +1439,16 @@ export class ProviderRuntime implements ProviderPort {
     this: ProviderRuntime,
     provider: AgentProvider,
     openExternal: (url: string) => Promise<void>,
-    region: SignInRegion = "global",
   ) {
-    return yield* this.#connectProvider(provider, openExternal, false, region);
+    return yield* this.#connectProvider(provider, openExternal, false);
   }).bind(this);
 
-  /**
-   * `onHost`: the user is not at this computer, so the CLI's page goes to `openExternal`, never to a
-   * browser here. `region`: the site of the account, for a provider that has more than one.
-   */
+  /** `onHost`: the user is not at this computer, so the CLI's page goes to `openExternal`, never to a browser here. */
   readonly #connectProvider = Effect.fn("ProviderRuntime.connectProvider")(function* (
     this: ProviderRuntime,
     provider: AgentProvider,
     openExternal: (url: string) => Promise<void>,
     onHost: boolean,
-    region: SignInRegion = "global",
   ) {
     this.#startFailures.delete(provider);
     const start = this.#providerStarts.get(provider);
@@ -1481,7 +1459,7 @@ export class ProviderRuntime implements ProviderPort {
     }
     const signIn = requireProviderDriver(provider).signIn;
     return yield* this.#runProviderConnectionCommand(provider, () =>
-      this.#signIn(provider, signIn, openExternal, onHost, region),
+      this.#signIn(provider, signIn, openExternal, onHost),
     );
   });
 
@@ -1491,7 +1469,6 @@ export class ProviderRuntime implements ProviderPort {
     signIn: ReturnType<typeof requireProviderDriver>["signIn"],
     openExternal: (url: string) => Promise<void>,
     onHost: boolean,
-    region: SignInRegion,
   ) {
     switch (signIn.kind) {
       case "browser":
@@ -1504,17 +1481,13 @@ export class ProviderRuntime implements ProviderPort {
           .start(provider, (cli) =>
             Effect.gen(function* () {
               const browser = onHost ? yield* captureBrowser(openExternal) : {};
-              const { argv } = signIn.command;
-              const target = cliSpawnTarget(
-                cli.executable,
-                typeof argv === "function" ? yield* argv(cli, region) : argv,
-              );
+              const target = cliSpawnTarget(cli.executable, signIn.command.argv);
               const child = yield* Effect.acquireRelease(
                 Effect.try({
                   try: () =>
                     spawn(target.command, target.args, {
                       cwd: process.cwd(),
-                      env: { ...process.env, ...signIn.command.env(cli, region), ...browser },
+                      env: { ...process.env, ...signIn.command.env(cli), ...browser },
                       stdio: "ignore",
                       shell: false,
                       windowsHide: process.platform === "win32",
@@ -1564,9 +1537,7 @@ export class ProviderRuntime implements ProviderPort {
                   }
                 : {}),
               privateTemp: temp && { ...temp, provider: providerLabel(provider) },
-              ...(provider === "antigravity" && googleSignInByOpenBot(onHost)
-                ? { openGoogleSignIn: openExternal }
-                : {}),
+              ...(provider === "antigravity" ? { openGoogleSignIn: openExternal } : {}),
             }).pipe(
               // A sign-in that stops after the sign-out leaves no account behind it.
               Effect.map((login) => ({
@@ -1842,16 +1813,13 @@ export class ProviderRuntime implements ProviderPort {
       .startCode(
         provider,
         (cli) =>
-          Effect.gen(function* () {
-            const argv = typeof command.argv === "function" ? yield* command.argv(cli, "global") : command.argv;
-            return yield* startCliCodeLogin({
-              flow,
-              executable: cli.executable,
-              argv,
-              env: { ...cliPathEnvironment(cli), ...command.env(cli, "global") },
-              timeoutMs: command.timeoutMs,
-              ...(command.closeInput ? { closeInput: true } : {}),
-            });
+          startCliCodeLogin({
+            flow,
+            executable: cli.executable,
+            argv: command.argv,
+            env: { ...cliPathEnvironment(cli), ...command.env(cli) },
+            timeoutMs: command.timeoutMs,
+            ...(command.closeInput ? { closeInput: true } : {}),
           }),
         command.timeoutMs,
       )
@@ -2989,7 +2957,6 @@ export class ProviderRuntime implements ProviderPort {
           previousAccount &&
           (previousAccount.type !== account.type ||
             previousAccount.email !== account.email ||
-            previousAccount.organization !== account.organization ||
             previousAccount.planType !== account.planType)
         )
           this.#forgetUsage(provider);
@@ -3668,10 +3635,6 @@ export class ProviderRuntime implements ProviderPort {
         stderrLogger.warn("A provider reported a failed usage reading.", { provider: client.provider, message });
         return;
       }
-      if (client.provider === "grok" && isGitSpawnDiagnostic(message)) {
-        stderrLogger.warn("A provider could not start git.", { provider: client.provider, message });
-        return;
-      }
       if (isAcpHandlerDiagnostic(message)) {
         stderrLogger.warn("A provider logged a request that it answered with an error.", {
           provider: client.provider,
@@ -3681,12 +3644,10 @@ export class ProviderRuntime implements ProviderPort {
       }
       // The usage notice reports the limit only for a provider with a usage reading. Another
       // provider's line goes on to the error below, or nothing on screen would name the limit.
-      // Cursor's line goes on too: its reading has no on-demand or team limit. Kimi's line goes on
-      // because an account with no Kimi Code plan has no reading.
+      // Cursor's line goes on too: its reading has no on-demand or team limit.
       if (
         isUsageLimitDiagnostic(message) &&
         client.provider !== "cursor" &&
-        client.provider !== "kimi" &&
         agentProviderDescriptor(client.provider).reportsUsage
       ) {
         stderrLogger.warn("A provider reported an exhausted usage limit.", { provider: client.provider, message });
