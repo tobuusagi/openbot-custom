@@ -301,7 +301,6 @@ export class ProviderRuntimeManager extends EventEmitter<ProviderRuntimeManagerE
       kimi: emptyStatus(unsupportedMessage),
       pi: emptyStatus(unsupportedMessage),
       muse: emptyStatus(unsupportedMessage),
-      devin: emptyStatus(unsupportedMessage),
       bun: emptyStatus(unsupportedMessage),
     };
   }
@@ -1706,6 +1705,7 @@ export function runtimeTarget(platform: NodeJS.Platform, architecture: string): 
   if (platform === "linux" && architecture === "x64") return "linux-x64";
   if (platform === "linux" && architecture === "arm64") return "linux-arm64";
   if (platform === "win32" && architecture === "x64") return "win32-x64";
+  if (platform === "win32" && architecture === "arm64") return "win32-x64"; // x64 CLI 经 Prism 转译在 Windows ARM64 上运行
   return null;
 }
 
