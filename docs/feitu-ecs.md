@@ -38,8 +38,9 @@ expose it to production clients until those areas have current review and test e
 - `deploy/feitu-ecs/openbot-account-gateway.service` runs the account runtime as
   `openbot-gateway`, with code under `/opt/openbot-runtime` and SQLite state under
   `/var/lib/openbot-gateway`.
-- The service unit has no secret loader. It is blocked until a reviewed systemd-credential-to-config
-  path exists.
+- The service opts in to a fixed-name systemd credential reader. It has no `LoadCredential` source
+  paths yet, so starting this draft fails closed until an approved secret-provisioning process adds
+  them. Do not install or enable this unit as-is.
 
 The unit expects a pre-existing locked system account named `openbot-gateway`. This task does not
 create it. The release tree under `/opt/openbot-runtime` must be owned by a deployment administrator
@@ -52,15 +53,27 @@ the runtime's `node:sqlite` use. The source pins alone do not prove this. No run
 version check was made for this draft. Set the unit's Bun path to the verified executable if it is
 not `/usr/local/bin/bun`.
 
-The available environment has no local systemd man-page documentation. It did not provide static
-proof for encrypted credential expansion or `EnvironmentFile` load order through `%d`. The unit
-therefore omits both directives. Do not treat this draft as deployable until a supported credential
-reader is designed and reviewed.
+The local reader is implemented in
+`apps/auth-api/src/self-hosted/systemd-credentials.ts`. When
+`OPENBOT_SELF_HOSTED_SYSTEMD_CREDENTIALS=true`, it requires systemd's `CREDENTIALS_DIRECTORY` and
+reads only the eight literal filenames in the table below. It does not source a shell file, parse an
+environment file, enumerate the directory, or follow symlinks. Each file must be a regular file no
+larger than 16 KiB and contain one trimmed, nonempty UTF-8 value with no NUL or line breaks. Errors
+name the setting and safe error code but never include its value. Without the opt-in, existing
+environment/default behavior is unchanged. The unit selects the opt-in and production mode, with
+development-code exposure disabled.
+
+The local fixture verifies allowlisted values, missing files, invalid/duplicate-line values,
+symlinks, oversize files and error redaction. It does not prove systemd's runtime credential
+directory permissions or the host's `LoadCredential` behavior. Systemd man-page documentation and a
+host for `systemd-analyze verify` were unavailable here. Secret provisioning, credential source
+ownership/permissions, and systemd verification remain blocked; the unit is not deploy-ready.
 
 ## Runtime settings and secrets
 
 The unit sets the listener, database path and production flags. Do not change the listener from
-loopback. A reviewed secret adapter must provide these names before readiness can succeed:
+loopback. The opt-in systemd reader maps these eight credential filenames to these runtime names
+before readiness can succeed:
 
 | Variable | Secret | Use |
 |---|---:|---|
@@ -73,13 +86,29 @@ loopback. A reviewed secret adapter must provide these names before readiness ca
 | `EMAIL_SMTP_PASSWORD` | Yes | SMTP app password. |
 | `EMAIL_FROM` | No | Verified sender address. |
 
-No secret file format or loader is provided. Do not add a secret environment file or source one from
-a shell. A future adapter must read a systemd credential, accept only the names in this table, map
-them to the runtime configuration without logging values, and receive separate review. Provision
-secrets only through an approved secret-management process. Do not generate a production key in
-this repository, store plaintext secrets here, or send a secret in chat. The private JWK, public
-JWKS and active key ID form one signing configuration and must match. Until this adapter exists,
-the runtime has no ticket or SMTP settings and `/health/ready` remains `503`.
+No credential source paths are provided. An approved provisioning change may add one systemd
+`LoadCredential` entry for each filename below, with protected source files kept outside this
+repository. Example syntax only; replace each placeholder with a protected source path before a
+separately reviewed staging installation:
+
+```ini
+LoadCredential=OPENBOT_SELF_HOSTED_TICKET_PRIVATE_JWK:/secure/source/path/ticket-private-jwk
+LoadCredential=OPENBOT_SELF_HOSTED_TICKET_PUBLIC_JWKS:/secure/source/path/ticket-public-jwks
+LoadCredential=OPENBOT_SELF_HOSTED_TICKET_KEY_ID:/secure/source/path/ticket-key-id
+LoadCredential=EMAIL_SMTP_HOST:/secure/source/path/smtp-host
+LoadCredential=EMAIL_SMTP_PORT:/secure/source/path/smtp-port
+LoadCredential=EMAIL_SMTP_USERNAME:/secure/source/path/smtp-username
+LoadCredential=EMAIL_SMTP_PASSWORD:/secure/source/path/smtp-password
+LoadCredential=EMAIL_FROM:/secure/source/path/email-from
+```
+
+Do not add a secret environment file or source one from a shell. Provision secrets only through an
+approved secret-management process. Do not generate a production key in this repository, store
+plaintext secrets here, or send a secret in chat. The private JWK, public JWKS and active key ID form
+one signing configuration and must match. The unit intentionally has no credential source paths;
+until they are provisioned and reviewed, the process exits before listening, so the health endpoint
+is unavailable. A runtime that starts with another required dependency missing answers `503` on
+`/health/ready`.
 
 The current account sessions use opaque stored tokens; the current runtime has no separate account
 session signing-root setting. Preserve the ticket signing key with the account database. If a
@@ -123,9 +152,10 @@ Before any later staging deployment, review these gates in order:
 1. Confirm the intended release tree, dependency lock and Bun runtime. Keep the application code
    read-only. Confirm the systemd account exists and can write only to its state and private temp
    paths.
-2. Complete separate review of a systemd credential reader that provides only the variables in the
-   table above. Until then, the service remains blocked and cannot pass readiness. Do not reuse
-   production credentials for a local rehearsal. Do not put secrets in command arguments or logs.
+2. Provision protected credential source files and add the eight `LoadCredential` entries to a
+   reviewed staging copy of the unit. Verify source ownership and permissions on that host. The
+   checked-in unit remains blocked without them. Do not reuse production credentials for a local
+   rehearsal. Do not put secrets in command arguments or logs.
 3. Initialize only a new local database for a local rehearsal. A production database import or
    schema upgrade needs a separate compatibility, backup and rollback review.
 4. Review the Caddy snippet against the active configuration. Check the full integrated config
@@ -176,7 +206,8 @@ service cleanly. Do not copy only `account.sqlite` while SQLite is open. Copy `a
 every sidecar that exists, including `account.sqlite-wal` and `account.sqlite-shm`, as one set. The
 current adapter does not enable WAL mode, but the backup procedure must keep a WAL file if one is
 present. Preserve the matching ticket private JWK, public JWKS and key ID through the approved
-secret store. The secret loader and its backup path are not yet designed, so a complete recovery
+secret store. The credential reader is implemented, but production provisioning and its backup path
+are not designed, so a complete recovery
 set cannot be created from this draft.
 
 Use a new, unique backup directory so that a previous backup cannot be replaced. Record checksums
@@ -212,7 +243,7 @@ systemctl start openbot-account-gateway.service
 ```
 
 This command template backs up SQLite only. It is not a complete account recovery set until the
-secret adapter and its protected backup path are reviewed. It was not run or tested.
+credential provisioning and its protected backup path are reviewed. It was not run or tested.
 
 Restore only under fail-closed maintenance. Keep public ingress closed or leave the relay and API
 unavailable. Restore a validated database copy and its matching SQLite sidecars to a separate,

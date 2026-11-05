@@ -14,9 +14,10 @@ Environment=OPENBOT_SELF_HOSTED_PORT=3187
 Environment=OPENBOT_SELF_HOSTED_DATABASE_PATH=/var/lib/openbot-gateway/account.sqlite
 Environment=OPENBOT_SELF_HOSTED_MODE=production
 Environment=OPENBOT_SELF_HOSTED_EXPOSE_DEVELOPMENT_CODE=false
-# BLOCKED: no reviewed reader maps systemd credentials to the runtime's secret settings.
-# Without the ticket and SMTP settings, /health/ready stays 503. Do not expose this service.
-# Do not add EnvironmentFile or shell `source` until credential loading has separate review.
+Environment=OPENBOT_SELF_HOSTED_SYSTEMD_CREDENTIALS=true
+# Add one LoadCredential=NAME:/protected/source/path per required setting after approved provisioning.
+# The reader accepts only the eight fixed names documented in docs/feitu-ecs.md.
+# This draft intentionally has no source paths, so the service fails closed until provisioned.
 StateDirectory=openbot-gateway
 StateDirectoryMode=0700
 UMask=0077

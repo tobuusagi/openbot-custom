@@ -1,0 +1,19 @@
+Focused validation evidence
+
+Runtime: Node v24.22.1
+SQLite: 3.53.4
+
+Command (scenario):
+  node --experimental-strip-types ./scenario.ts
+Output:
+  011-message-recovery fixture scenarios passed
+Exit code: 0
+
+Scenario assertions: 18 checks covering authorization rejection without sequence use, pre-COMMIT rollback, same-body retry and receipt identity, same request ID with changed content rejection, post-COMMIT/pre-return crash and reopen, bounded event/cursor scope by grant, changed epoch snapshot-required, event gap snapshot-required, external-path rejection before SQLite open, unrecognized SQLite fixture rejection, and stable Linux open-file-descriptor counts after both rejected opens.
+
+Command (types):
+  /workspace/openbot-custom/node_modules/.bin/tsc --project ./tsconfig.json
+Output: no diagnostics
+Exit code: 0
+
+No package install, root check, older experiment, or provider suite ran.

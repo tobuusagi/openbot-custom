@@ -11,6 +11,7 @@
     "preview": "dotenvx run -f .env.production -fk ../../.env.keys -- vite preview --port 3100",
     "self-hosted": "bun ./src/self-hosted/entry.ts",
     "self-hosted:init": "bun ./scripts/self-hosted-init.ts",
+    "self-hosted:systemd-credentials-e2e": "node --import tsx ./scripts/systemd-credentials-e2e.ts",
     "self-hosted:gateway-e2e": "node --import tsx ../../scripts/plan011-gateway-e2e.ts",
     "deploy": "dotenvx run -f .env.production -fk ../../.env.keys -- bun ../../scripts/deploy-auth-api.ts",
     "deploy:test": "bun ../../scripts/run-development.ts deploy-test",

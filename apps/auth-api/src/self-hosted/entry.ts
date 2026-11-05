@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import process from "node:process";
+import { Effect } from "effect";
 import { type AuthHttpHandlers, apiError, handleAuthHttpRequest, methodNotAllowedResponse } from "../server/auth-http";
 import { JSON_BODY_LIMIT } from "../server/json-body";
 import { createSelfHostedAuthServices, SelfHostedAuthConfigurationError } from "./auth-services";
@@ -11,6 +12,7 @@ import {
 } from "./config";
 import { createSelfHostedEmailCodeDelivery } from "./email-delivery";
 import { openSqliteD1Database, type SqliteD1Database } from "./sqlite-d1";
+import { readSelfHostedSystemdCredentials, SelfHostedSystemdCredentialsError } from "./systemd-credentials";
 
 const COMPONENT = "self-hosted-account-runtime";
 const AUTH_PATHS = new Set([
@@ -32,11 +34,30 @@ type Readiness = {
 
 async function startSelfHostedRuntime(): Promise<void> {
   let config: SelfHostedConfig;
+  let runtimeEnvironment: NodeJS.ProcessEnv = process.env;
   try {
-    config = readSelfHostedConfig(process.env);
+    const credentialOptIn = process.env.OPENBOT_SELF_HOSTED_SYSTEMD_CREDENTIALS;
+    if (credentialOptIn !== undefined && credentialOptIn !== "true") {
+      throw new SelfHostedConfigError(["OPENBOT_SELF_HOSTED_SYSTEMD_CREDENTIALS"]);
+    }
+    if (credentialOptIn === "true") {
+      const directory = process.env.CREDENTIALS_DIRECTORY;
+      if (!directory) throw new SelfHostedSystemdCredentialsError("credentials_directory_missing");
+      const credentials = await Effect.runPromise(readSelfHostedSystemdCredentials(directory));
+      runtimeEnvironment = { ...process.env, ...credentials };
+    }
+    config = readSelfHostedConfig(runtimeEnvironment);
   } catch (cause) {
     if (cause instanceof SelfHostedConfigError) {
       writeError("configuration_invalid", { variables: cause.variables });
+      process.exitCode = 1;
+      return;
+    }
+    if (cause instanceof SelfHostedSystemdCredentialsError) {
+      writeError("systemd_credentials_invalid", {
+        code: cause.code,
+        ...(cause.credential ? { credential: cause.credential } : {}),
+      });
       process.exitCode = 1;
       return;
     }
@@ -47,7 +68,7 @@ async function startSelfHostedRuntime(): Promise<void> {
 
   let database: SqliteD1Database | null = null;
   let authHandlers: AuthHttpHandlers | null = null;
-  const smtp = readSelfHostedSmtpConfiguration(process.env);
+  const smtp = readSelfHostedSmtpConfiguration(runtimeEnvironment);
   const readiness: Readiness = {
     sqlite: "unavailable",
     schema: "unavailable",

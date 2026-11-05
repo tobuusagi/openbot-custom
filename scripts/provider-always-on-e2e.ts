@@ -24,6 +24,7 @@ import {
 } from "../src/backend/provider-lifecycle";
 
 const OUT = resolve(import.meta.dirname, "../.openbot-build/provider-always-on-e2e");
+const PERSISTENT_RETRY_CASE = process.env.PROVIDER_ALWAYS_ON_E2E_CASE === "persistent-retry";
 const FAKE_VERSION = "1.2.1";
 const FAKE_CODEX_VERSION = "0.156.0";
 const PROVIDER_IDLE_CHECK_MS = 5;
@@ -161,7 +162,8 @@ if (argv[0] === "--version") {
     execPath: process.execPath,
     bunVersion: process.versions.bun ?? null,
   });
-  process.stdout.write("codex-cli ${FAKE_CODEX_VERSION}" + NL, () => process.exit(0));
+  fs.writeSync(1, "codex-cli ${FAKE_CODEX_VERSION}" + NL);
+  process.exit(0);
 } else {
 const write = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + NL);
 process.on("exit", () => log({ method: "process-exit" }));
@@ -288,9 +290,9 @@ interface Report {
     authRefusalDidNotRetry: boolean;
     unknownRefusalDidNotRetry: boolean;
     diskRefusalDidNotLaunch: boolean;
-    budgetStoppedAtLimit: number;
-    explicitRefreshResetBudget: boolean;
+    retriesPastFormerLimitRecovered: boolean;
     disposeCancelledRetry: boolean;
+    refreshCancelledRetry: boolean;
     antigravityTempRemovedBeforeRetry: boolean;
     maxConcurrentRetryProcesses: number;
   };
@@ -589,7 +591,6 @@ async function stopRuntime(providers: ProviderRuntime): Promise<void> {
 
 function retryPolicyOverrides(
   options: {
-    launchLimit?: number;
     warningAfterMs?: number;
     diskSpaceCheckMs?: number;
     delayMs?: number;
@@ -603,7 +604,6 @@ function retryPolicyOverrides(
     maxDelayMs: options.maxDelayMs ?? Math.max(delayMs, 150),
     warningAfterMs: options.warningAfterMs ?? 5_000,
     diskSpaceCheckMs: options.diskSpaceCheckMs ?? delayMs,
-    launchLimit: options.launchLimit ?? 6,
     jitter: (delay) => delay,
   };
 }
@@ -617,11 +617,16 @@ async function waitForProviderState(
   runtime: ProviderRuntime,
   provider: AgentProvider,
   expected: "available" | "sign-in-required" | "error",
+  timeoutMs = 15_000,
 ): Promise<void> {
-  await waitFor(`${provider} ${expected} state`, async () => {
-    const state = runtime.status().providers?.find((row) => row.id === provider)?.state;
-    return state === expected ? state : null;
-  });
+  await waitFor(
+    `${provider} ${expected} state`,
+    async () => {
+      const state = runtime.status().providers?.find((row) => row.id === provider)?.state;
+      return state === expected ? state : null;
+    },
+    timeoutMs,
+  );
 }
 
 function providerMessage(runtime: ProviderRuntime, provider: AgentProvider): string | null {
@@ -683,229 +688,237 @@ try {
     report.codexCliProbe.resolutionFailure = error instanceof Error ? error.message : String(error);
     throw error;
   }
-  const desktopWorkspaces = [1, 2, 3, 4].map((index) => join(root, `desktop-workspace-${index}`));
-  const alwaysOnWorkspaces = [1, 2, 3].map((index) => join(root, `always-on-workspace-${index}`));
-  await Promise.all([...desktopWorkspaces, ...alwaysOnWorkspaces].map((path) => mkdir(path, { recursive: true })));
-  const desktop = createRuntime("desktop");
-  const alwaysOn = createRuntime("always-on");
-  const runtimeStarts = await Promise.allSettled([runCauseEffect(desktop.start()), runCauseEffect(alwaysOn.start())]);
-  const runtimeStartFailure = runtimeStarts.find((result) => result.status === "rejected");
-  if (runtimeStartFailure?.status === "rejected") throw runtimeStartFailure.reason;
-  const providerStarts = await Promise.allSettled([
-    runCauseEffect(desktop.ensureProvider("codex")),
-    runCauseEffect(desktop.ensureProvider("antigravity")),
-    runCauseEffect(alwaysOn.ensureProvider("codex")),
-    runCauseEffect(alwaysOn.ensureProvider("antigravity")),
-  ]);
-  const providerStartFailure = providerStarts.find((result) => result.status === "rejected");
-  if (providerStartFailure?.status === "rejected") throw providerStartFailure.reason;
-  assert.equal(desktop.status().providers?.find((provider) => provider.id === "codex")?.state, "available");
-  assert.equal(alwaysOn.status().providers?.find((provider) => provider.id === "codex")?.state, "available");
-  assert.equal(desktop.status().providers?.find((provider) => provider.id === "antigravity")?.state, "available");
-  assert.equal(alwaysOn.status().providers?.find((provider) => provider.id === "antigravity")?.state, "available");
+  if (!PERSISTENT_RETRY_CASE && process.env.PROVIDER_ALWAYS_ON_E2E_CASE !== "retry-policy") {
+    const desktopWorkspaces = [1, 2, 3, 4].map((index) => join(root, `desktop-workspace-${index}`));
+    const alwaysOnWorkspaces = [1, 2, 3].map((index) => join(root, `always-on-workspace-${index}`));
+    await Promise.all([...desktopWorkspaces, ...alwaysOnWorkspaces].map((path) => mkdir(path, { recursive: true })));
+    const desktop = createRuntime("desktop");
+    const alwaysOn = createRuntime("always-on");
+    const runtimeStarts = await Promise.allSettled([runCauseEffect(desktop.start()), runCauseEffect(alwaysOn.start())]);
+    const runtimeStartFailure = runtimeStarts.find((result) => result.status === "rejected");
+    if (runtimeStartFailure?.status === "rejected") throw runtimeStartFailure.reason;
+    const providerStarts = await Promise.allSettled([
+      runCauseEffect(desktop.ensureProvider("codex")),
+      runCauseEffect(desktop.ensureProvider("antigravity")),
+      runCauseEffect(alwaysOn.ensureProvider("codex")),
+      runCauseEffect(alwaysOn.ensureProvider("antigravity")),
+    ]);
+    const providerStartFailure = providerStarts.find((result) => result.status === "rejected");
+    if (providerStartFailure?.status === "rejected") throw providerStartFailure.reason;
+    assert.equal(desktop.status().providers?.find((provider) => provider.id === "codex")?.state, "available");
+    assert.equal(alwaysOn.status().providers?.find((provider) => provider.id === "codex")?.state, "available");
+    assert.equal(desktop.status().providers?.find((provider) => provider.id === "antigravity")?.state, "available");
+    assert.equal(alwaysOn.status().providers?.find((provider) => provider.id === "antigravity")?.state, "available");
 
-  const protocolRequests = await waitFor("fixture provider initialization and model discovery", async () => {
-    const antigravity = await logEntries();
-    const codex = await codexLogEntries();
-    const antigravityRequests = antigravity.flatMap((entry) =>
-      entry.method === "request-received" && entry.requestMethod ? [entry.requestMethod] : [],
-    );
-    const codexRequests = codex.flatMap((entry) =>
-      entry.method === "request-received" && entry.requestMethod ? [entry.requestMethod] : [],
-    );
-    if (
-      antigravityRequests.includes("initialize") &&
-      antigravityRequests.includes("session/new") &&
-      codexRequests.includes("initialize") &&
-      codexRequests.includes("account/read") &&
-      codexRequests.includes("model/list")
-    )
-      return { antigravity: antigravityRequests, codex: codexRequests };
-    return null;
-  });
-  report.protocolRequests = protocolRequests;
-  assert.ok(protocolRequests.antigravity.includes("initialize"), "Antigravity receives the ACP initialize request");
-  assert.ok(protocolRequests.antigravity.includes("session/new"), "Antigravity performs ACP model discovery");
-  assert.ok(protocolRequests.codex.includes("initialize"), "Codex receives the app-server initialize request");
-  assert.ok(protocolRequests.codex.includes("account/read"), "Codex reads the fixture account without OAuth");
-  assert.ok(protocolRequests.codex.includes("model/list"), "Codex performs app-server model discovery");
-
-  const desktopThreadIds: string[] = [];
-  const alwaysOnThreadIds: string[] = [];
-  let firstDesktopTurnCompletedAt = 0;
-  for (const [index, cwd] of desktopWorkspaces.entries()) {
-    desktopThreadIds.push(await startThreadTurn("desktop", desktop, cwd));
-    if (index === 0) firstDesktopTurnCompletedAt = Date.now();
-    await runCauseEffect(desktop.ensureProvider("antigravity"));
-    if (index === desktopWorkspaces.length - 1) {
-      const remainingBeforeTimeout = SESSION_IDLE_RELEASE_MS - (Date.now() - firstDesktopTurnCompletedAt);
-      assert.ok(remainingBeforeTimeout > 0, "desktop capacity evidence is collected before the idle timeout");
-      const oldestWorkspace = desktopWorkspaces[0];
-      assert.ok(oldestWorkspace);
-      await waitFor(
-        "desktop capacity release of the oldest idle session before the idle timeout",
-        async () => {
-          const entries = await logEntries();
-          return isThreadReleased(entries, "desktop", oldestWorkspace);
-        },
-        remainingBeforeTimeout,
+    const protocolRequests = await waitFor("fixture provider initialization and model discovery", async () => {
+      const antigravity = await logEntries();
+      const codex = await codexLogEntries();
+      const antigravityRequests = antigravity.flatMap((entry) =>
+        entry.method === "request-received" && entry.requestMethod ? [entry.requestMethod] : [],
       );
-      report.desktopCapacityReleased = true;
-      report.desktopCapacityReleaseObservedBeforeIdleTimeout =
-        Date.now() - firstDesktopTurnCompletedAt < SESSION_IDLE_RELEASE_MS;
-      assert.ok(
-        report.desktopCapacityReleaseObservedBeforeIdleTimeout,
-        "the fourth desktop session causes capacity release before the idle timer can fire",
+      const codexRequests = codex.flatMap((entry) =>
+        entry.method === "request-received" && entry.requestMethod ? [entry.requestMethod] : [],
       );
-    }
-  }
-  for (const cwd of alwaysOnWorkspaces) {
-    alwaysOnThreadIds.push(await startThreadTurn("always-on", alwaysOn, cwd));
-    await runCauseEffect(alwaysOn.ensureProvider("antigravity"));
-  }
-  assert.equal(desktopThreadIds.length, desktopWorkspaces.length);
-  assert.equal(alwaysOnThreadIds.length, alwaysOnWorkspaces.length);
-
-  const afterDesktopClose = await logEntries();
-  report.nativeSessionIdsMatched = {
-    desktop: desktopThreadIds.every((id) =>
-      afterDesktopClose.some(
-        (entry) => entry.case === "desktop" && entry.method === "session/new" && entry.sessionId === id,
-      ),
-    ),
-    alwaysOn: alwaysOnThreadIds.every((id) =>
-      afterDesktopClose.some(
-        (entry) => entry.case === "always-on" && entry.method === "session/new" && entry.sessionId === id,
-      ),
-    ),
-  };
-  assert.ok(report.nativeSessionIdsMatched.desktop, "desktop thread IDs match Antigravity native session IDs");
-  assert.ok(report.nativeSessionIdsMatched.alwaysOn, "always-on thread IDs match Antigravity native session IDs");
-  report.alwaysOnSessionRetained = alwaysOnWorkspaces.every(
-    (cwd) => !isThreadReleased(afterDesktopClose, "always-on", cwd),
-  );
-  assert.ok(report.alwaysOnSessionRetained, "always-on retains its idle ACP sessions after desktop capacity release");
-
-  await waitFor("desktop provider idle release", async () => desktop.currentClient("antigravity") === null);
-  report.desktopProviderReleased = true;
-  report.alwaysOnProviderRetained = alwaysOn.currentClient("antigravity")?.running === true;
-  assert.ok(report.alwaysOnProviderRetained, "always-on retains its provider process after the desktop timer fires");
-  report.desktopCodexProviderReleased = desktop.currentClient("codex") === null;
-  assert.ok(report.desktopCodexProviderReleased, "desktop releases the idle Codex app-server process");
-  report.alwaysOnCodexProviderRetained = alwaysOn.currentClient("codex")?.running === true;
-  assert.ok(report.alwaysOnCodexProviderRetained, "always-on retains the idle Codex app-server process");
-
-  await runCauseEffect(alwaysOn.releaseIdleThreads());
-  await waitFor("always-on memory-pressure release", async () => {
-    const entries = await logEntries();
-    return alwaysOnWorkspaces.every((cwd) => isThreadReleased(entries, "always-on", cwd));
-  });
-  report.memoryPressureReleasedSession = true;
-  report.memoryPressureKeptProvider = alwaysOn.currentClient("antigravity")?.running === true;
-  assert.ok(
-    report.memoryPressureKeptProvider,
-    "memory pressure can close an idle session while keeping the host provider running",
-  );
-
-  const restoredThreadId = alwaysOnThreadIds[0];
-  const restoredWorkspace = alwaysOnWorkspaces[0];
-  assert.ok(restoredThreadId && restoredWorkspace);
-  await continueThreadTurn("always-on", alwaysOn, restoredThreadId);
-  const afterMemoryPressureResume = await logEntries();
-  report.memoryPressureResumePreservedNativeSessionId = afterMemoryPressureResume.some(
-    (entry) =>
-      entry.case === "always-on" &&
-      entry.method === "session/load" &&
-      entry.sessionId === restoredThreadId &&
-      entry.cwd === restoredWorkspace,
-  );
-  assert.ok(
-    report.memoryPressureResumePreservedNativeSessionId,
-    "memory pressure restores the original Antigravity session ID for its next turn",
-  );
-
-  await stopRuntime(alwaysOn);
-  report.explicitStopEndedProvider =
-    alwaysOn.currentClient("antigravity") === null &&
-    (
-      await waitFor("explicit stop of the always-on provider process", async () => {
-        const entries = await logEntries();
-        return entries.find((entry) => entry.case === "always-on" && entry.method === "process-exit");
-      })
-    ).method === "process-exit";
-  assert.ok(report.explicitStopEndedProvider, "an explicit runtime stop ends the always-on provider");
-  report.explicitStopEndedCodexProvider =
-    alwaysOn.currentClient("codex") === null &&
-    (
-      await waitFor("explicit stop of the always-on Codex process", async () => {
-        const entries = await codexLogEntries();
-        return entries.find((entry) => entry.case === "always-on" && entry.method === "process-exit");
-      })
-    ).method === "process-exit";
-  assert.ok(report.explicitStopEndedCodexProvider, "an explicit runtime stop ends the always-on Codex process");
-
-  const recoveryPolicy = retryPolicyOverrides({ delayMs: 40, launchLimit: 4 });
-  async function recoverAfterInitializationTimeout(provider: AgentProvider, caseName: string) {
-    await setProviderControl(provider, { withholdRemaining: 1, lastTempDirectory: null });
-    const runtime = createRuntime("always-on", {
-      onlyProvider: provider,
-      caseName,
-      requestTimeoutMs: 250,
-      retryPolicy: recoveryPolicy,
+      if (
+        antigravityRequests.includes("initialize") &&
+        antigravityRequests.includes("session/new") &&
+        codexRequests.includes("initialize") &&
+        codexRequests.includes("account/read") &&
+        codexRequests.includes("model/list")
+      )
+        return { antigravity: antigravityRequests, codex: codexRequests };
+      return null;
     });
-    await runCauseEffect(runtime.start());
-    await waitForProviderState(runtime, provider, "available");
-    const events = await providerEvents(provider, caseName);
-    const starts = events.filter((entry) => entry.method === "process-start");
-    assert.equal(starts.length, 2, `${provider} retries a withheld initialize once, then recovers`);
-    const maximum = maximumConcurrentProcesses(events);
-    assert.equal(maximum, 1, `${provider} never overlaps its timed-out and replacement processes`);
-    let tempRemovedBeforeRetry = true;
-    if (provider === "antigravity") {
-      const secondStart = starts[1];
-      const firstTemp = starts[0]?.tempDirectory;
-      tempRemovedBeforeRetry =
-        secondStart?.previousTempExists === false &&
-        firstTemp !== undefined &&
-        firstTemp !== null &&
-        !(await pathExists(firstTemp));
-      assert.ok(tempRemovedBeforeRetry, "Antigravity temp cleanup completes before its retry launches");
+    report.protocolRequests = protocolRequests;
+    assert.ok(protocolRequests.antigravity.includes("initialize"), "Antigravity receives the ACP initialize request");
+    assert.ok(protocolRequests.antigravity.includes("session/new"), "Antigravity performs ACP model discovery");
+    assert.ok(protocolRequests.codex.includes("initialize"), "Codex receives the app-server initialize request");
+    assert.ok(protocolRequests.codex.includes("account/read"), "Codex reads the fixture account without OAuth");
+    assert.ok(protocolRequests.codex.includes("model/list"), "Codex performs app-server model discovery");
+
+    const desktopThreadIds: string[] = [];
+    const alwaysOnThreadIds: string[] = [];
+    let firstDesktopTurnCompletedAt = 0;
+    for (const [index, cwd] of desktopWorkspaces.entries()) {
+      desktopThreadIds.push(await startThreadTurn("desktop", desktop, cwd));
+      if (index === 0) firstDesktopTurnCompletedAt = Date.now();
+      await runCauseEffect(desktop.ensureProvider("antigravity"));
+      if (index === desktopWorkspaces.length - 1) {
+        const remainingBeforeTimeout = SESSION_IDLE_RELEASE_MS - (Date.now() - firstDesktopTurnCompletedAt);
+        assert.ok(remainingBeforeTimeout > 0, "desktop capacity evidence is collected before the idle timeout");
+        const oldestWorkspace = desktopWorkspaces[0];
+        assert.ok(oldestWorkspace);
+        await waitFor(
+          "desktop capacity release of the oldest idle session before the idle timeout",
+          async () => {
+            const entries = await logEntries();
+            return isThreadReleased(entries, "desktop", oldestWorkspace);
+          },
+          remainingBeforeTimeout,
+        );
+        report.desktopCapacityReleased = true;
+        report.desktopCapacityReleaseObservedBeforeIdleTimeout =
+          Date.now() - firstDesktopTurnCompletedAt < SESSION_IDLE_RELEASE_MS;
+        assert.ok(
+          report.desktopCapacityReleaseObservedBeforeIdleTimeout,
+          "the fourth desktop session causes capacity release before the idle timer can fire",
+        );
+      }
     }
-    await stopRuntime(runtime);
-    return { maximum, tempRemovedBeforeRetry };
+    for (const cwd of alwaysOnWorkspaces) {
+      alwaysOnThreadIds.push(await startThreadTurn("always-on", alwaysOn, cwd));
+      await runCauseEffect(alwaysOn.ensureProvider("antigravity"));
+    }
+    assert.equal(desktopThreadIds.length, desktopWorkspaces.length);
+    assert.equal(alwaysOnThreadIds.length, alwaysOnWorkspaces.length);
+
+    const afterDesktopClose = await logEntries();
+    report.nativeSessionIdsMatched = {
+      desktop: desktopThreadIds.every((id) =>
+        afterDesktopClose.some(
+          (entry) => entry.case === "desktop" && entry.method === "session/new" && entry.sessionId === id,
+        ),
+      ),
+      alwaysOn: alwaysOnThreadIds.every((id) =>
+        afterDesktopClose.some(
+          (entry) => entry.case === "always-on" && entry.method === "session/new" && entry.sessionId === id,
+        ),
+      ),
+    };
+    assert.ok(report.nativeSessionIdsMatched.desktop, "desktop thread IDs match Antigravity native session IDs");
+    assert.ok(report.nativeSessionIdsMatched.alwaysOn, "always-on thread IDs match Antigravity native session IDs");
+    report.alwaysOnSessionRetained = alwaysOnWorkspaces.every(
+      (cwd) => !isThreadReleased(afterDesktopClose, "always-on", cwd),
+    );
+    assert.ok(report.alwaysOnSessionRetained, "always-on retains its idle ACP sessions after desktop capacity release");
+
+    await waitFor("desktop provider idle release", async () => desktop.currentClient("antigravity") === null);
+    report.desktopProviderReleased = true;
+    report.alwaysOnProviderRetained = alwaysOn.currentClient("antigravity")?.running === true;
+    assert.ok(report.alwaysOnProviderRetained, "always-on retains its provider process after the desktop timer fires");
+    report.desktopCodexProviderReleased = desktop.currentClient("codex") === null;
+    assert.ok(report.desktopCodexProviderReleased, "desktop releases the idle Codex app-server process");
+    report.alwaysOnCodexProviderRetained = alwaysOn.currentClient("codex")?.running === true;
+    assert.ok(report.alwaysOnCodexProviderRetained, "always-on retains the idle Codex app-server process");
+
+    await runCauseEffect(alwaysOn.releaseIdleThreads());
+    await waitFor("always-on memory-pressure release", async () => {
+      const entries = await logEntries();
+      return alwaysOnWorkspaces.every((cwd) => isThreadReleased(entries, "always-on", cwd));
+    });
+    report.memoryPressureReleasedSession = true;
+    report.memoryPressureKeptProvider = alwaysOn.currentClient("antigravity")?.running === true;
+    assert.ok(
+      report.memoryPressureKeptProvider,
+      "memory pressure can close an idle session while keeping the host provider running",
+    );
+
+    const restoredThreadId = alwaysOnThreadIds[0];
+    const restoredWorkspace = alwaysOnWorkspaces[0];
+    assert.ok(restoredThreadId && restoredWorkspace);
+    await continueThreadTurn("always-on", alwaysOn, restoredThreadId);
+    const afterMemoryPressureResume = await logEntries();
+    report.memoryPressureResumePreservedNativeSessionId = afterMemoryPressureResume.some(
+      (entry) =>
+        entry.case === "always-on" &&
+        entry.method === "session/load" &&
+        entry.sessionId === restoredThreadId &&
+        entry.cwd === restoredWorkspace,
+    );
+    assert.ok(
+      report.memoryPressureResumePreservedNativeSessionId,
+      "memory pressure restores the original Antigravity session ID for its next turn",
+    );
+
+    await stopRuntime(alwaysOn);
+    report.explicitStopEndedProvider =
+      alwaysOn.currentClient("antigravity") === null &&
+      (
+        await waitFor("explicit stop of the always-on provider process", async () => {
+          const entries = await logEntries();
+          return entries.find((entry) => entry.case === "always-on" && entry.method === "process-exit");
+        })
+      ).method === "process-exit";
+    assert.ok(report.explicitStopEndedProvider, "an explicit runtime stop ends the always-on provider");
+    report.explicitStopEndedCodexProvider =
+      alwaysOn.currentClient("codex") === null &&
+      (
+        await waitFor("explicit stop of the always-on Codex process", async () => {
+          const entries = await codexLogEntries();
+          return entries.find((entry) => entry.case === "always-on" && entry.method === "process-exit");
+        })
+      ).method === "process-exit";
+    assert.ok(report.explicitStopEndedCodexProvider, "an explicit runtime stop ends the always-on Codex process");
   }
 
-  const codexRecovery = await recoverAfterInitializationTimeout("codex", "retry-recovery-codex");
-  const antigravityRecovery = await recoverAfterInitializationTimeout("antigravity", "retry-recovery-antigravity");
+  const recoveryPolicy = retryPolicyOverrides({ delayMs: 40 });
+  let codexRecovery = { maximum: 0, tempRemovedBeforeRetry: true };
+  let antigravityRecovery = { maximum: 0, tempRemovedBeforeRetry: true };
+  let increasingBackoffObserved = false;
+  let diskRefusalDidNotLaunch = false;
+  let persistentRetryMaximumConcurrentProcesses = 0;
+  if (!PERSISTENT_RETRY_CASE) {
+    async function recoverAfterInitializationTimeout(provider: AgentProvider, caseName: string) {
+      await setProviderControl(provider, { withholdRemaining: 1, lastTempDirectory: null });
+      const runtime = createRuntime("always-on", {
+        onlyProvider: provider,
+        caseName,
+        requestTimeoutMs: 250,
+        retryPolicy: recoveryPolicy,
+      });
+      await runCauseEffect(runtime.start());
+      await waitForProviderState(runtime, provider, "available");
+      const events = await providerEvents(provider, caseName);
+      const starts = events.filter((entry) => entry.method === "process-start");
+      assert.equal(starts.length, 2, `${provider} retries a withheld initialize once, then recovers`);
+      const maximum = maximumConcurrentProcesses(events);
+      assert.equal(maximum, 1, `${provider} never overlaps its timed-out and replacement processes`);
+      let tempRemovedBeforeRetry = true;
+      if (provider === "antigravity") {
+        const secondStart = starts[1];
+        const firstTemp = starts[0]?.tempDirectory;
+        tempRemovedBeforeRetry =
+          secondStart?.previousTempExists === false &&
+          firstTemp !== undefined &&
+          firstTemp !== null &&
+          !(await pathExists(firstTemp));
+        assert.ok(tempRemovedBeforeRetry, "Antigravity temp cleanup completes before its retry launches");
+      }
+      await stopRuntime(runtime);
+      return { maximum, tempRemovedBeforeRetry };
+    }
 
-  await setProviderControl("codex", { withholdRemaining: 2 });
-  const backoffRuntime = createRuntime("always-on", {
-    onlyProvider: "codex",
-    caseName: "retry-backoff-sequence",
-    requestTimeoutMs: 250,
-    retryPolicy: retryPolicyOverrides({
-      launchLimit: 4,
-      initialDelaysMs: [120, 500, 800],
-      maxDelayMs: 1_000,
-      warningAfterMs: 10_000,
-    }),
-  });
-  await runCauseEffect(backoffRuntime.start());
-  await waitForProviderState(backoffRuntime, "codex", "available");
-  const backoffEvents = await providerEvents("codex", "retry-backoff-sequence");
-  const backoffStarts = backoffEvents.filter((entry) => entry.method === "process-start");
-  const firstBackoffGap = (backoffStarts[1]?.at ?? 0) - (backoffStarts[0]?.at ?? 0);
-  const secondBackoffGap = (backoffStarts[2]?.at ?? 0) - (backoffStarts[1]?.at ?? 0);
-  const increasingBackoffObserved =
-    backoffStarts.length === 3 &&
-    firstBackoffGap > 0 &&
-    secondBackoffGap - firstBackoffGap >= 250 &&
-    maximumConcurrentProcesses(backoffEvents) === 1;
-  assert.ok(
-    increasingBackoffObserved,
-    `sequential init failures use increasing delays without overlap (${firstBackoffGap}ms, ${secondBackoffGap}ms)`,
-  );
-  await stopRuntime(backoffRuntime);
+    codexRecovery = await recoverAfterInitializationTimeout("codex", "retry-recovery-codex");
+    antigravityRecovery = await recoverAfterInitializationTimeout("antigravity", "retry-recovery-antigravity");
+
+    await setProviderControl("codex", { withholdRemaining: 2 });
+    const backoffRuntime = createRuntime("always-on", {
+      onlyProvider: "codex",
+      caseName: "retry-backoff-sequence",
+      requestTimeoutMs: 250,
+      retryPolicy: retryPolicyOverrides({
+        initialDelaysMs: [120, 500, 800],
+        maxDelayMs: 1_000,
+        warningAfterMs: 10_000,
+      }),
+    });
+    await runCauseEffect(backoffRuntime.start());
+    await waitForProviderState(backoffRuntime, "codex", "available");
+    const backoffEvents = await providerEvents("codex", "retry-backoff-sequence");
+    const backoffStarts = backoffEvents.filter((entry) => entry.method === "process-start");
+    const firstBackoffGap = (backoffStarts[1]?.at ?? 0) - (backoffStarts[0]?.at ?? 0);
+    const secondBackoffGap = (backoffStarts[2]?.at ?? 0) - (backoffStarts[1]?.at ?? 0);
+    increasingBackoffObserved =
+      backoffStarts.length === 3 &&
+      firstBackoffGap > 0 &&
+      secondBackoffGap - firstBackoffGap >= 250 &&
+      maximumConcurrentProcesses(backoffEvents) === 1;
+    assert.ok(
+      increasingBackoffObserved,
+      `sequential init failures use increasing delays without overlap (${firstBackoffGap}ms, ${secondBackoffGap}ms)`,
+    );
+    await stopRuntime(backoffRuntime);
+  }
 
   async function refusedInitializationDoesNotRetry(
     provider: AgentProvider,
@@ -946,7 +959,7 @@ try {
     availableDiskBytes: () => diskBytes,
   });
   await runCauseEffect(diskRuntime.start());
-  const diskRefusalDidNotLaunch = (await providerStartCount("antigravity", "retry-disk-space")) === 0;
+  diskRefusalDidNotLaunch = (await providerStartCount("antigravity", "retry-disk-space")) === 0;
   assert.ok(diskRefusalDidNotLaunch, "the 1 GiB temp guard refuses before spawning a process");
   diskBytes = 2 * 1024 ** 3;
   await waitForProviderState(diskRuntime, "antigravity", "available");
@@ -957,35 +970,23 @@ try {
     onlyProvider: "codex",
     caseName: "retry-launch-budget",
     requestTimeoutMs: 250,
-    retryPolicy: retryPolicyOverrides({ launchLimit: 3, delayMs: 650, warningAfterMs: 450 }),
+    retryPolicy: retryPolicyOverrides({ delayMs: 4, warningAfterMs: 40, maxDelayMs: 4 }),
   });
+  await setProviderControl("codex", { withholdRemaining: 49 });
   await runCauseEffect(budgetRuntime.start());
   const longWarning = await waitFor("the long-running provider warning", async () => {
     const message = providerMessage(budgetRuntime, "codex");
     return message?.includes("24 hours") ? message : null;
   });
   assert.match(longWarning, /still retrying slowly/u);
-  await new Promise((resume) => setTimeout(resume, 60));
-  assert.equal(await providerStartCount("codex", "retry-launch-budget"), 1);
-  await waitFor("the retry episode launch cap", async () => {
-    const count = await providerStartCount("codex", "retry-launch-budget");
-    return count === 3 && providerMessage(budgetRuntime, "codex")?.includes("stopped trying");
-  });
-  const budgetStoppedAtLimit = await providerStartCount("codex", "retry-launch-budget");
-  assert.equal(budgetStoppedAtLimit, 3, "the interim launch cap counts actual provider processes");
-  await new Promise((resume) => setTimeout(resume, 120));
-  assert.equal(await providerStartCount("codex", "retry-launch-budget"), 3, "the capped episode stays paused");
-  await runCauseEffect(budgetRuntime.refreshProvider("codex"));
-  await waitFor(
-    "the explicit refresh to start a new episode",
-    async () => (await providerStartCount("codex", "retry-launch-budget")) >= 4,
-  );
-  await waitFor("the reset episode to reach its own launch cap", async () => {
-    const count = await providerStartCount("codex", "retry-launch-budget");
-    return count === 6 && providerMessage(budgetRuntime, "codex")?.includes("stopped trying");
-  });
-  const explicitRefreshResetBudget = (await providerStartCount("codex", "retry-launch-budget")) === 6;
-  assert.ok(explicitRefreshResetBudget, "an explicit refresh starts a fresh launch budget");
+  await waitForProviderState(budgetRuntime, "codex", "available", PERSISTENT_RETRY_CASE ? 90_000 : 15_000);
+  const budgetStarts = await providerStartCount("codex", "retry-launch-budget");
+  const retriesPastFormerLimitRecovered = budgetStarts === 50;
+  assert.ok(retriesPastFormerLimitRecovered, `recovers on launch 50 after 49 timeouts (saw ${budgetStarts})`);
+  assert.equal(providerMessage(budgetRuntime, "codex"), null, "successful recovery clears the warning");
+  const budgetEvents = await providerEvents("codex", "retry-launch-budget");
+  persistentRetryMaximumConcurrentProcesses = maximumConcurrentProcesses(budgetEvents);
+  assert.equal(persistentRetryMaximumConcurrentProcesses, 1, "retry episode never overlaps provider processes");
   await stopRuntime(budgetRuntime);
 
   await setProviderControl("codex", { initializeBehavior: "withhold" });
@@ -1001,19 +1002,44 @@ try {
   const disposeCancelledRetry = (await providerStartCount("codex", "retry-dispose-cancel")) === 1;
   assert.ok(disposeCancelledRetry, "dispose invalidates the scheduled episode before another launch");
 
+  await setProviderControl("codex", { withholdRemaining: 1 });
+  const refreshRuntime = createRuntime("always-on", {
+    onlyProvider: "codex",
+    caseName: "retry-refresh-cancel",
+    requestTimeoutMs: 250,
+    retryPolicy: retryPolicyOverrides({ delayMs: 900 }),
+  });
+  await runCauseEffect(refreshRuntime.start());
+  await waitFor("the retry timer before explicit refresh", async () => {
+    return (
+      (await providerStartCount("codex", "retry-refresh-cancel")) === 1 &&
+      providerMessage(refreshRuntime, "codex") !== null
+    );
+  });
+  await runCauseEffect(refreshRuntime.refreshProvider("codex"));
+  await waitForProviderState(refreshRuntime, "codex", "available");
+  await new Promise((resume) => setTimeout(resume, 1_000));
+  const refreshCancelledRetry = (await providerStartCount("codex", "retry-refresh-cancel")) === 2;
+  assert.ok(refreshCancelledRetry, "explicit refresh cancels the old timer and starts one fresh provider");
+  await stopRuntime(refreshRuntime);
+
   report.initializationRetry = {
-    codexRecovered: true,
-    antigravityRecovered: true,
+    codexRecovered: !PERSISTENT_RETRY_CASE,
+    antigravityRecovered: !PERSISTENT_RETRY_CASE,
     increasingBackoffObserved,
     longRunningWarningShown: longWarning.includes("24 hours"),
     authRefusalDidNotRetry,
     unknownRefusalDidNotRetry,
     diskRefusalDidNotLaunch,
-    budgetStoppedAtLimit,
-    explicitRefreshResetBudget,
+    retriesPastFormerLimitRecovered,
     disposeCancelledRetry,
+    refreshCancelledRetry,
     antigravityTempRemovedBeforeRetry: antigravityRecovery.tempRemovedBeforeRetry,
-    maxConcurrentRetryProcesses: Math.max(codexRecovery.maximum, antigravityRecovery.maximum),
+    maxConcurrentRetryProcesses: Math.max(
+      persistentRetryMaximumConcurrentProcesses,
+      codexRecovery.maximum,
+      antigravityRecovery.maximum,
+    ),
   };
   report.passed = true;
 } catch (error) {

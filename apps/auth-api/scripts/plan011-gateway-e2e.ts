@@ -27,6 +27,7 @@ const rootDirectory = resolve(appDirectory, "../..");
 const entryPath = join(appDirectory, "src/self-hosted/entry.ts");
 const databaseRoot = join(rootDirectory, ".openbot-build/011-self-hosted");
 const artifactPath = join(rootDirectory, ".openbot-build/011-gateway-e2e.json");
+const smtpArtifactPath = join(rootDirectory, ".openbot-build/011-gateway-smtp-e2e.json");
 const TASK_NAME = "plan011-phase2-self-hosted-auth-http";
 const MIGRATION_ROW_SCHEMA = Schema.Struct({ migration_name: Schema.String, sha256: Schema.String });
 const DECODE_MIGRATION_ROW = Schema.decodeUnknownSync(MIGRATION_ROW_SCHEMA);
@@ -615,7 +616,10 @@ interface LocalSmtpFixture {
   close(): Promise<void>;
 }
 
-async function exerciseNodeSmtpTlsAdapter(directory: string): Promise<void> {
+async function exerciseNodeSmtpTlsAdapter(
+  directory: string,
+  onProgress?: (phase: string) => void | Promise<void>,
+): Promise<void> {
   const relayConfig = {
     host: "localhost",
     port: 465,
@@ -635,6 +639,7 @@ async function exerciseNodeSmtpTlsAdapter(directory: string): Promise<void> {
   const material = await createLocalTlsMaterial(directory);
   const normalFixture = await startLocalSmtpFixture(material.key, material.certificate, "normal");
   try {
+    await onProgress?.("valid TLS send");
     const sent = await runSmtpTlsFixtureClient(normalFixture.port, "localhost", "send", material.trustBundle);
     assert(
       sent.result === "sent" && normalFixture.stats.messages === 1,
@@ -643,6 +648,7 @@ async function exerciseNodeSmtpTlsAdapter(directory: string): Promise<void> {
     report.smtp.validTlsSend = true;
 
     const invalidCa = await runSmtpTlsFixtureClient(normalFixture.port, "localhost", "send");
+    await onProgress?.("untrusted CA rejection");
     assert(
       invalidCa.result !== "sent" && normalFixture.stats.messages === 1,
       "The Node TLS adapter must reject a CA that is not trusted.",
@@ -654,6 +660,7 @@ async function exerciseNodeSmtpTlsAdapter(directory: string): Promise<void> {
 
   const mismatchFixture = await startLocalSmtpFixture(material.key, material.mismatchCertificate, "normal");
   try {
+    await onProgress?.("hostname mismatch rejection");
     const hostnameMismatch = await runSmtpTlsFixtureClient(
       mismatchFixture.port,
       "localhost",
@@ -671,6 +678,7 @@ async function exerciseNodeSmtpTlsAdapter(directory: string): Promise<void> {
 
   const aggregateFixture = await startLocalSmtpFixture(material.key, material.certificate, "aggregate_reply_limit");
   try {
+    await onProgress?.("aggregate SMTP reply limit");
     const result = await runSmtpTlsFixtureClient(aggregateFixture.port, "localhost", "send", material.trustBundle);
     assert(
       result.result === "smtp_response_too_large",
@@ -683,6 +691,7 @@ async function exerciseNodeSmtpTlsAdapter(directory: string): Promise<void> {
 
   const lineFixture = await startLocalSmtpFixture(material.key, material.certificate, "reply_line_limit");
   try {
+    await onProgress?.("SMTP reply line limit");
     const result = await runSmtpTlsFixtureClient(lineFixture.port, "localhost", "send", material.trustBundle);
     assert(result.result === "smtp_response_too_large", "The SMTP parser must cap the number of lines in a reply.");
     report.smtp.responseLineLimitRejected = true;
@@ -691,6 +700,7 @@ async function exerciseNodeSmtpTlsAdapter(directory: string): Promise<void> {
   }
 
   const peerClosed = await runPeerCloseBeforeTlsFixture();
+  await onProgress?.("peer closes before TLS handshake");
   assert(
     peerClosed.result === "rejected" && peerClosed.elapsedMs < 1_500,
     "The TLS opened promise must reject promptly when the peer closes before the handshake.",
@@ -711,6 +721,7 @@ async function createLocalTlsMaterial(directory: string): Promise<LocalTlsMateri
   const caCertificatePath = join(directory, "smtp-test-ca.crt");
   const serverKeyPath = join(directory, "smtp-test-server.key");
   const serverRequestPath = join(directory, "smtp-test-server.csr");
+  const mismatchRequestPath = join(directory, "smtp-test-mismatch-server.csr");
   const serverCertificatePath = join(directory, "smtp-test-server.crt");
   const mismatchCertificatePath = join(directory, "smtp-test-mismatch-server.crt");
   const extensionPath = join(directory, "smtp-test-server.ext");
@@ -749,6 +760,16 @@ async function createLocalTlsMaterial(directory: string): Promise<LocalTlsMateri
     "-subj",
     "/CN=localhost",
   ]);
+  runOpenSsl(directory, [
+    "req",
+    "-new",
+    "-key",
+    serverKeyPath,
+    "-out",
+    mismatchRequestPath,
+    "-subj",
+    "/CN=wrong.invalid",
+  ]);
   await writeFile(
     extensionPath,
     "subjectAltName=DNS:localhost\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n",
@@ -781,7 +802,7 @@ async function createLocalTlsMaterial(directory: string): Promise<LocalTlsMateri
     "x509",
     "-req",
     "-in",
-    serverRequestPath,
+    mismatchRequestPath,
     "-CA",
     caCertificatePath,
     "-CAkey",
@@ -825,6 +846,7 @@ async function startLocalSmtpFixture(
 ): Promise<LocalSmtpFixture> {
   const stats = { messages: 0 };
   const sockets = new Set<TcpSocket>();
+  const tlsSockets = new Set<TLSSocket>();
   const servers: TlsServer[] = [];
   const createFixtureServer = () => {
     const server = createTlsServer({ key, cert: certificate }, (socket) => {
@@ -844,6 +866,10 @@ async function startLocalSmtpFixture(
       sockets.add(socket);
       socket.once("close", () => sockets.delete(socket));
     });
+    server.on("secureConnection", (socket: TLSSocket) => {
+      tlsSockets.add(socket);
+      socket.once("close", () => tlsSockets.delete(socket));
+    });
     server.on("tlsClientError", () => {});
     return server;
   };
@@ -859,6 +885,7 @@ async function startLocalSmtpFixture(
     port,
     stats,
     async close() {
+      for (const socket of tlsSockets) socket.destroy();
       for (const socket of sockets) socket.destroy();
       await Promise.all(servers.map((server) => closeLocalServer(server)));
     },
@@ -956,8 +983,11 @@ async function runSmtpTlsFixtureClient(
 
 async function runPeerCloseBeforeTlsFixture(): Promise<{ result: string; elapsedMs: number }> {
   let connections = 0;
+  const sockets = new Set<TcpSocket>();
   const server: TcpServer = createTcpServer((socket) => {
     connections += 1;
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
     socket.end();
   });
   await new Promise<void>((resolve, reject) => {
@@ -989,6 +1019,7 @@ async function runPeerCloseBeforeTlsFixture(): Promise<{ result: string; elapsed
     assert(typeof result.elapsedMs === "number", "The pre-TLS close fixture must report elapsed time.");
     return { result: result.result, elapsedMs: result.elapsedMs };
   } finally {
+    for (const socket of sockets) socket.destroy();
     await closeLocalServer(server);
   }
 }
@@ -1008,8 +1039,12 @@ async function runSmtpFixtureChild(
   runtimeChildren.push(child);
   child.once("error", () => {});
   let stdout = "";
+  let stderr = "";
   child.stdout?.setEncoding("utf8");
-  child.stderr?.resume();
+  child.stderr?.setEncoding("utf8");
+  child.stderr?.on("data", (chunk: string) => {
+    if (stderr.length < 4_096) stderr += chunk.slice(0, 4_096 - stderr.length);
+  });
   child.stdout?.on("data", (chunk: string) => {
     if (stdout.length < 4_096) stdout += chunk.slice(0, 4_096 - stdout.length);
   });
@@ -1022,10 +1057,12 @@ async function runSmtpFixtureChild(
       closed,
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new Error("The local SMTP TLS fixture client timed out.")), 12_000);
-        timer.unref();
       }),
     ]);
-    assert(closeResult.code === 0, "The local SMTP TLS fixture client must report a result.");
+    assert(
+      closeResult.code === 0,
+      `The local SMTP TLS fixture client must report a result (code=${closeResult.code}, signal=${closeResult.signal ?? "none"}, stderr=${stderr.trim().slice(-500) || "empty"}).`,
+    );
     const output = stdout.trim().split("\n").at(-1);
     const parsed = output ? JSON.parse(output) : null;
     assert(
@@ -1064,7 +1101,7 @@ async function runSmtpTlsFixtureClientProcess(): Promise<void> {
       } catch {
         result = "rejected";
       } finally {
-        socket.close();
+        await socket.close();
       }
       process.stdout.write(`${JSON.stringify({ result, elapsedMs: Date.now() - startedAt })}\n`);
       return;
@@ -1693,6 +1730,45 @@ async function waitForChildExit(child: ChildProcess): Promise<void> {
 
 if (process.argv.includes("--smtp-tls-fixture-client")) {
   await runSmtpTlsFixtureClientProcess();
+} else if (process.argv.includes("--smtp-tls-fixture-e2e")) {
+  await runSmtpTlsFixtureE2E();
 } else {
   await runGatewayE2E();
+}
+
+async function runSmtpTlsFixtureE2E(): Promise<void> {
+  const result: {
+    task: string;
+    result: "pending" | "passed" | "failed";
+    phase?: string;
+    failure?: string;
+    smtp: GatewayE2EReport["smtp"];
+  } = {
+    task: `${TASK_NAME}-smtp-fixture`,
+    result: "pending",
+    smtp: { ...report.smtp },
+  };
+  let directory: string | null = null;
+  const writeSmtpReport = async () => {
+    result.smtp = { ...report.smtp };
+    await mkdir(dirname(smtpArtifactPath), { recursive: true });
+    await writeFile(smtpArtifactPath, `${JSON.stringify(result, null, 2)}\n`, "utf8");
+  };
+  try {
+    directory = await mkdtemp(join(databaseRoot, "smtp-fixture-e2e-"));
+    await writeSmtpReport();
+    await exerciseNodeSmtpTlsAdapter(directory, async (phase) => {
+      result.phase = phase;
+      await writeSmtpReport();
+    });
+    result.result = "passed";
+  } catch (cause) {
+    result.result = "failed";
+    result.failure = errorSummary(cause);
+    process.exitCode = 1;
+  } finally {
+    await writeSmtpReport();
+    if (directory) await rm(directory, { force: true, recursive: true });
+  }
+  process.stdout.write(`${JSON.stringify({ task: result.task, result: result.result })}\n`);
 }

@@ -5,5 +5,5 @@
     "verbatimModuleSyntax": true,
     "incremental": false
   },
-  "include": ["./noise-library-spike.ts"]
+  "include": ["./noise-library-spike.ts", "./loopback-websocket.ts"]
 }

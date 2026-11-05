@@ -1,6 +1,6 @@
 # ADR 011 附录：WSS 端到端协议草案
 
-> **状态**：审查草案，未批准产品实现。此文档只定义待审查的身份角色、状态流和容量边界；在独立 Luna/max 安全审查通过之前，禁止产品 WSS E2E 握手、密文帧或 key management。仅允许使用生成身份、无业务数据和生产凭证的隔离库 feasibility spike。
+> **状态**：审查草案，未批准产品实现。2026-11-05 的隔离证据新增了 `@chainsafe/libp2p-noise@17.0.0` Noise XX 在 Node、Bun、Chromium memory harness 合计 36 项和 Node 24 loopback WebSocket harness 7 项通过的记录；这只支持一个受控、纯本地 development adapter 提案，不代表独立安全审查批准，也不放行产品 WSS、账户票据、真实身份或设备操作。产品 E2E 握手、密文帧、key management、relay 与资源操作继续禁止。实施边界见[development adapter 规格](011-wss-development-adapter.md)。
 > **关联**：[主 ADR](011-client-ecs-adr.md) 与 [Plan 011](../../plans/011-client-ecs-resilience.md)。
 
 ## 安全目标与不变量
@@ -23,26 +23,26 @@
 
 ### 身份与 pinning 方案（待独立审查）
 
-1. Host 与每台客户端创建各自新的持久 libp2p peer identity；身份私钥只留在对应 OS 用户的安全存储/受控目录，不交给 gateway。不要为 Noise 从既有 Ed25519 seed 派生 X25519 secret，也不强行迁移/转换当前 peer key；Noise 库须用其支持的签名身份 binding 将 DH key 绑定到 peer identity。
-2. 首次配对同时要求 Host 本地 owner 操作和 OOB 核对：展示 Host 与设备的身份 fingerprint/短认证串，双方确认后各自保存并 pin 对端 peer identity；Host 本地 grant 保存设备 identity、Host/user、capability ceiling、`grantEpoch`。一次性 challenge 绑定两端 fingerprint 和过期时间，重用或过期均拒绝。ticket、账户 API 或 relay 响应不能自动创建或扩大该 grant。
-3. Noise `XX` 和 `@chainsafe/libp2p-noise@17.0.0` 是隔离 spike 候选，不是已选生产协议。WSS-1 由独立 spike 用生成身份、无业务数据或生产凭证收集库/API 与目标 runtime 兼容证据；可用隔离 harness，不要求完整纯客户端先构建。何种证据足以放行本地协议适配由独立 reviewer 决定；实际 Mac/WinARM/Android 设备仍需发布验收。不能改用手写 Noise，也不能把 pinning/握手说成已批准。
-4. 已配对后，relay 单独持有外层路由不能冒充被 pin 的端点或解密业务帧。身份 rotation 必须由旧 identity 签署 handover 并经端点 grant 验证，或重新执行 owner/OOB 配对；account/gateway 更新本身不得替换 pin。每次轮换的重叠窗口和撤销次序需在复审前定稿。
+1. Host 与每台客户端使用独立的持久 libp2p Ed25519 peer identity；身份私钥由对应 OS 用户的安全存储接口持有，不交给 gateway。不得从 Ed25519 seed 派生 X25519 secret，也不得静默迁移现有 peer key。Noise 库用 signed identity binding 将其临时 X25519 static key 绑定到 Ed25519 peer identity。
+2. 首次配对要求 Host owner 和设备 owner 双向完成 OOB 核对：双方显示各自身份 fingerprint 与同一短认证串；双方分别确认后，各自 pin 对端 peer identity。Host 本地 grant 绑定 Host/user/device、capability ceiling 和 `grantEpoch`。短时一次性 challenge 绑定两端 fingerprint、grant 范围及 expiry；它只消费一次，重复或过期拒绝。账户 API、ticket 或 relay 响应不能创建或扩大 grant。
+3. 本地 development adapter 使用 `Noise_XX_25519_ChaChaPoly_SHA256`、`@chainsafe/libp2p-noise@17.0.0`。Client 是逻辑 Initiator，Agent Host 是 Responder，与两端谁先连接 WebSocket 无关。此选型只适用于受控本地 adapter；生产选择仍待独立安全审查及平台验证。不得手写 Noise，也不得降级到 TLS-only。
+4. 身份 rotation 采用无授权重叠的两阶段 handover：新 key 先生成且保持未激活；旧、新身份共同签署带 domain separator 的 handover，内容绑定 Host/device peer ID、grant ID、当前与下一 `grantEpoch`、nonce 和短 expiry；Host owner 再做一次 OOB 确认。Host 持久提交新 pin 和 `grantEpoch+1` 后才撤销旧 pin 并关闭旧 session。提交前仅旧身份有效；提交后仅新身份可建立 session。不能验证旧 key 时，必须走新的双向 owner/OOB 配对。账户/gateway 更新不能替换 pin。
 5. 新的持久 `grantEpoch` 随单设备 grant 变更；账户 `authEpoch` 随账户/成员权限变更。ECS durable revoke outbox 是快速传播渠道；Host 同时按下述授权 lease 检查 freshness。断线 Host 不声称已实时撤销，过期授权不能被 relay ticket 延长。
 
 ## 握手/建链草案
 
-以下是协议角色和状态，不是可直接编码的握手字节格式；Noise library 参数、transcript、key encoding 与身份目录签名都由独立审查确定。
+本协议附录及[development adapter 规格](011-wss-development-adapter.md)给出本地实验所用字段编码。生产 wire format 仍未批准，产品代码不得据此开启握手或发送 frame。
 
 1. Client 与 Host 分别向自有账户 API 获取短期、限 audience 的路由 ticket/授权 lease。签名根由受信 ECS 账户控制面持有。lease 绑定 user、membership、Host、device peer fingerprint、Host 本地 grant、capability 集、`authEpoch` 和 `grantEpoch`；私钥不进入 ticket。ECS-root compromise 不在本设计的防护范围。
 2. 两端通过 `/v1/relay` WSS 443 向 gateway 注册。gateway 校验票据签名/过期/基本 route scope，创建有时限、容量受限的双向 relay；Host 不接受任意未授权 peer route。
 3. Client 请求到特定 Host/device grant 的 E2E session。gateway 转发初始 handshake bytes；Client 核对已 pin 的 Host fingerprint，Host 核对已 pin 的 device peer identity、当前用户成员、Host 本地 grant 与 capability/epoch。
-4. 仅在库选型和协议审查通过后，成熟 Noise 标准库负责互相认证和会话密钥导出。每次重连重新握手并产生新密钥；握手失败、fingerprint 不符、版本不支持或 epoch 已变均拒绝连接，不降级到明文。
+4. 本地 adapter 使用 Noise XX 互相认证，校验 `remotePeer` 等于已 pin 的 peer ID。每次重连重新握手并产生新密钥；握手失败、fingerprint 不符、版本不支持或 epoch 已变均拒绝连接，不降级到明文。此本地行为不构成生产密码学批准。
 5. 应用协议的请求/事件均在加密 payload 内。gateway 仅转发外层 routing envelope，不把 relay ACK 当成 Host 持久化 receipt。认证、握手完成和消息已写入 Host SQLite 是不同状态。
 
 ### 待独立审查的安全问题
 
-- Noise `XX` 成熟实现与 peer identity binding：选定精确库版本/API、认证 transcript、Electron macOS/Windows ARM64 和真实 Android runtime 兼容、前向保密与 key compromise recovery。隔离 spike 只提供证据，不是生产审查批准。
-- Host-local owner/OOB pairing 是否防止控制面/gateway 替换身份，双向 fingerprint 的呈现与核对，peer identity rotation 和旧 key 撤销顺序。
+- Noise `XX` 成熟实现与 peer identity binding：独立审查库 API 与认证 transcript、签名 binding、前向保密与 key compromise recovery；隔离 Node 证据不是生产批准。Electron macOS/Windows ARM64 和真实 Android runtime 需在发布前验证。
+- Host-local owner/OOB pairing 是否防止控制面/gateway 替换身份，双向 fingerprint 的呈现与核对，以及本文 handover 的持久提交/崩溃恢复。
 - Host offline 时 grant revoke/`authEpoch` 的陈旧度与授权 lease 时序；新 lease、旧会话和离线设备重连的拒绝次序。
 - Gateway 完全恶意时的 host/device impersonation、route substitution、frame replay/reorder/drop、流量分析及 metadata 泄漏。
 - Noise rekey/session lifetime、跨重启 counter reset、并发 session、旧 generation 迟到帧与 key zeroization。
@@ -67,7 +67,7 @@ EncryptedEnvelope {
 }
 ```
 
-具体字段编码和哪些元数据保持外露要由安全审查定稿。废弃/过期 epoch 的帧丢弃；sequence 重复或倒退拒绝；`requestId`/`operationId` 在业务层幂等，不以 packet ACK 推断业务动作完成。Grant epoch 更新即关闭旧 grant 的数据/terminal/API channels。
+本地 adapter 的字段编号、CBOR canonical 编码、长度和严格拒绝规则见新规格。产品外层 route 元数据仍待 security review 定稿。废弃/过期 epoch 的帧丢弃；sequence 必须逐方向严格递增且连续；`requestId`/`operationId` 在业务层幂等，不以 packet ACK 推断业务动作完成。Grant epoch 更新即关闭旧 grant 的数据/terminal/API channels。
 
 客户端重连先恢复身份与 Host/device epoch，再按授权域游标同步。每个游标按 `(host, user, device, grant, capability, hostEpoch)` 隔离，并携带/校验当前 `authEpoch` 和 `grantEpoch`；事件必须先做 membership、grant、capability、OS 权限过滤，再编号或推进 cursor。权限/epoch 改变使旧 cursor 失效并要求新授权快照。旧 generation 迟到帧不得覆盖新状态。Provider turn 状态不明时查询原 turn/session；不能通过重放 terminal command 或有副作用的 turn 来“恢复”。
 
@@ -103,6 +103,6 @@ Host 只在授权检查及 `openbot.db` 中权威 receipt 与幂等键同一事�
 
 ## Review 和未实现项
 
-独立审查通过条件：选定成熟握手库及标准 pattern；pair bootstrap、Host pin、device key、revoke 和 rotation 的数据流闭环；恶意 gateway 下不能冒充 peer 或篡改业务身份；nonce/replay/rekey/epoch 行为由 library 与协议共同保证；帧和文件流容量上限可安全背压；event sidecar 没有未解决的权威性/原子性承诺。
+本地 harness 新证据不改变[独立安全审查结论](011-wss-security-review.md)。独立审查通过条件：确认成熟握手库及标准 pattern；pair bootstrap、Host pin、device key、revoke 和 rotation 的数据流闭环；恶意 gateway 下不能冒充 peer 或篡改业务身份；nonce/replay/rekey/epoch 行为由 library 与协议共同保证；帧和文件流容量上限可安全背压；event sidecar 没有未解决的权威性/原子性承诺。
 
-本草案没有线格式、密码库选择结论、测试向量或实现代码。安全审查失败或缺少身份/bootstrap 证据时保持 WSS E2E 停止；Surface 的 Provider 常驻原型、本地 SQLite adapter 和 ECS HTTP 骨架可独立继续。
+本草案含有受控本地 adapter 的候选线格式，但没有任何生产批准的线格式、密码库选择结论、测试向量或产品实现代码。安全审查失败或缺少身份/bootstrap 证据时保持 WSS E2E 停止；Surface 的 Provider 常驻原型、本地 SQLite adapter 和 ECS HTTP 骨架可独立继续。

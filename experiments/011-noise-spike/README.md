@@ -9,6 +9,21 @@ The package source and exact dependency pins are tracked here. It is outside the
 `scripts/**/*.ts` TypeScript project. Its runner writes results to the ignored
 `.openbot-build/011-noise-spike/evidence/` directory.
 
+## Loopback WebSocket experiment
+
+`npm run loopback:node` runs a separate, Node-only harness. It binds an ephemeral port on
+`127.0.0.1`, opens a real TCP WebSocket, then carries the same library's Noise XX handshake and
+encrypted binary records over it. It checks peer identity, encrypted data, a fresh handshake after
+disconnect, rejection of prior-session ciphertext, a wrong expected identity, and tampered
+ciphertext. It prints a JSON result to stdout. Generated identities and session keys stay in
+memory. It also writes the report to the ignored
+`.openbot-build/011-noise-spike/loopback-websocket-report.json` file.
+
+This is an isolated experiment adapter. It has no TLS, public network listener, account ticket,
+gateway, product identity, authorization grant, durable queue, application message ID, or receipt.
+It does not show public relay, reconnect delivery, offline recovery, message idempotency, or
+production WSS approval. A reconnect creates a new Noise session; it does not restore messages.
+
 ## Reproduce
 
 Use Node.js 24, Bun 1.4.2, and Chromium. From this directory, install only this package's frozen
@@ -46,10 +61,11 @@ never printed or written.
 
 ## Limits
 
-This harness checks a local library boundary only. It does not test a WebSocket or WSS transport,
-framing, fragmentation, routing, reconnect, relay behavior, product grants, persistent identity,
-pairing, key rotation, authorization leases, product frames, application receipts, or OS operations.
-A pass does not approve product WSS or key management.
+The original Node/Bun/Chromium harness checks a local library boundary with memory transport. The
+separate Node loopback harness checks only a local WebSocket carrier for that library. Neither
+tests product WSS, a public relay, product framing, fragmentation, routing, durable reconnect,
+product grants, persistent identity, pairing, key rotation, authorization leases, application
+receipts, or OS operations. A pass does not approve product WSS or key management.
 
 Only Linux x64 Node, Bun, and Chromium are exercised here. Physical Electron macOS ARM64, Electron
 Windows ARM64, and Android WebView remain untested. This package does not claim portability to those

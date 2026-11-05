@@ -1,0 +1,4 @@
+- [x] Read repository rules and WSS development adapter receipt/cursor constraints.
+- [x] Add an isolated Node 24 SQLite fixture store with scoped durable receipts and event cursors.
+- [x] Add a narrow crash/reopen scenario harness and scope README.
+- [x] Run the focused scenario and project TypeScript check after the parent released the exclusive slot.

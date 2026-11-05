@@ -1,0 +1,10 @@
+{
+  "name": "011-message-recovery-fixture",
+  "version": "0.0.0",
+  "private": true,
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "type": "module",
+  "scripts": {
+    "scenario": "node --experimental-strip-types ./scenario.ts"
+  }
+}

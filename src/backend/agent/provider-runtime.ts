@@ -174,8 +174,6 @@ const INITIALIZATION_RETRY_INITIAL_DELAYS_MS = [5_000, 10_000, 20_000] as const;
 const INITIALIZATION_RETRY_MAX_DELAY_MS = 60 * 60_000;
 const INITIALIZATION_RETRY_WARNING_AFTER_MS = 24 * 60 * 60_000;
 const INITIALIZATION_RETRY_DISK_CHECK_MS = 60 * 60_000;
-/** Interim process-local cap until the target Windows Surface has passed an initialization fault soak. */
-const INITIALIZATION_RETRY_LAUNCH_LIMIT = 48;
 /** How often a restart the user asked for checks whether the provider's turns have ended. */
 const PROVIDER_RESTART_POLL_MS = 1_000;
 /** The start failure of OpenCode 1 on a database that OpenCode 2 made. */
@@ -186,14 +184,12 @@ interface InitializationRetryPolicy {
   maxDelayMs: number;
   warningAfterMs: number;
   diskSpaceCheckMs: number;
-  launchLimit: number;
   jitter(delayMs: number): number;
 }
 
 interface InitializationRetryEpisode {
   readonly id: number;
   readonly startedAt: number;
-  launches: number;
   timeoutFailures: number;
   warningShown: boolean;
   retryAt: number | null;
@@ -571,7 +567,6 @@ export class ProviderRuntime implements ProviderPort {
       maxDelayMs: options.testInitializationRetryPolicy?.maxDelayMs ?? INITIALIZATION_RETRY_MAX_DELAY_MS,
       warningAfterMs: options.testInitializationRetryPolicy?.warningAfterMs ?? INITIALIZATION_RETRY_WARNING_AFTER_MS,
       diskSpaceCheckMs: options.testInitializationRetryPolicy?.diskSpaceCheckMs ?? INITIALIZATION_RETRY_DISK_CHECK_MS,
-      launchLimit: options.testInitializationRetryPolicy?.launchLimit ?? INITIALIZATION_RETRY_LAUNCH_LIMIT,
       jitter:
         options.testInitializationRetryPolicy?.jitter ??
         ((delayMs) => Math.round(delayMs * (0.8 + Math.random() * 0.4))),
@@ -3501,7 +3496,6 @@ export class ProviderRuntime implements ProviderPort {
         let stage = "cli";
         let stageStartedAt = performance.now();
         let startTimeoutMs: number | undefined;
-        let childLaunched = false;
         const retryId = initializationRetryId;
         const retryIsCurrent = () => retryId === undefined || this.#isInitializationRetryCurrent(provider, retryId);
         const stageMs = () => Math.round(performance.now() - stageStartedAt);
@@ -3537,11 +3531,6 @@ export class ProviderRuntime implements ProviderPort {
           yield* providerStep(() => {
             this.#bindClient(candidate);
             candidate.start();
-            childLaunched = true;
-            if (retryId !== undefined && retryIsCurrent()) {
-              const episode = this.#initializationRetryEpisodes.get(provider);
-              if (episode) episode.launches += 1;
-            }
           });
           // A connect of several providers waits for all of them, as a launch does.
           startTimeoutMs =
@@ -3655,7 +3644,7 @@ export class ProviderRuntime implements ProviderPort {
               ) {
                 this.#recordProviderError(provider, error);
                 this.#countSlowStart(provider, startTimeoutMs);
-                const episode = this.#recordInitializationTimeout(provider, retryId, childLaunched);
+                const episode = this.#recordInitializationTimeout(provider, retryId);
                 if (!episode) return null;
                 const message = this.#queueInitializationRetry(provider, episode);
                 this.#setStatus({
@@ -4059,7 +4048,6 @@ export class ProviderRuntime implements ProviderPort {
     const episode: InitializationRetryEpisode = {
       id: nextId,
       startedAt: Date.now(),
-      launches: 0,
       timeoutFailures: 0,
       warningShown: false,
       retryAt: null,
@@ -4069,14 +4057,9 @@ export class ProviderRuntime implements ProviderPort {
     return episode;
   }
 
-  #recordInitializationTimeout(
-    provider: AgentProvider,
-    id: number | undefined,
-    childLaunched: boolean,
-  ): InitializationRetryEpisode | null {
+  #recordInitializationTimeout(provider: AgentProvider, id: number | undefined): InitializationRetryEpisode | null {
     const episode = this.#getOrStartInitializationRetry(provider, id);
     if (!episode) return null;
-    if (id === undefined && childLaunched) episode.launches += 1;
     episode.timeoutFailures += 1;
     return episode;
   }
@@ -4085,11 +4068,6 @@ export class ProviderRuntime implements ProviderPort {
     episode.lastMessage = sourceText("error.provider.cliTimedOut", { provider: providerLabel(provider) });
     const elapsed = Date.now() - episode.startedAt;
     if (elapsed >= this.#initializationRetryPolicy.warningAfterMs) episode.warningShown = true;
-    if (episode.launches >= this.#initializationRetryPolicy.launchLimit) {
-      episode.retryAt = null;
-      this.#clearInitializationRetryTimer(provider, episode.id);
-      return this.#startStoppedMessage(provider);
-    }
     const baseDelay = episode.warningShown
       ? this.#initializationRetryPolicy.maxDelayMs
       : this.#initializationRetryDelay(episode.timeoutFailures);
@@ -4104,11 +4082,6 @@ export class ProviderRuntime implements ProviderPort {
   #queueInitializationDiskCheck(provider: AgentProvider, episode: InitializationRetryEpisode, message: string): string {
     episode.lastMessage = message;
     if (Date.now() - episode.startedAt >= this.#initializationRetryPolicy.warningAfterMs) episode.warningShown = true;
-    if (episode.launches >= this.#initializationRetryPolicy.launchLimit) {
-      episode.retryAt = null;
-      this.#clearInitializationRetryTimer(provider, episode.id);
-      return this.#startStoppedMessage(provider);
-    }
     this.#scheduleInitializationRetry(provider, episode, this.#initializationRetryPolicy.diskSpaceCheckMs);
     return this.#initializationRetryMessage(provider, episode);
   }
@@ -4124,7 +4097,6 @@ export class ProviderRuntime implements ProviderPort {
   }
 
   #initializationRetryMessage(provider: AgentProvider, episode: InitializationRetryEpisode): string {
-    if (episode.launches >= this.#initializationRetryPolicy.launchLimit) return this.#startStoppedMessage(provider);
     if (!episode.warningShown)
       return episode.lastMessage ?? sourceText("error.provider.cliTimedOut", { provider: providerLabel(provider) });
     const warning = sourceText("error.provider.initRetryLongRunning", { provider: providerLabel(provider) });
@@ -4204,10 +4176,6 @@ export class ProviderRuntime implements ProviderPort {
     const episode = this.#initializationRetryEpisodes.get(provider);
     if (!episode) return;
     if (episode.retryAt !== null || this.#initializationRetryTimerIds.get(provider) === id) return;
-    if (episode.launches >= this.#initializationRetryPolicy.launchLimit) {
-      this.#publishInitializationRetryStatus(provider, episode);
-      return;
-    }
     if (
       this.#hooks.isStopping() ||
       disposals !== this.#disposals ||
