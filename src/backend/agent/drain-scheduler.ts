@@ -3,7 +3,7 @@ import { AGENT_PROVIDERS, type AgentModelOption, type AgentSummary } from "@open
 import { sourceText } from "@openbot/i18n/source";
 import { createOpenBotLogger } from "@openbot/logging";
 import { Deferred, Effect, Result, Schema } from "effect";
-import { type AgentProvider, ProviderTurnActiveError } from "../agent-client";
+import { type AgentProvider, ProviderTurnActiveError, RequestOutcomeUnknownError } from "../agent-client";
 import type { AgentStore } from "../agent-store";
 import type { ChannelService } from "../channel-service";
 import { causeHelpers } from "../effect-boundary";
@@ -981,12 +981,15 @@ export class DrainScheduler {
             this.#mailboxSync.emitQueue(delivery.recipientAgentId);
             return;
           }
-          if (isRequestTimeout(error, "turn/start")) {
+          const startOutcomeUnknown =
+            isRequestTimeout(error, "turn/start") ||
+            (error instanceof RequestOutcomeUnknownError && error.method === "turn/start");
+          if (startOutcomeUnknown) {
             turnMayRun = true;
             this.#channels?.deliveryUncertain(delivery.id);
             this.#hooks.emitError(
               "delivery_start_unconfirmed",
-              `${error.providerName} did not confirm the turn start in time. OpenBot will wait for lifecycle events instead of retrying potentially duplicated work.`,
+              `${error.providerName} did not confirm the turn start. OpenBot will wait for lifecycle events instead of retrying potentially duplicated work.`,
               delivery.recipientAgentId,
             );
             // The wait has a limit: a turn that never starts would keep these messages starting, and

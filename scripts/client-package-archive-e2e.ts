@@ -14,6 +14,15 @@ import {
 } from "../src/main/client-product";
 import { assertNoResourceSymlinks, listMacBundleFiles, verifyClientArchive } from "./verify-client-package";
 
+const CLIENT_RENDERER_IMAGE_ASSETS = [
+  "out-client/renderer/assets/ball-pink.webp",
+  "out-client/renderer/assets/ball-lilac.webp",
+  "out-client/renderer/assets/ball-mint.webp",
+  "out-client/renderer/assets/eye-right.webp",
+  "out-client/renderer/assets/eye-left.webp",
+  "out-client/renderer/assets/body-lilac.webp",
+];
+
 const logger = createOpenBotLogger("client-package-archive-e2e");
 const outputDirectory = resolve(".openbot-build/client-package-archive-e2e");
 
@@ -119,6 +128,7 @@ async function createPackageSource(root: string): Promise<void> {
     CLIENT_RENDERER_HTML,
     CLIENT_RENDERER_ENTRY,
     CLIENT_RENDERER_STYLES,
+    ...CLIENT_RENDERER_IMAGE_ASSETS,
   ]) {
     await mkdir(dirname(join(root, path)), { recursive: true });
   }
@@ -129,6 +139,10 @@ async function createPackageSource(root: string): Promise<void> {
   await writeFile(join(root, CLIENT_RENDERER_HTML), '<div id="root"></div>\n');
   await writeFile(join(root, CLIENT_RENDERER_ENTRY), "client account renderer\n");
   await writeFile(join(root, CLIENT_RENDERER_STYLES), "client account styles\n");
+  for (const path of CLIENT_RENDERER_IMAGE_ASSETS) {
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await writeFile(join(root, path), "WEBP test fixture\n");
+  }
   await writeFile(
     join(root, "package.json"),
     JSON.stringify({ name: "feitu-openbot-client", main: CLIENT_MAIN_ARTIFACT }),
@@ -151,6 +165,7 @@ async function createLinkArchive(
     [join("out-client", "renderer", "client.html"), CLIENT_RENDERER_HTML],
     [join("out-client", "renderer", "client-entry.js"), CLIENT_RENDERER_ENTRY],
     [join("out-client", "renderer", "client-entry.css"), CLIENT_RENDERER_STYLES],
+    ...CLIENT_RENDERER_IMAGE_ASSETS.map((path) => [path, path] as const),
   ];
   for (const [sourceName, archiveName] of packageFiles) {
     streams.push(await fileStream(join(packageSource, sourceName), archiveName));

@@ -23,6 +23,7 @@ import type { AgentBrowserHost } from "../src/backend/agent/turn-lifecycle";
 import { getRecord, getString, isRecord } from "../src/backend/protocol";
 
 const OUT = resolve(import.meta.dirname, "../.openbot-build/stuck-running-deliveries-e2e");
+const selectedCase = process.argv.includes("--case=e") ? "e" : process.argv.includes("--case=i") ? "i" : null;
 const root = await mkdtemp(join(tmpdir(), "openbot-stuck-deliveries-"));
 const userData = join(root, "user-data");
 const home = join(root, "home");
@@ -227,6 +228,18 @@ function codexStarts(): number {
   }
 }
 
+function fakeTurnEnded(turnId: string): boolean {
+  try {
+    return readFileSync(logPath, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line): unknown => JSON.parse(line))
+      .some((entry) => isRecord(entry) && getString(entry, "turnEnded") === turnId);
+  } catch {
+    return false;
+  }
+}
+
 /** Waits for a state of the service. Gives null when the state does not come in time. */
 async function waitFor<T>(read: () => T | null | undefined | false, timeoutMs = SETTLE_MS): Promise<T | null> {
   const deadline = Date.now() + timeoutMs;
@@ -343,6 +356,66 @@ async function queueSecond(instance: Instance, agentId: string): Promise<string>
   return deliveryId;
 }
 
+async function stopDuringTurnEnd(
+  instance: Instance,
+  details: Details,
+): Promise<
+  "The second delivery was not queued." | "Stop settled a turn that completed." | "The turn did not end once." | null
+> {
+  // Hold the terminal write while the normal turn end runs. The test stops at the provider end
+  // operation itself, not at a timestamp that can still be null before the second turn starts.
+  await control({ holdTurns: false, turnMs: 1_000, startedFirst: true });
+  const target = await agentWithRunningTurn(instance, "Stop during end");
+  const markTerminal = instance.mailbox.markTerminal;
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let queuedId: string | null = null;
+  let terminalReached = false;
+  instance.mailbox.markTerminal = (deliveryId, terminal, error = null) => {
+    if (deliveryId !== queuedId) return markTerminal(deliveryId, terminal, error);
+    terminalReached = true;
+    return markTerminal(deliveryId, terminal, error).pipe(Effect.andThen(Effect.promise(() => gate)));
+  };
+  const completions: string[] = [];
+  const starts: string[] = [];
+  const onEvent = (event: AgentEvent) => {
+    if (event.type === "turn-started" && event.agentId === target.agentId) starts.push(event.turnId);
+    if (event.type === "turn-completed" && event.agentId === target.agentId) completions.push(event.turnId);
+  };
+  instance.agents.on("event", onEvent);
+  try {
+    queuedId = await queueSecond(instance, target.agentId);
+    const turnId = await need("the second turn", () => starts.find((started) => started !== target.turnId) ?? null);
+    await need("the second turn to start", () => (starts.includes(turnId) ? turnId : null));
+    await need("the provider to end the second turn", () => (fakeTurnEnded(turnId) ? turnId : null));
+    await need("the turn end to reach its terminal write", () => (terminalReached ? true : null));
+    details.stop = await runCauseEffect(instance.agents.interrupt(target.agentId, turnId)).then(
+      () => "sent",
+      (error: unknown) => (error instanceof Error ? error.message : String(error)),
+    );
+    release();
+    await waitFor(
+      () => queuedId !== null && isTerminal(status(instance.mailbox, queuedId)) && completions.includes(turnId),
+    );
+    details.turnRow = turnRow(instance.database, turnId);
+  } finally {
+    release();
+    instance.mailbox.markTerminal = markTerminal;
+    instance.agents.off("event", onEvent);
+  }
+  if (!queuedId) return "The second delivery was not queued.";
+  details.first = status(instance.mailbox, target.deliveryId);
+  details.second = status(instance.mailbox, queuedId);
+  details.completions = completions;
+  details.starts = starts;
+  if (status(instance.mailbox, queuedId) !== "completed") return "Stop settled a turn that completed.";
+  if (completions.filter((completed) => completed === starts.find((started) => started !== target.turnId)).length !== 1)
+    return "The turn did not end once.";
+  return null;
+}
+
 async function runCase(name: string, body: (details: Details) => Promise<string | null>) {
   const details: Details = {};
   let failure: string | null;
@@ -359,7 +432,127 @@ const injected = (label: string) => new Error(`Injected ${label} failure (#2214 
 await writeFile(fakeCodex, FAKE_CODEX, { mode: 0o755 });
 let current: Instance | null = null;
 
+async function lostReplyCase(details: Details): Promise<string | null> {
+  const beforeLostReply = current;
+  if (!beforeLostReply) return "The service instance is not running.";
+  await control({
+    holdTurns: false,
+    turnMs: 0,
+    withholdTurnStartReply: true,
+    exitAfterUnansweredStartMs: LOST_REPLY_EXIT_MS,
+  });
+  const target = await runCauseEffect(
+    beforeLostReply.agents.createAgent({
+      name: "Lost start reply",
+      description: "Checks that ambiguous provider work is not submitted again.",
+      avatarSeed: "lost-start-reply",
+      avatarHue: null,
+      initialMessage: "This message may have reached the provider.",
+    }),
+  );
+  const deliveryId = await need(
+    "the delivery with an unanswered turn start",
+    () => beforeLostReply.agents.listQueue(target.id).deliveries[0]?.id,
+  );
+  const accepted = await need("the fake provider to accept turn/start", () => {
+    try {
+      return readFileSync(logPath, "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map((line): unknown => JSON.parse(line))
+        .find(
+          (entry) =>
+            isRecord(entry) &&
+            getString(entry, "method") === "turn-start-accepted-without-reply" &&
+            getString(entry, "clientUserMessageId") === deliveryId,
+        );
+    } catch {
+      return null;
+    }
+  });
+  if (!isRecord(accepted) || typeof accepted.pid !== "number")
+    return "The fake provider acceptance event has no process id.";
+  await need("the fake provider to exit before answering turn/start", () => {
+    try {
+      return readFileSync(logPath, "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map((line): unknown => JSON.parse(line))
+        .find(
+          (entry) => isRecord(entry) && getString(entry, "method") === "process-exit" && entry.pid === accepted.pid,
+        );
+    } catch {
+      return null;
+    }
+  });
+  const uncertainError = await need(
+    "the ambiguous outcome to be reported",
+    () => beforeLostReply.errors.find((event) => event.code === "delivery_start_unconfirmed") ?? null,
+  );
+  details.outcomeReportedUncertain = uncertainError.code === "delivery_start_unconfirmed";
+  details.outcomeReportedFailed = beforeLostReply.errors.some((event) => event.code === "delivery_start_failed");
+  await shutdown(beforeLostReply);
+  current = null;
+  const recovered = await start(2_000);
+  current = recovered;
+  const recoveryError = await initialize(recovered);
+  details.recoveryError = recoveryError;
+  await need("the ambiguous delivery to settle from empty provider history", () => {
+    const state = status(recovered.mailbox, deliveryId);
+    return isTerminal(state) ? state : null;
+  });
+  const waitAfterRecoveryMs = 300;
+  await new Promise((done) => setTimeout(done, waitAfterRecoveryMs));
+  const starts = readFileSync(logPath, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((line): unknown => JSON.parse(line))
+    .filter(
+      (entry) =>
+        isRecord(entry) &&
+        getString(entry, "method") === "turn/start" &&
+        getString(getRecord(entry, "params"), "clientUserMessageId") === deliveryId,
+    ).length;
+  const finalStatus = status(recovered.mailbox, deliveryId);
+  details.deliveryId = deliveryId;
+  details.finalStatus = finalStatus;
+  details.turnStartsForDelivery = starts;
+  details.waitAfterRecoveryMs = waitAfterRecoveryMs;
+  details.providerAcceptedBeforeExit = true;
+  if (recoveryError) return "The service restart failed.";
+  if (!details.outcomeReportedUncertain) return "The unanswered written turn start was not classified as uncertain.";
+  if (details.outcomeReportedFailed) return "The unanswered written turn start was classified as failed.";
+  if (finalStatus !== "interrupted") return `The uncertain delivery settled as ${finalStatus}, not interrupted.`;
+  if (starts !== 1) return `The uncertain delivery was submitted ${starts} times.`;
+  return null;
+}
+
 try {
+  if (selectedCase) {
+    await control({ holdTurns: false, turnMs: 0 });
+    current = await start();
+    const startupError = await initialize(current);
+    if (startupError) throw new Error(`The selected case could not start: ${startupError}`);
+    const selected = current;
+    if (!selected) throw new Error("The selected case has no running service.");
+    await runCase(
+      selectedCase === "e"
+        ? "e: Stop while the turn end runs"
+        : "i: a lost turn/start reply is not replayed at restart",
+      async (details) => (selectedCase === "e" ? stopDuringTurnEnd(selected, details) : lostReplyCase(details)),
+    );
+    report.passed = report.cases.length === 1 && report.cases.every((entry) => entry.passed);
+    if (!report.passed) process.exitCode = 1;
+    if (current) await shutdown(current);
+    current = null;
+    report.codexStarts = codexStarts();
+    mkdirSync(OUT, { recursive: true });
+    writeFileSync(join(OUT, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
+    await rm(root, { recursive: true, force: true });
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    process.exit(process.exitCode ?? 0);
+  }
+
   // (a) Three agents with a turn that runs when OpenBot stops, and a second message in each queue.
   await control({ holdTurns: true, turnMs: 0 });
   const first = await start();
@@ -551,49 +744,7 @@ try {
   });
 
   await runCase("e: Stop while the turn end runs", async (details) => {
-    // `turn/started` comes first, so the turn takes its delivery itself. That write is held, and the
-    // normal end of the turn waits for it: a Stop in that wait comes after the provider ended the
-    // turn and before the end settled it.
-    await control({ holdTurns: false, turnMs: 1_000, startedFirst: true });
-    const target = await agentWithRunningTurn(second, "Stop during end");
-    const queuedId = await queueSecond(second, target.agentId);
-    const markRunning = mailbox.markRunning;
-    let release = () => {};
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    let secondTurnId: string | null = null;
-    mailbox.markRunning = (deliveryId, turnId) => {
-      if (deliveryId !== queuedId) return markRunning(deliveryId, turnId);
-      secondTurnId = turnId;
-      return markRunning(deliveryId, turnId).pipe(Effect.andThen(Effect.promise(() => gate)));
-    };
-    const completions: string[] = [];
-    const onEvent = (event: AgentEvent) => {
-      if (event.type === "turn-completed" && event.agentId === target.agentId) completions.push(event.turnId);
-    };
-    second.agents.on("event", onEvent);
-    try {
-      const turnId = await need("the second turn", () => secondTurnId);
-      await need("the end of the second turn", () => second.agents.earliestRunningTurnStartedAt() === null);
-      details.stop = await runCauseEffect(second.agents.interrupt(target.agentId, turnId)).then(
-        () => "sent",
-        (error: unknown) => (error instanceof Error ? error.message : String(error)),
-      );
-      release();
-      await waitFor(() => isTerminal(status(mailbox, queuedId)) && completions.includes(turnId));
-      details.turnRow = turnRow(second.database, turnId);
-    } finally {
-      release();
-      mailbox.markRunning = markRunning;
-      second.agents.off("event", onEvent);
-    }
-    details.first = status(mailbox, target.deliveryId);
-    details.second = status(mailbox, queuedId);
-    details.completions = completions;
-    if (status(mailbox, queuedId) !== "completed") return "Stop settled a turn that completed.";
-    if (completions.filter((turnId) => turnId === secondTurnId).length !== 1) return "The turn did not end once.";
-    return null;
+    return stopDuringTurnEnd(second, details);
   });
 
   await runCase("f: a turn end that fails after its deliveries settled closes the stored turn", async (details) => {
@@ -720,92 +871,7 @@ try {
     return null;
   });
 
-  await runCase("i: a lost turn/start reply is not replayed at restart", async (details) => {
-    const beforeLostReply = current;
-    if (!beforeLostReply) return "The service instance is not running.";
-    await control({
-      holdTurns: false,
-      turnMs: 0,
-      withholdTurnStartReply: true,
-      exitAfterUnansweredStartMs: LOST_REPLY_EXIT_MS,
-    });
-    const target = await runCauseEffect(
-      beforeLostReply.agents.createAgent({
-        name: "Lost start reply",
-        description: "Checks that ambiguous provider work is not submitted again.",
-        avatarSeed: "lost-start-reply",
-        avatarHue: null,
-        initialMessage: "This message may have reached the provider.",
-      }),
-    );
-    const deliveryId = await need(
-      "the delivery with an unanswered turn start",
-      () => beforeLostReply.agents.listQueue(target.id).deliveries[0]?.id,
-    );
-    const accepted = await need("the fake provider to accept turn/start", () => {
-      try {
-        return readFileSync(logPath, "utf8")
-          .split("\n")
-          .filter(Boolean)
-          .map((line): unknown => JSON.parse(line))
-          .find(
-            (entry) =>
-              isRecord(entry) &&
-              getString(entry, "method") === "turn-start-accepted-without-reply" &&
-              getString(entry, "clientUserMessageId") === deliveryId,
-          );
-      } catch {
-        return null;
-      }
-    });
-    if (!isRecord(accepted) || typeof accepted.pid !== "number")
-      return "The fake provider acceptance event has no process id.";
-    await need("the fake provider to exit before answering turn/start", () => {
-      try {
-        return readFileSync(logPath, "utf8")
-          .split("\n")
-          .filter(Boolean)
-          .map((line): unknown => JSON.parse(line))
-          .find(
-            (entry) => isRecord(entry) && getString(entry, "method") === "process-exit" && entry.pid === accepted.pid,
-          );
-      } catch {
-        return null;
-      }
-    });
-    await shutdown(beforeLostReply);
-    current = null;
-    const recovered = await start(2_000);
-    current = recovered;
-    const recoveryError = await initialize(recovered);
-    details.recoveryError = recoveryError;
-    await need("the ambiguous delivery to settle from empty provider history", () => {
-      const state = status(recovered.mailbox, deliveryId);
-      return isTerminal(state) ? state : null;
-    });
-    const waitAfterRecoveryMs = 300;
-    await new Promise((done) => setTimeout(done, waitAfterRecoveryMs));
-    const starts = readFileSync(logPath, "utf8")
-      .split("\n")
-      .filter(Boolean)
-      .map((line): unknown => JSON.parse(line))
-      .filter(
-        (entry) =>
-          isRecord(entry) &&
-          getString(entry, "method") === "turn/start" &&
-          getString(getRecord(entry, "params"), "clientUserMessageId") === deliveryId,
-      ).length;
-    const finalStatus = status(recovered.mailbox, deliveryId);
-    details.deliveryId = deliveryId;
-    details.finalStatus = finalStatus;
-    details.turnStartsForDelivery = starts;
-    details.waitAfterRecoveryMs = waitAfterRecoveryMs;
-    details.providerAcceptedBeforeExit = true;
-    if (recoveryError) return "The service restart failed.";
-    if (finalStatus !== "interrupted") return `The uncertain delivery settled as ${finalStatus}, not interrupted.`;
-    if (starts !== 1) return `The uncertain delivery was submitted ${starts} times.`;
-    return null;
-  });
+  await runCase("i: a lost turn/start reply is not replayed at restart", lostReplyCase);
 
   report.passed = report.cases.length === 10 && report.cases.every((entry) => entry.passed);
   if (!report.passed) process.exitCode = 1;

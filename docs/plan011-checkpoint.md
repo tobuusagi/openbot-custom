@@ -18,8 +18,8 @@ change, production data migration, or release has occurred. The work is not prod
   results do not establish a usable client login flow.
 - Earlier provider baseline cases passed with fake CLIs. They do not establish the current extended
   initialization-retry behavior.
-- An earlier memory-only Noise experiment passed 36/36 across Node, Bun, and Chromium, with package
-  lint and typecheck. Reproduce the relocated experiment source before using this as current proof.
+- The relocated memory-only Noise experiment passed 36/36 across Node, Bun, and Chromium, with
+  package lint, typecheck, and independent review. This verifies the memory-only experiment only.
 
 ## Current work and next steps
 
@@ -27,16 +27,17 @@ change, production data migration, or release has occurred. The work is not prod
   Biome (26 files) and the `auth-api` typecheck after two assertion fixes. The local E2E has not run
   against these latest edits. Run it next. Confirm the SMTP reply caps, relay rejection, listener
   cleanup, and Node TLS CA fixture. SMTP settings are pending; no real email was sent.
-- **Desktop client:** The latest Xvfb smoke opened the page and health endpoint, then exited with
-  status 1. The cause is unknown. The package check also found seven emitted assets where its current
-  rule expects one CSS asset; inspect the actual asset types and keep the verifier tied to the build
-  manifest. Fix these issues, then rerun the package check and full local account flow.
+- **Desktop client:** The authenticated Xvfb runtime E2E now passes the local health check, email-code
+  request and verification, signed-in profile read, and logout. It verifies one CSS file and six WebP
+  files against the renderer asset allowlist, removes its test profile and bundle, and writes
+  `.openbot-build/client-runtime-e2e/report.json`. The package configuration verifier and real-ASAR
+  boundary E2E also pass; a native package build remains unverified.
 - **Provider retry:** The latest lifecycle run passed the busy-hook case, then failed the lost-reply
   delivery assertion: it observed `failed` where the check expected `interrupted`. Resolve the
   outcome and cleanup behavior, then rerun the lifecycle E2E and Node project typecheck. Keep retries
   opt-in for Codex and Antigravity, bounded, and unable to replay submitted work.
-- **Noise/WSS:** Rerun the relocated memory experiment and its independent review. Then implement and
-  check only the local loopback WebSocket harness. Product WSS remains out of scope and unapproved.
+- **Noise/WSS:** Implement and check only the local loopback WebSocket harness. Product WSS remains
+  out of scope and unapproved.
 - **ECS templates:** The service files and runbook are drafts. Validate their startup and credential
   loading model before any separate deployment request. No deployment check has run.
 - **Mobile:** Native ARM builds, device checks, Firebase/FCM setup, and external link opening remain

@@ -27,6 +27,12 @@ files:
   - out-client/renderer/client.html
   - out-client/renderer/client-entry.js
   - out-client/renderer/client-entry.css
+  - out-client/renderer/assets/ball-pink.webp
+  - out-client/renderer/assets/ball-lilac.webp
+  - out-client/renderer/assets/ball-mint.webp
+  - out-client/renderer/assets/eye-right.webp
+  - out-client/renderer/assets/eye-left.webp
+  - out-client/renderer/assets/body-lilac.webp
   - package.json
   - LICENSE
   - NOTICE

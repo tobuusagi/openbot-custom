@@ -4,7 +4,12 @@ import { type DynamicRecord, isNumber, isString } from "@openbot/contracts/runti
 import { sourceText } from "@openbot/i18n/source";
 import { Effect, Fiber } from "effect";
 import { LOG_TIMESTAMP_PREFIX } from "./agent/provider-diagnostics";
-import { AgentProcessExitError, type AgentProvider, RequestTimeoutError } from "./agent-client";
+import {
+  AgentProcessExitError,
+  type AgentProvider,
+  RequestOutcomeUnknownError,
+  RequestTimeoutError,
+} from "./agent-client";
 import { cliSpawnTarget } from "./cli";
 import { JsonLineDecoder, LineTooLongError } from "./jsonl";
 import {
@@ -30,6 +35,8 @@ import { createDiagnosticStream } from "./stderr-diagnostics";
 import { endProcessTree } from "./windows-process-tree";
 
 interface PendingRequest {
+  method: string;
+  written: boolean;
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
 }
@@ -304,6 +311,8 @@ export class CodexAppServerClient extends EventEmitter<ClientEvents> {
     const child = this.#process;
     return yield* Effect.callback<T, ProviderClientOperationError>((resume) => {
       this.#pending.set(id, {
+        method,
+        written: false,
         resolve: (value) =>
           resume(
             Effect.try({
@@ -315,6 +324,8 @@ export class CodexAppServerClient extends EventEmitter<ClientEvents> {
       });
       try {
         this.#write({ method, id, params: method === "thread/resume" ? metadataOnlyResumeParams(params) : params });
+        const pending = this.#pending.get(id);
+        if (pending) pending.written = true;
         if (method === "turn/interrupt" && isRecord(params) && isString(params.threadId) && isString(params.turnId)) {
           this.#interruptedTurns.add(JSON.stringify([params.threadId, params.turnId]));
           this.#cancelToolRequests(params.threadId, params.turnId);
@@ -463,7 +474,11 @@ export class CodexAppServerClient extends EventEmitter<ClientEvents> {
     this.#process = null;
 
     for (const pending of this.#pending.values()) {
-      pending.reject(error);
+      pending.reject(
+        pending.method === "turn/start" && pending.written
+          ? new RequestOutcomeUnknownError("Codex", pending.method, { cause: error })
+          : error,
+      );
     }
     this.#pending.clear();
 

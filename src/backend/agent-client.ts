@@ -109,6 +109,18 @@ export class RequestTimeoutError extends Error {
   }
 }
 
+/** A written provider request received no reply that confirms its outcome. */
+export class RequestOutcomeUnknownError extends Error {
+  constructor(
+    readonly providerName: string,
+    readonly method: string,
+    options?: ErrorOptions,
+  ) {
+    super(`${providerName} did not confirm the outcome of ${method}.`, options);
+    this.name = "RequestOutcomeUnknownError";
+  }
+}
+
 /**
  * The provider started a turn of its own, such as after a background task ended, before this turn
  * could start. Nothing ran, so the caller queues the message again for when that turn ends.

@@ -12,6 +12,7 @@ const e2eOutput = resolve("out-client-e2e");
 const e2eMain = join(e2eOutput, "main", "e2e-index.js");
 const expectedEmail = "client-runtime@example.test";
 const expectedCode = "ABCD2345";
+const expectedFormattedCode = "ABCD-2345";
 const expectedToken = "local-client-runtime-e2e-session";
 const expectedUser = {
   id: "client-runtime-e2e-user",
@@ -20,6 +21,14 @@ const expectedUser = {
   avatarUrl: null,
   analyticsEnabled: null,
 };
+const expectedRendererImages = new Set([
+  "assets/ball-pink.webp",
+  "assets/ball-lilac.webp",
+  "assets/ball-mint.webp",
+  "assets/eye-right.webp",
+  "assets/eye-left.webp",
+  "assets/body-lilac.webp",
+]);
 
 interface ApiRequestRecord {
   method: string;
@@ -59,6 +68,9 @@ interface ClientRuntimeReport {
   emailCodeVerified: boolean;
   authenticatedProfileRead: boolean;
   logoutRequested: boolean;
+  verificationPayloadValid: boolean | null;
+  verificationChallengeMatched: boolean | null;
+  verificationCodeMatched: boolean | null;
   apiRequests: ApiRequestRecord[];
   temporaryProfileRemoved: boolean;
   testBundleRemoved: boolean;
@@ -171,6 +183,9 @@ const report: ClientRuntimeReport = {
   emailCodeVerified: false,
   authenticatedProfileRead: false,
   logoutRequested: false,
+  verificationPayloadValid: null,
+  verificationChallengeMatched: null,
+  verificationCodeMatched: null,
   apiRequests: [],
   temporaryProfileRemoved: false,
   testBundleRemoved: false,
@@ -190,7 +205,7 @@ async function main(): Promise<void> {
     await electronViteBuild({ configFile: resolve("electron.client.e2e.vite.config.ts") });
     report.runtimeBundleBuilt = true;
     await access(e2eMain);
-    await captureRendererStylesheets();
+    await captureRendererAssets();
 
     temporaryRoot = await mkdtemp(join(tmpdir(), "openbot-client-runtime-e2e-"));
     const profilePath = join(temporaryRoot, "profile");
@@ -205,6 +220,7 @@ async function main(): Promise<void> {
     }
     report.rendererUrl = target.url;
     report.rendererLoaded = true;
+    await waitForStartupStage("after-load-url", 20_000);
     cdp = new CdpClient(target.webSocketDebuggerUrl);
     await cdp.connect();
     cdp.onNetworkRequest((url) => {
@@ -397,6 +413,29 @@ async function captureRendererAssets(): Promise<void> {
       };
     }),
   );
+  const images = report.rendererAssets.filter(({ mediaType }) => mediaType.startsWith("image/"));
+  const imageNames = new Set(images.map(({ fileName }) => fileName));
+  if (
+    images.length !== expectedRendererImages.size ||
+    [...expectedRendererImages].some((name) => !imageNames.has(name)) ||
+    images.some(
+      ({ mediaType, firstBytesHex }) =>
+        mediaType !== "image/webp" ||
+        firstBytesHex.slice(0, 8) !== "52494646" ||
+        firstBytesHex.slice(16, 24) !== "57454250",
+    )
+  ) {
+    throw new Error("The client renderer image assets do not match the declared WebP package allowlist.");
+  }
+  const unexpectedFiles = report.rendererAssets
+    .filter(
+      ({ fileName }) =>
+        !["client.html", "client-entry.js", "client-entry.css", ...expectedRendererImages].includes(fileName),
+    )
+    .map(({ fileName }) => fileName);
+  if (unexpectedFiles.length > 0) {
+    throw new Error(`The client renderer emitted unapproved files: ${unexpectedFiles.join(", ")}.`);
+  }
 }
 
 async function listRendererFiles(root: string, directory = root): Promise<string[]> {
@@ -409,7 +448,20 @@ async function listRendererFiles(root: string, directory = root): Promise<string
   return result.sort();
 }
 
-function rendererAssetMediaType(fileName: string, content: Buffer): string {
+function rendererAssetMediaType(
+  fileName: string,
+  content: Buffer,
+):
+  | "image/svg+xml"
+  | "image/png"
+  | "image/jpeg"
+  | "image/webp"
+  | "text/css"
+  | "text/html"
+  | "text/javascript"
+  | "font/woff"
+  | "font/woff2"
+  | "application/octet-stream" {
   const prefix = content.subarray(0, 512).toString("utf8").trimStart();
   if (prefix.includes("<svg")) return "image/svg+xml";
   if (content.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return "image/png";
@@ -486,7 +538,11 @@ async function handleFakeApiRequest(request: IncomingMessage, response: ServerRe
     }
   } else if (path === "/v1/auth/email/verify" && method === "POST") {
     const body = await readJsonBody(request, CLIENT_EMAIL_VERIFY_REQUEST);
-    if (body.challengeId !== "client-runtime-e2e-challenge" || body.code !== expectedCode) {
+    report.verificationChallengeMatched = body.challengeId === "client-runtime-e2e-challenge";
+    report.verificationCodeMatched = body.code === expectedFormattedCode;
+    report.verificationPayloadValid =
+      body.challengeId === "client-runtime-e2e-challenge" && body.code === expectedFormattedCode;
+    if (body.challengeId !== "client-runtime-e2e-challenge" || body.code !== expectedFormattedCode) {
       status = 400;
       sendJson(response, status, { error: { code: "invalid_sign_in_code", message: "Invalid test code." } });
     } else {
@@ -552,6 +608,21 @@ async function waitForRendererTarget(port: number, timeoutMs: number): Promise<C
     await delay(75);
   }
   throw new Error(`${lastError} Timed out waiting for the client renderer.`);
+}
+
+async function waitForStartupStage(stage: string, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const diagnostics = parseClientRuntimeDiagnostics(childOutput);
+    if (diagnostics.some((item) => item.type === "stage" && item.stage === stage)) return;
+    const failure = diagnostics.find((item) => item.type === "startup-error");
+    if (failure?.type === "startup-error") throw new Error(formatStartupFailure(failure));
+    if (child?.exitCode !== null && child?.exitCode !== undefined) {
+      throw new Error(`The Electron child exited before startup stage ${stage} (${child.exitCode}).`);
+    }
+    await delay(50);
+  }
+  throw new Error(`Timed out waiting for client startup stage ${stage}.`);
 }
 
 async function waitForRendererState(cdpSession: CdpClient, expression: string, timeoutMs: number): Promise<void> {

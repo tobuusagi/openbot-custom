@@ -15,6 +15,15 @@ import {
   CLIENT_RENDERER_STYLES,
 } from "../src/main/client-product";
 
+const CLIENT_RENDERER_IMAGE_ASSETS = [
+  "out-client/renderer/assets/ball-pink.webp",
+  "out-client/renderer/assets/ball-lilac.webp",
+  "out-client/renderer/assets/ball-mint.webp",
+  "out-client/renderer/assets/eye-right.webp",
+  "out-client/renderer/assets/eye-left.webp",
+  "out-client/renderer/assets/body-lilac.webp",
+];
+
 const logger = createOpenBotLogger("verify-client-package");
 const WINDOWS_ARM64_MACHINE = 0xaa64;
 const CLIENT_PACKAGE_FILES = new Set([
@@ -25,6 +34,7 @@ const CLIENT_PACKAGE_FILES = new Set([
   CLIENT_RENDERER_HTML,
   CLIENT_RENDERER_ENTRY,
   CLIENT_RENDERER_STYLES,
+  ...CLIENT_RENDERER_IMAGE_ASSETS,
   "package.json",
 ]);
 const FORBIDDEN_RESOURCE_NAMES = new Set([
@@ -320,6 +330,7 @@ async function verifyBuildConfiguration(): Promise<void> {
     CLIENT_RENDERER_HTML,
     CLIENT_RENDERER_ENTRY,
     CLIENT_RENDERER_STYLES,
+    ...CLIENT_RENDERER_IMAGE_ASSETS,
     "package.json",
     "LICENSE",
     "NOTICE",

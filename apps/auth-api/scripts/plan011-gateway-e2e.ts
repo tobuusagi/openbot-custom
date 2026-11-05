@@ -662,7 +662,7 @@ async function exerciseNodeSmtpTlsAdapter(directory: string): Promise<void> {
     );
     assert(
       hostnameMismatch.result !== "sent" && mismatchFixture.stats.messages === 0,
-      "The Node TLS adapter must reject a hostname mismatch.",
+      `The Node TLS adapter must reject a hostname mismatch (result=${hostnameMismatch.result}, messages=${mismatchFixture.stats.messages}).`,
     );
     report.smtp.hostnameMismatchRejected = true;
   } finally {
