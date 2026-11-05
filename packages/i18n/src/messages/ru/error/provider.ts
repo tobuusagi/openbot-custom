@@ -157,8 +157,12 @@ export const messages = {
   "error.provider.acpModelsTimedOut": "{provider} не вывел список моделей за {seconds} с. Возможно, компьютер занят.",
   "error.provider.startStopped":
     "{provider} несколько раз подряд не запустился, поэтому OpenBot перестал пытаться. Обновите провайдеров, чтобы повторить попытку.",
+  "error.provider.initRetryLongRunning":
+    "{provider} недоступен более 24 часов. OpenBot продолжает повторять попытки с большими интервалами.",
   "error.provider.tempDiskSpace":
     "Для запуска {provider} нужно не меньше 1 ГБ свободного места на диске. Освободите место, затем обновите провайдеров.",
+  "error.provider.tempCleanupFailed":
+    "OpenBot не удалось удалить временные файлы {provider}. Автоматические повторы остановлены; проверьте свободное место на диске перед обновлением провайдера.",
   "error.provider.noCodeSignIn": "В {provider} нельзя войти с помощью кода.",
   "error.provider.codeLoginNoLink": "Провайдер не показал ссылку для входа. Повторите попытку.",
   "error.provider.hostSignInEnded": "Вход в {provider} не завершён. Повторите попытку.",

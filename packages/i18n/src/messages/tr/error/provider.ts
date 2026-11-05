@@ -161,8 +161,12 @@ export const messages = {
     "{provider} {seconds} sn içinde modellerini listelemedi. Bilgisayar meşgul olabilir.",
   "error.provider.startStopped":
     "{provider} art arda birkaç kez başlamadı, bu yüzden OpenBot denemeyi bıraktı. Tekrar denemek için sağlayıcıları yenileyin.",
+  "error.provider.initRetryLongRunning":
+    "{provider} 24 saatten uzun süredir kullanılamıyor. OpenBot daha uzun aralıklarla yeniden denemeyi sürdürüyor.",
   "error.provider.tempDiskSpace":
     "{provider} başlamak için en az 1 GB boş disk alanı gerektirir. Yer açın, ardından sağlayıcıları yenileyin.",
+  "error.provider.tempCleanupFailed":
+    "OpenBot, {provider} için ayrılmış geçici dosyaları kaldıramadı. Otomatik yeniden denemeler durduruldu; sağlayıcıyı yenilemeden önce boş disk alanını kontrol edin.",
   "error.provider.noCodeSignIn": "{provider} için kodla oturum açılamaz.",
   "error.provider.codeLoginNoLink": "Sağlayıcı bir oturum açma bağlantısı göstermedi. Tekrar deneyin.",
   "error.provider.hostSignInEnded": "{provider} oturum açma işlemi tamamlanmadı. Tekrar deneyin.",

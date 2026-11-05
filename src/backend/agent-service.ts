@@ -249,6 +249,7 @@ import type { PasswordVault } from "./password-vault";
 import { decodeRecordResponse, getString } from "./protocol";
 import { NO_PROVIDER_CREDENTIALS, type ProviderClientContext } from "./provider-drivers";
 import { providerHistoryPersistence } from "./provider-history-persistence";
+import type { ProviderLifecycleMode } from "./provider-lifecycle";
 import { recordAgentRestartActivity } from "./restart-activity";
 import type { RoutineFlowTools } from "./routine-flows/routine-flow-tools";
 import { RoutineRecords } from "./routine-records";
@@ -293,6 +294,8 @@ export interface AgentServiceOptions {
   mailbox: MailboxStore;
   browser: AgentBrowserHost;
   requestTimeoutMs?: number;
+  /** Provider process and idle-session lifetime for this local host. Defaults to desktop behavior. */
+  providerLifecycleMode?: ProviderLifecycleMode;
   /**
    * How long a provider takes to start a context compaction before OpenBot stops it. A started
    * compaction runs ten times as long. Tests make it short.
@@ -506,6 +509,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       mailbox,
       browser,
       requestTimeoutMs = 30_000,
+      providerLifecycleMode = "desktop",
       preferredProvider = "codex",
       preferredModel = null,
       clientFactory = null,
@@ -864,6 +868,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       emit: (event) => this.#emit(event),
       emitError: (code, error, agentId) => this.#emitError(code, error, agentId),
       requestTimeoutMs,
+      providerLifecycleMode,
       preferredProvider,
       preferredModel,
       clientFactory,

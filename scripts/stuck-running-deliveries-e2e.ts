@@ -10,6 +10,7 @@
 // (g) a delivery that runs again under the same turn id, after its session was refused, runs to its end (#2468);
 // (h) a turn row that stays `running` although no thread names it as its active turn is closed at restart,
 //     in the agent's own chat, a task thread and a channel thread.
+// (i) a provider accepts one `turn/start` but loses its reply; restart recovery must not submit that work again.
 // `bun scripts/stuck-running-deliveries-e2e.ts`. Writes .openbot-build/stuck-running-deliveries-e2e/report.json.
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -30,6 +31,7 @@ const controlPath = join(root, "control.json");
 const fakeCodex = join(root, "codex");
 /** How long a case waits for the state that the fix gives. Without the fix that state never comes. */
 const SETTLE_MS = 10_000;
+const LOST_REPLY_EXIT_MS = 80;
 
 // Before the service modules load: the Codex process and the stores read the home folder.
 process.env.HOME = home;
@@ -53,7 +55,8 @@ const { StoredStateFailure } = await import("../src/backend/stored-state-effects
  * whether `turn/started` comes before the `turn/start` answer. With `clientTurnIds`, a turn takes the
  * `clientUserMessageId` as its id, as Claude, ACP and Pi do, and a new turn is refused while a turn of
  * the thread runs, as Claude refuses it. With `refuseOnce`, the first turn of each id fails as a
- * refused session.
+ * refused session. `withholdTurnStartReply` models a provider accepting possible work and exiting
+ * before the host receives the `turn/start` result.
  * Like Codex, `turn/interrupt` for a turn that does not run is refused.
  */
 const FAKE_CODEX = `#!/usr/bin/env node
@@ -62,7 +65,7 @@ if (process.argv.includes("--version")) {
   process.stdout.write("codex-cli 0.160.1\\n");
   process.exit(0);
 }
-const log = (entry) => fs.appendFileSync(process.env.OPENBOT_FAKE_CODEX_LOG, JSON.stringify(entry) + "\\n");
+const log = (entry) => fs.appendFileSync(process.env.OPENBOT_FAKE_CODEX_LOG, JSON.stringify({ pid: process.pid, ...entry }) + "\\n");
 const control = () => JSON.parse(fs.readFileSync(process.env.OPENBOT_FAKE_CODEX_CONTROL, "utf8"));
 const config = { config: { mcp_servers: {} }, layers: [{ name: { type: "user", file: "/fake/.codex/config.toml", profile: null }, version: "1", config: { mcp_servers: {} } }] };
 const prefix = "p" + process.pid + "-";
@@ -73,6 +76,7 @@ let turns = 0;
 const running = new Map();
 /** The turn ids that refuseOnce already refused. */
 const refused = new Set();
+process.on("exit", () => log({ method: "process-exit" }));
 process.stdout.on("error", (error) => {
   if (error.code === "EPIPE") process.exit(0);
   throw error;
@@ -107,11 +111,17 @@ const answer = (message) => {
     case "thread/items/list": return write({ id: message.id, result: { data: [], nextCursor: null } });
     case "thread/read": return write({ id: message.id, result: { thread: { id: params.threadId, turns: [] } } });
     case "turn/start": {
-      const { holdTurns, turnMs, startedFirst, clientTurnIds, refuseOnce } = control();
+      const { holdTurns, turnMs, startedFirst, clientTurnIds, refuseOnce, withholdTurnStartReply, exitAfterUnansweredStartMs } = control();
       const turnId = clientTurnIds && params.clientUserMessageId ? params.clientUserMessageId : prefix + "turn-" + (++turns);
       if (clientTurnIds && [...running.values()].some((turn) => turn.threadId === params.threadId))
         return write({ id: message.id, error: { code: -32600, message: "The thread already has an active turn." } });
       const started = { method: "turn/started", params: { threadId: params.threadId, turn: { id: turnId } } };
+      if (withholdTurnStartReply) {
+        write(started);
+        log({ method: "turn-start-accepted-without-reply", turnId, clientUserMessageId: params.clientUserMessageId ?? null });
+        setTimeout(() => process.exit(23), exitAfterUnansweredStartMs ?? 80);
+        return;
+      }
       if (startedFirst) write(started);
       write({ id: message.id, result: { turn: { id: turnId, status: "inProgress", items: [] } } });
       if (!startedFirst) write(started);
@@ -241,11 +251,13 @@ async function control(value: {
   startedFirst?: boolean;
   clientTurnIds?: boolean;
   refuseOnce?: boolean;
+  withholdTurnStartReply?: boolean;
+  exitAfterUnansweredStartMs?: number;
 }): Promise<void> {
   await writeFile(controlPath, JSON.stringify(value));
 }
 
-async function start(): Promise<Instance> {
+async function start(requestTimeoutMs = 30_000): Promise<Instance> {
   const database = new OpenBotDatabase(userData);
   const store = new AgentStore(userData, home, database);
   const mailbox = new MailboxStore(userData, store.sharedRoot, store.database);
@@ -256,6 +268,7 @@ async function start(): Promise<Instance> {
     preferredProvider: "codex",
     offProviders: AGENT_PROVIDERS.filter((provider) => provider !== "codex"),
     busyMessageMode: () => "queue",
+    requestTimeoutMs,
   });
   const errors: Instance["errors"] = [];
   agents.on("event", (event) => {
@@ -707,7 +720,94 @@ try {
     return null;
   });
 
-  report.passed = report.cases.length === 9 && report.cases.every((entry) => entry.passed);
+  await runCase("i: a lost turn/start reply is not replayed at restart", async (details) => {
+    const beforeLostReply = current;
+    if (!beforeLostReply) return "The service instance is not running.";
+    await control({
+      holdTurns: false,
+      turnMs: 0,
+      withholdTurnStartReply: true,
+      exitAfterUnansweredStartMs: LOST_REPLY_EXIT_MS,
+    });
+    const target = await runCauseEffect(
+      beforeLostReply.agents.createAgent({
+        name: "Lost start reply",
+        description: "Checks that ambiguous provider work is not submitted again.",
+        avatarSeed: "lost-start-reply",
+        avatarHue: null,
+        initialMessage: "This message may have reached the provider.",
+      }),
+    );
+    const deliveryId = await need(
+      "the delivery with an unanswered turn start",
+      () => beforeLostReply.agents.listQueue(target.id).deliveries[0]?.id,
+    );
+    const accepted = await need("the fake provider to accept turn/start", () => {
+      try {
+        return readFileSync(logPath, "utf8")
+          .split("\n")
+          .filter(Boolean)
+          .map((line): unknown => JSON.parse(line))
+          .find(
+            (entry) =>
+              isRecord(entry) &&
+              getString(entry, "method") === "turn-start-accepted-without-reply" &&
+              getString(entry, "clientUserMessageId") === deliveryId,
+          );
+      } catch {
+        return null;
+      }
+    });
+    if (!isRecord(accepted) || typeof accepted.pid !== "number")
+      return "The fake provider acceptance event has no process id.";
+    await need("the fake provider to exit before answering turn/start", () => {
+      try {
+        return readFileSync(logPath, "utf8")
+          .split("\n")
+          .filter(Boolean)
+          .map((line): unknown => JSON.parse(line))
+          .find(
+            (entry) => isRecord(entry) && getString(entry, "method") === "process-exit" && entry.pid === accepted.pid,
+          );
+      } catch {
+        return null;
+      }
+    });
+    await shutdown(beforeLostReply);
+    current = null;
+    const recovered = await start(2_000);
+    current = recovered;
+    const recoveryError = await initialize(recovered);
+    details.recoveryError = recoveryError;
+    await need("the ambiguous delivery to settle from empty provider history", () => {
+      const state = status(recovered.mailbox, deliveryId);
+      return isTerminal(state) ? state : null;
+    });
+    const waitAfterRecoveryMs = 300;
+    await new Promise((done) => setTimeout(done, waitAfterRecoveryMs));
+    const starts = readFileSync(logPath, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line): unknown => JSON.parse(line))
+      .filter(
+        (entry) =>
+          isRecord(entry) &&
+          getString(entry, "method") === "turn/start" &&
+          getString(getRecord(entry, "params"), "clientUserMessageId") === deliveryId,
+      ).length;
+    const finalStatus = status(recovered.mailbox, deliveryId);
+    details.deliveryId = deliveryId;
+    details.finalStatus = finalStatus;
+    details.turnStartsForDelivery = starts;
+    details.waitAfterRecoveryMs = waitAfterRecoveryMs;
+    details.providerAcceptedBeforeExit = true;
+    if (recoveryError) return "The service restart failed.";
+    if (finalStatus !== "interrupted") return `The uncertain delivery settled as ${finalStatus}, not interrupted.`;
+    if (starts !== 1) return `The uncertain delivery was submitted ${starts} times.`;
+    return null;
+  });
+
+  report.passed = report.cases.length === 10 && report.cases.every((entry) => entry.passed);
   if (!report.passed) process.exitCode = 1;
 } catch (error) {
   report.error = error instanceof Error ? (error.stack ?? error.message) : String(error);

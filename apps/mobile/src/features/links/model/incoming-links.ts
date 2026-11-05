@@ -6,6 +6,7 @@ import {
 import { parseInviteUrl, selfHostedApiOrigin } from "@openbot/contracts/invite-links";
 import { parseMobileConnectUrl } from "@openbot/contracts/mobile-connect";
 import { createPluginShareUrl, parsePluginUrl } from "@openbot/contracts/plugin-links";
+import { canonicalMobileProductLink } from "@/shared/lib/mobile-product";
 
 export type IncomingLink =
   | { kind: "invite"; url: string }
@@ -15,21 +16,22 @@ export type IncomingLink =
   | { kind: "invalid" };
 
 function parseIncomingLink(value: string): IncomingLink {
+  const productLink = canonicalMobileProductLink(value);
   // The other link kinds have separate parsers and cannot weaken invitation validation.
-  if (isInviteLink(value)) return { kind: "invite", url: value };
+  if (isInviteLink(productLink)) return { kind: "invite", url: productLink };
   try {
-    const templateId = parseAgentTemplateUrl(value);
+    const templateId = parseAgentTemplateUrl(productLink);
     return { kind: "template", url: createAgentTemplateShareUrl(templateId), templateId };
   } catch {
     // Not an agent link.
   }
   try {
-    const url = new URL(value);
-    const pairing = parseMobileConnectUrl(value);
+    const url = new URL(productLink);
+    const pairing = parseMobileConnectUrl(productLink);
     if (pairing && url.username === "" && url.password === "" && url.port === "") {
-      return { kind: "pairing", url: value };
+      return { kind: "pairing", url: productLink };
     }
-    return { kind: "plugin", url: createPluginShareUrl(parsePluginUrl(value)) };
+    return { kind: "plugin", url: createPluginShareUrl(parsePluginUrl(productLink)) };
   } catch {
     return { kind: "invalid" };
   }
@@ -90,6 +92,7 @@ export function pendingSignInLinkId(): string | undefined {
 }
 
 export function redirectIncomingLink(path: string): string {
+  path = canonicalMobileProductLink(path);
   if (path === "openbot://" || path === "openbot:///" || path === "openbot:") return "/";
   // Expo Go and ordinary internal routes retain Expo Router's normal behavior.
   if (/^exps?:\/\//u.test(path)) return path;

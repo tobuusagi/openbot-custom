@@ -125,6 +125,9 @@ const SENDER_LIMIT_REPLY = /too many (?:messages|emails|recipients)|(?:sending|s
 const SMTP_TIMEOUT_MS = 7_500;
 const SMTP_CLOSE_TIMEOUT_MS = 250;
 const SMTP_MAX_ATTEMPTS = 3;
+const SMTP_MAX_RESPONSE_LINE_BYTES = 64 * 1024;
+const SMTP_MAX_REPLY_BYTES = 16 * 1024;
+const SMTP_MAX_REPLY_LINES = 100;
 // A service binding needs an absolute URL. The relay reads only the body.
 const RELAY_URL = "https://openbot-email-relay.internal/send";
 // The relay ends its own attempts inside the delivery budget, so its result must arrive before this
@@ -135,7 +138,7 @@ const EMAIL_PATTERN = /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9.-]+$/iu;
 export const sendPrivateEmailCode = Effect.fn("Smtp.sendPrivateEmailCode ")(function* (
   config: SmtpEmailConfig,
   message: SmtpEmailMessage,
-  connector?: SmtpConnector,
+  connector: SmtpConnector,
 ) {
   yield* smtpValidate(() => {
     validateConfig(config);
@@ -160,7 +163,7 @@ export const sendPrivateEmailCode = Effect.fn("Smtp.sendPrivateEmailCode ")(func
 export const sendPrivateTeamInvite = Effect.fn("Smtp.sendPrivateTeamInvite ")(function* (
   config: SmtpEmailConfig,
   message: SmtpTeamInviteMessage,
-  connector?: SmtpConnector,
+  connector: SmtpConnector,
 ) {
   yield* smtpValidate(() => {
     validateEmail(message.email, "recipient");
@@ -195,7 +198,7 @@ export const sendPrivateTeamInvite = Effect.fn("Smtp.sendPrivateTeamInvite ")(fu
 export const sendPrivateWelcomeEmail = Effect.fn("Smtp.sendPrivateWelcomeEmail")(function* (
   config: SmtpEmailConfig,
   message: SmtpWelcomeMessage,
-  connector?: SmtpConnector,
+  connector: SmtpConnector,
 ) {
   yield* smtpValidate(() => {
     if (
@@ -216,7 +219,7 @@ export const sendPrivateWelcomeEmail = Effect.fn("Smtp.sendPrivateWelcomeEmail")
 export const sendPrivateLicenseEmail = Effect.fn("Smtp.sendPrivateLicenseEmail")(function* (
   config: SmtpEmailConfig,
   message: SmtpLicenseMessage,
-  connector?: SmtpConnector,
+  connector: SmtpConnector,
 ) {
   return yield* sendPrivateEmail(config, { email: message.email, content: renderLicenseEmail(message) }, connector);
 });
@@ -225,7 +228,7 @@ export const sendPrivateLicenseEmail = Effect.fn("Smtp.sendPrivateLicenseEmail")
 export const sendPrivateContactMessage = Effect.fn("Smtp.sendPrivateContactMessage")(function* (
   config: SmtpEmailConfig,
   message: SmtpContactMessage,
-  connector?: SmtpConnector,
+  connector: SmtpConnector,
 ) {
   return yield* sendPrivateEmail(
     config,
@@ -237,7 +240,7 @@ export const sendPrivateContactMessage = Effect.fn("Smtp.sendPrivateContactMessa
 const sendPrivateEmail = Effect.fn("SmtpEmail.send")(function* (
   config: SmtpEmailConfig,
   message: PreparedEmailMessage,
-  connector?: SmtpConnector,
+  connector: SmtpConnector,
 ): Effect.fn.Return<void, SmtpFailure> {
   yield* smtpValidate(() => validateConfig(config));
   yield* smtpValidate(() => validateEmail(message.email, "recipient"));
@@ -246,9 +249,8 @@ const sendPrivateEmail = Effect.fn("SmtpEmail.send")(function* (
   const { subject } = message.content;
   if (!subject || subject.length > 160 || hasHeaderBreak(subject)) return yield* new SmtpError("smtp_invalid_subject");
   if (config.relay) return yield* sendThroughRelay(config.relay, config, message);
-  const connect = connector ?? (yield* smtpCall(loadCloudflareConnector));
   for (let attempt = 1; attempt <= SMTP_MAX_ATTEMPTS; attempt += 1) {
-    const result = yield* Effect.result(sendPrivateEmailAttempt(config, message, connect));
+    const result = yield* Effect.result(sendPrivateEmailAttempt(config, message, connector));
     if (Result.isSuccess(result)) return;
     const smtpError = result.failure;
     if (smtpError instanceof SmtpReplyError && isSenderRateLimited(smtpError)) {
@@ -322,7 +324,7 @@ const sendThroughRelay = Effect.fn("SmtpEmail.relay")(function* (
 /** Sends one relay request in the relay Worker. A request that does not decode fails permanently. */
 export const sendRelayedEmail = Effect.fn("SmtpEmail.sendRelayed")(function* (
   request: Request,
-  connector?: SmtpConnector,
+  connector: SmtpConnector,
 ): Effect.fn.Return<void, SmtpFailure> {
   const invalid = () => new SmtpError("smtp_invalid_relay_request");
   const body = yield* Effect.tryPromise({ try: () => request.json(), catch: invalid });
@@ -486,9 +488,16 @@ class SmtpResponseReader {
     stage: string,
   ): Effect.fn.Return<string[], SmtpFailure> {
     let responseCode: number | null = null;
+    let replyBytes = 0;
+    let replyLines = 0;
     const lines: string[] = [];
     while (true) {
       const line = yield* this.#readLine();
+      replyBytes += new TextEncoder().encode(line).byteLength + 2;
+      replyLines += 1;
+      if (replyBytes > SMTP_MAX_REPLY_BYTES || replyLines > SMTP_MAX_REPLY_LINES) {
+        return yield* new SmtpError("smtp_response_too_large");
+      }
       const match = /^(\d{3})([ -])/u.exec(line);
       if (!match) return yield* new SmtpError(`smtp_${stage}_invalid_response`);
       const lineCode = Number(match[1]);
@@ -517,7 +526,9 @@ class SmtpResponseReader {
       const chunk = yield* smtpCall(() => this.reader.read());
       if (chunk.done) return yield* new SmtpError("smtp_connection_closed");
       this.#buffer += this.#decoder.decode(chunk.value, { stream: true });
-      if (this.#buffer.length > 64 * 1024) return yield* new SmtpError("smtp_response_too_large");
+      if (new TextEncoder().encode(this.#buffer).byteLength > SMTP_MAX_RESPONSE_LINE_BYTES) {
+        return yield* new SmtpError("smtp_response_too_large");
+      }
     }
   });
 }
@@ -646,9 +657,4 @@ function encodeBase64(value: string): string {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary);
-}
-
-async function loadCloudflareConnector(): Promise<SmtpConnector> {
-  const { connect } = await import("cloudflare:sockets");
-  return connect;
 }

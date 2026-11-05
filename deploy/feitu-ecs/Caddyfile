@@ -1,0 +1,17 @@
+# Site blocks only. Import these into the existing Caddy configuration after a port and route
+# inventory. Do not use this file to replace the global Caddyfile or start another Caddy service.
+
+api.feitu.net.cn {
+	@account path /v1/auth/email/start /v1/auth/email/verify /v1/me /v1/auth/logout /.well-known/jwks.json /health/live /health/ready
+	handle @account {
+		reverse_proxy 127.0.0.1:3187
+	}
+	handle {
+		respond "Not found" 404
+	}
+}
+
+connect.feitu.net.cn {
+	# The WSS relay is not implemented. Keep this explicit 503 until a reviewed relay exists.
+	respond "WSS relay is not implemented" 503
+}

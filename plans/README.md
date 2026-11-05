@@ -18,6 +18,7 @@ changes, and respect the `STOP` conditions.
 | 008 | Mailbox reads of one delivery do not sort or scan the whole mailbox | P2 | S | — | DONE |
 | 009 | An HTTPS sign-out or session revoke also closes the browser views of that session | P2 | S | — | DONE |
 | 010 | Branch a conversation from a message | P1 | L | — | IN PROGRESS |
+| 011 | 自有 ECS 上的纯客户端与常驻 Agent 通道 | P1 | XL | 002（账户服务改造需协调；其他轨道可并行） | IN PROGRESS |
 
 Allowed states: `TODO`, `IN PROGRESS`, `DONE`, `BLOCKED: <reason>`,
 `REJECTED: <reason>`.
@@ -47,6 +48,18 @@ Allowed states: `TODO`, `IN PROGRESS`, `DONE`, `BLOCKED: <reason>`,
   maintainer decision first: whether a revoked member can rejoin with a new
   invite (the plan's default is to refuse). Plan 009 touches the Team API route
   layer only; plan 002 can later remove local password sign-in without a conflict.
+- Plan 011 replaces the Cloudflare account and connection infrastructure with
+  self-managed Alibaba Cloud ECS services. It overlaps plan 002's Cloudflare
+  account API work, so reconcile and serialize shared account-service changes
+  before implementation; do not infer a change to plan 002's state. Plan 011's
+  stages 0, 1A, 1B and 1C are IN PROGRESS; other stages remain TODO. Stage 1A is
+  currently limited to opt-in Provider idle residency and leaves existing
+  process crash/init retry limits unchanged. Stage 1B is prototyping the SQLite
+  runtime adapter. Stage 1C is building independent ARM client package config
+  and its validator; this does not mean a complete runnable pure client exists.
+  The WSS E2E crypto review has not passed, so WSS data/crypto implementation is
+  blocked. None of these early states implies ECS deployment or production
+  migration.
 
 ## Run of 2026-10-17
 

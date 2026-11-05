@@ -1,0 +1,81 @@
+appId: cn.net.feitu.openbot.client
+productName: FeituOpenBotClient
+executableName: FeituOpenBotClient
+copyright: Copyright © 2026 Feitu
+asar: true
+artifactName: ${productName}-${version}-${arch}.${ext}
+# No update provider is configured. The client must not inherit the repository's GitHub feed.
+publish: null
+directories:
+  output: dist/client
+# A missing client entry is a packaging error. Never fall back to package.json's Host entry.
+extraMetadata:
+  name: feitu-openbot-client
+  productName: FeituOpenBotClient
+  main: out-client/main/client-index.js
+  feituClientRole: client
+  feituClientRuntimeStatus: account-shell
+  feituClientApplicationId: cn.net.feitu.openbot.client
+  feituClientProtocolScheme: feitu-openbot
+  feituClientDefaultApiOrigin: https://api.feitu.net.cn
+  feituClientDefaultConnectOrigin: wss://connect.feitu.net.cn
+  feituClientUpdateChannel: feitu-openbot-client
+  feituClientUpdateFeed: null
+files:
+  - out-client/main/client-index.js
+  - out-client/preload/client-index.cjs
+  - out-client/renderer/client.html
+  - out-client/renderer/client-entry.js
+  - out-client/renderer/client-entry.css
+  - package.json
+  - LICENSE
+  - NOTICE
+  - "!out/**/*"
+  - "!node_modules/**/*"
+extraResources:
+  - from: node_modules/electron/dist/LICENSE
+    to: licenses/Electron-LICENSE
+  - from: node_modules/electron/dist/LICENSES.chromium.html
+    to: licenses/LICENSES.chromium.html
+asarUnpack: []
+nodeGypRebuild: false
+npmRebuild: false
+buildDependenciesFromSource: false
+electronFuses:
+  resetAdHocDarwinSignature: true
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  loadBrowserProcessSpecificV8Snapshot: false
+  grantFileProtocolExtraPrivileges: false
+protocols:
+  - name: Feitu OpenBot client links
+    schemes:
+      - feitu-openbot
+mac:
+  category: public.app-category.productivity
+  minimumSystemVersion: "13.0"
+  icon: build/icon-production.icns
+  identity: null
+  notarize: false
+  target:
+    - target: dmg
+      arch:
+        - arm64
+    - target: zip
+      arch:
+        - arm64
+win:
+  icon: build/icon-production.ico
+  target:
+    - target: nsis
+      arch:
+        - arm64
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  allowElevation: false
+  packElevateHelper: false

@@ -115,6 +115,36 @@ export type GroupHandlers<Group extends IpcEndpointGroup> = {
 /** One `GroupHandlers` per group in `IPC_ENDPOINTS`. */
 export type IpcGroupHandlers = { readonly [Group in keyof IpcEndpoints]: GroupHandlers<IpcEndpoints[Group]> };
 
+/**
+ * Registers a typed subset of one manifest group for a product entry that exposes fewer features.
+ * The normal Host entry must use `registerIpcGroups` so every group stays exhaustive.
+ */
+export function registerIpcGroupSubset<
+  Name extends keyof IpcEndpoints,
+  const Keys extends readonly RequestKeys<IpcEndpoints[Name]>[],
+>(name: Name, endpointNames: Keys, handlers: Pick<GroupHandlers<IpcEndpoints[Name]>, Keys[number]>): void;
+export function registerIpcGroupSubset(
+  name: string,
+  endpointNames: readonly string[],
+  handlers: Readonly<Record<string, UntypedHandler>>,
+): void {
+  const groups: Readonly<Record<string, IpcEndpointGroup | undefined>> = IPC_ENDPOINTS;
+  const group = groups[name];
+  if (!group) throw new Error(`The IPC group ${name} does not exist.`);
+  if (Object.keys(handlers).length !== endpointNames.length) {
+    throw new Error(`The IPC group ${name} has an invalid endpoint subset.`);
+  }
+  for (const endpointName of endpointNames) {
+    const endpoint = group[endpointName];
+    if (endpoint?.kind !== "request") {
+      throw new Error(`The IPC endpoint ${endpointName} is not a request in ${name}.`);
+    }
+    const handler = handlers[endpointName];
+    if (!handler) throw new Error(`The IPC endpoint ${endpointName} has no handler.`);
+    handler(endpoint.channel);
+  }
+}
+
 function bindGroup(group: IpcEndpointGroup, handlers: Readonly<Record<string, UntypedHandler>>): void {
   for (const [name, endpoint] of Object.entries(group)) {
     if (endpoint.kind !== "request") continue;

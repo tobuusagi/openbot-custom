@@ -3,7 +3,7 @@ import { basename } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { type Client, ClientSideConnection, ndJsonStream } from "@agentclientprotocol/sdk";
 import { createOpenBotLogger } from "@openbot/logging";
-import { Deferred, Effect } from "effect";
+import { Deferred, Effect, Exit } from "effect";
 import { AgentProcessExitError, type DiagnosticOrigin } from "./agent-client";
 import { type AgentCliInfo, cliPathEnvironment, cliSpawnTarget } from "./cli";
 import { LineTooLongError, limitLineLength } from "./jsonl";
@@ -15,7 +15,7 @@ import {
   providerSync,
 } from "./provider-client-effects";
 import { registerProviderProcess } from "./provider-processes";
-import { type ProviderTempOptions, spawnWithProviderTemp } from "./provider-temp";
+import { type ProviderTempOptions, spawnWithProviderTemp, waitForProviderTempCleanup } from "./provider-temp";
 import { createDiagnosticStream } from "./stderr-diagnostics";
 import { endProcessTree } from "./windows-process-tree";
 
@@ -52,6 +52,7 @@ export interface AcpConnectionOptions {
 /** Owns the ACP child process, stream and exit diagnostics. It never owns agent sessions. */
 export class AcpConnection {
   #process: ChildProcessWithoutNullStreams | null = null;
+  #tempCleanupChild: ChildProcessWithoutNullStreams | null = null;
   #connection: ClientSideConnection | null = null;
   #ended: Deferred.Deferred<ProcessEnd> | null = null;
   #stopping = false;
@@ -91,6 +92,7 @@ export class AcpConnection {
       }),
     );
     this.#process = child;
+    this.#tempCleanupChild = child;
     registerProviderProcess(child, this.options.provider);
     // A start that times out says nothing of the process. These lines show whether it ran, how long
     // it took to write anything, and how it ended, such as a Windows server that unpacks itself (#2311).
@@ -171,14 +173,20 @@ export class AcpConnection {
   ): Effect.fn.Return<void, ProviderClientOperationError> {
     this.#stopping = true;
     const child = this.#process;
+    const tempCleanupChild = this.#tempCleanupChild;
     if (child && child.exitCode === null) this.#stoppedProcesses.add(child);
     this.#process = null;
+    this.#tempCleanupChild = null;
     this.#connection = null;
-    yield* cleanup.pipe(
-      Effect.ensuring(
-        Effect.suspend(() => (!child || child.exitCode !== null ? Effect.void : endProcess(child))).pipe(Effect.orDie),
-      ),
-    );
+    const cleanupResult = yield* Effect.exit(cleanup);
+    const processStop = child && child.exitCode === null ? endProcess(child).pipe(Effect.orDie) : Effect.void;
+    const stopped = yield* Effect.exit(processStop);
+    const tempCleaned = tempCleanupChild
+      ? yield* Effect.exit(waitForProviderTempCleanup(tempCleanupChild).pipe(Effect.mapError(providerFailure)))
+      : Exit.succeed(undefined);
+    if (Exit.isFailure(tempCleaned)) return yield* Effect.failCause(tempCleaned.cause);
+    if (Exit.isFailure(stopped)) return yield* Effect.failCause(stopped.cause);
+    if (Exit.isFailure(cleanupResult)) return yield* Effect.failCause(cleanupResult.cause);
   }, Effect.uninterruptible);
   readonly explainEnd = Effect.fn("AcpConnection.explainEnd")(function* (
     this: AcpConnection,

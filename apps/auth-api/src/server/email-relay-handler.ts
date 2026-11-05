@@ -5,7 +5,7 @@ import { type SmtpConnector, sendRelayedEmail } from "./smtp-email-delivery";
  * The fetch handler of the `openbot-email-relay` Worker. It answers 204 when the mail host took the
  * message, and 502 with the failure message otherwise. `sendThroughRelay` reads that answer.
  */
-export function createEmailRelayHandler(connector?: SmtpConnector) {
+export function createEmailRelayHandler(connector: SmtpConnector) {
   return {
     async fetch(request: Request): Promise<Response> {
       if (request.method !== "POST") return new Response(null, { status: 405 });

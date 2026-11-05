@@ -88,6 +88,7 @@ import type {
   ProviderHistoryRequest,
   ReadProviderHistory,
 } from "./provider-history";
+import type { ProviderLifecycleMode } from "./provider-lifecycle";
 import { TimeoutError } from "./with-timeout";
 
 const logger = createOpenBotLogger("acp-client");
@@ -328,6 +329,10 @@ export const OPENBOT_ACP_CLIENT_INFO = { name: "openbot", title: "OpenBot", vers
 
 export interface AcpProviderOptions {
   provider: AgentProvider;
+  /** Whether idle ACP sessions stay open for the lifetime of the host. */
+  providerLifecycleMode?: ProviderLifecycleMode | undefined;
+  /** Test seam: shortens the session idle window without waiting ten minutes. */
+  providerSessionIdleReleaseMs?: number | undefined;
   /** Durable history supplied by the database. ACP never owns a full conversation snapshot. */
   history?: AcpHistoryPersistence | undefined;
   /** The name in error text. The provider name when absent; a custom agent gives its own. */
@@ -464,8 +469,9 @@ export class AcpAgentClient extends EventEmitter<ClientEvents> {
   readonly #bridge = new LocalMcpBridge();
   readonly #threads = new IdleThreadPool<AcpThread, ReleasedAcpThread>({
     scope: () => this.#scope,
-    releaseAfterMs: ACP_SESSION_IDLE_RELEASE_MS,
+    releaseAfterMs: () => this.options.providerSessionIdleReleaseMs ?? ACP_SESSION_IDLE_RELEASE_MS,
     idleLimit: ACP_IDLE_SESSION_LIMIT,
+    retainIdle: () => this.options.providerLifecycleMode === "always-on",
     // An agent that cannot close a session and load it again would keep its MCP servers or lose it.
     // A session with a process of its own closes when that process ends.
     // A watched session stays open: a closed one would not report the end of its background task.

@@ -178,8 +178,12 @@ export const messages = {
     "{provider} n’a pas listé ses modèles en {seconds} s. L’ordinateur est peut-être occupé.",
   "error.provider.startStopped":
     "{provider} n’a pas démarré plusieurs fois de suite, OpenBot a donc arrêté d’essayer. Actualisez les fournisseurs pour réessayer.",
+  "error.provider.initRetryLongRunning":
+    "{provider} est indisponible depuis plus de 24 heures. OpenBot continue d’essayer à intervalles espacés.",
   "error.provider.tempDiskSpace":
     "{provider} a besoin d’au moins 1 Go d’espace disque libre pour démarrer. Libérez de l’espace, puis actualisez les fournisseurs.",
+  "error.provider.tempCleanupFailed":
+    "OpenBot n’a pas pu supprimer les fichiers temporaires privés de {provider}. Les nouvelles tentatives automatiques sont arrêtées ; vérifiez l’espace disque avant d’actualiser le fournisseur.",
   "error.provider.noCodeSignIn": "{provider} ne permet pas de se connecter avec un code.",
   "error.provider.codeLoginNoLink": "Le fournisseur n’a pas affiché de lien de connexion. Réessayez.",
   "error.provider.hostSignInEnded": "La connexion à {provider} n’a pas abouti. Réessayez.",

@@ -151,6 +151,8 @@ export const messages = defineMessages("error.provider", {
   "error.provider.cliTimedOut": "{provider} did not answer in time. The computer may be busy. OpenBot will try again.",
   "error.provider.cliTimedOutRefresh":
     "{provider} did not answer in time. The computer may be busy. Refresh the providers to try again.",
+  "error.provider.initRetryLongRunning":
+    "{provider} has been unavailable for more than 24 hours. OpenBot is still retrying slowly.",
   "error.provider.acpStartTimedOut": "{provider} did not finish starting within {seconds} s. The computer may be busy.",
   "error.provider.acpModelsTimedOut":
     "{provider} did not list its models within {seconds} s. The computer may be busy.",
@@ -158,6 +160,8 @@ export const messages = defineMessages("error.provider", {
     "{provider} did not start several times in a row, so OpenBot stopped trying. Refresh the providers to try again.",
   "error.provider.tempDiskSpace":
     "{provider} needs at least 1 GB of free disk space to start. Free up space, then refresh the providers.",
+  "error.provider.tempCleanupFailed":
+    "OpenBot could not remove {provider}'s private temporary files. Automatic retry stopped; check available disk space before refreshing.",
   "error.provider.noCodeSignIn": "{provider} cannot be signed in with a code.",
   "error.provider.codeLoginNoLink": "The provider did not show a sign-in link. Try again.",
   "error.provider.hostSignInEnded": "{provider} did not finish signing in. Try again.",

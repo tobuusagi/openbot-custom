@@ -4,7 +4,6 @@ import { sha256 } from "./crypto";
 import type {
   AuthRepository,
   AuthUser,
-  EmailChallengeDeliveryState,
   EmailChallengeRecord,
   EmailVerificationResult,
   MobileAuthDevice,
@@ -12,43 +11,147 @@ import type {
   MobileAuthSessionResult,
 } from "./types";
 
-interface UserRow {
-  id: string;
-  email: string;
-  name: string | null;
-  avatar_url: string | null;
-  analytics_enabled: number | null;
+/** The D1 operations that this repository actually needs. */
+export interface AuthD1ReadResult<A> {
+  results: A[];
 }
 
-interface AuthenticatedUserRow extends UserRow {
-  last_used_at: number;
+export type AuthD1SqlValue = string | number | bigint | ArrayBuffer | Uint8Array | null;
+
+export interface AuthD1RawRow {
+  [columnName: string]: AuthD1SqlValue;
 }
 
-interface ChallengeRow {
-  email: string;
-  code_hash: string;
-  expires_at: number;
-  failed_attempts: number;
-  max_attempts: number;
-  consumed_at: number | null;
-  delivery_state: EmailChallengeDeliveryState;
+const authD1SqlValueSchema = Schema.Union([
+  Schema.String,
+  Schema.Number,
+  Schema.BigInt,
+  Schema.Null,
+  Schema.Uint8Array,
+  Schema.instanceOf(ArrayBuffer),
+]);
+const authD1RawRowSchema = Schema.Record(Schema.String, authD1SqlValueSchema);
+export const decodeAuthD1RawRow = Schema.decodeUnknownSync(authD1RawRowSchema);
+
+export type AuthD1RowDecoder<A> = (row: AuthD1RawRow) => A;
+
+export interface AuthD1WriteResult {
+  meta: { changes: number };
 }
 
-interface MobileSessionUserRow extends UserRow {
-  last_used_at: number;
+export interface AuthD1PreparedStatement {
+  bind(...values: unknown[]): AuthD1PreparedStatement;
+  first<A>(decode: AuthD1RowDecoder<A>): Promise<A | null>;
+  all<A>(decode: AuthD1RowDecoder<A>): Promise<AuthD1ReadResult<A>>;
+  run(): Promise<AuthD1WriteResult>;
 }
 
-interface HostBindingRow {
-  host_id: string | null;
-  host_fingerprint: string | null;
-  device_public_key: string | null;
-  owner_user_id: string | null;
-  user_id: string;
+export interface AuthD1Database {
+  prepare(query: string): AuthD1PreparedStatement;
+  batch(statements: AuthD1PreparedStatement[]): Promise<AuthD1WriteResult[]>;
 }
+
+const userRowSchema = Schema.Struct({
+  id: Schema.String,
+  email: Schema.String,
+  name: Schema.NullOr(Schema.String),
+  avatar_url: Schema.NullOr(Schema.String),
+  analytics_enabled: Schema.NullOr(Schema.Number),
+});
+type UserRow = typeof userRowSchema.Type;
+const decodeUserRow: AuthD1RowDecoder<UserRow> = Schema.decodeUnknownSync(userRowSchema);
+
+const authenticatedUserRowSchema = Schema.Struct({
+  ...userRowSchema.fields,
+  last_used_at: Schema.Number,
+});
+type AuthenticatedUserRow = typeof authenticatedUserRowSchema.Type;
+const decodeAuthenticatedUserRow: AuthD1RowDecoder<AuthenticatedUserRow> =
+  Schema.decodeUnknownSync(authenticatedUserRowSchema);
+
+const challengeRowSchema = Schema.Struct({
+  email: Schema.String,
+  code_hash: Schema.String,
+  expires_at: Schema.Number,
+  failed_attempts: Schema.Number,
+  max_attempts: Schema.Number,
+  consumed_at: Schema.NullOr(Schema.Number),
+  delivery_state: Schema.Literals(["pending", "sent", "failed"]),
+});
+type ChallengeRow = typeof challengeRowSchema.Type;
+const decodeChallengeRow: AuthD1RowDecoder<ChallengeRow> = Schema.decodeUnknownSync(challengeRowSchema);
+
+const challengeSummaryRowSchema = Schema.Struct({
+  email: Schema.String,
+  created_at: Schema.Number,
+  expires_at: Schema.Number,
+  consumed_at: Schema.NullOr(Schema.Number),
+  delivery_state: Schema.Literals(["pending", "sent", "failed"]),
+});
+type ChallengeSummaryRow = typeof challengeSummaryRowSchema.Type;
+const decodeChallengeSummaryRow: AuthD1RowDecoder<ChallengeSummaryRow> =
+  Schema.decodeUnknownSync(challengeSummaryRowSchema);
+
+const mobileSessionUserRowSchema = Schema.Struct({
+  ...userRowSchema.fields,
+  last_used_at: Schema.Number,
+});
+type MobileSessionUserRow = typeof mobileSessionUserRowSchema.Type;
+const decodeMobileSessionUserRow: AuthD1RowDecoder<MobileSessionUserRow> =
+  Schema.decodeUnknownSync(mobileSessionUserRowSchema);
+
+const hostBindingRowSchema = Schema.Struct({
+  host_id: Schema.NullOr(Schema.String),
+  host_fingerprint: Schema.NullOr(Schema.String),
+  device_public_key: Schema.NullOr(Schema.String),
+  owner_user_id: Schema.NullOr(Schema.String),
+  user_id: Schema.String,
+});
+type HostBindingRow = typeof hostBindingRowSchema.Type;
+const decodeHostBindingRow: AuthD1RowDecoder<HostBindingRow> = Schema.decodeUnknownSync(hostBindingRowSchema);
+
+const hostKeyOwnerRowSchema = Schema.Struct({
+  device_public_key: Schema.NullOr(Schema.String),
+  owner_user_id: Schema.NullOr(Schema.String),
+});
+const decodeHostKeyOwnerRow: AuthD1RowDecoder<typeof hostKeyOwnerRowSchema.Type> =
+  Schema.decodeUnknownSync(hostKeyOwnerRowSchema);
+
+const createdAtRowSchema = Schema.Struct({ created_at: Schema.Number });
+const decodeCreatedAtRow: AuthD1RowDecoder<typeof createdAtRowSchema.Type> =
+  Schema.decodeUnknownSync(createdAtRowSchema);
+const attemptsRowSchema = Schema.Struct({ attempts: Schema.Number });
+const decodeAttemptsRow: AuthD1RowDecoder<typeof attemptsRowSchema.Type> = Schema.decodeUnknownSync(attemptsRowSchema);
+const idRowSchema = Schema.Struct({ id: Schema.String });
+const decodeIdRow: AuthD1RowDecoder<typeof idRowSchema.Type> = Schema.decodeUnknownSync(idRowSchema);
+
+const accountSessionRowSchema = Schema.Struct({
+  sessionId: Schema.String,
+  name: Schema.String,
+  kind: Schema.Literals(["desktop", "mobile"]),
+  connectedAt: Schema.Number,
+  lastActiveAt: Schema.Number,
+  is_current: Schema.Number,
+  is_hosted_server: Schema.Number,
+});
+type AccountSessionRow = typeof accountSessionRowSchema.Type;
+const decodeAccountSessionRow: AuthD1RowDecoder<AccountSessionRow> = Schema.decodeUnknownSync(accountSessionRowSchema);
+
+const mobileAuthDeviceRowSchema = Schema.Struct({
+  session_id: Schema.String,
+  device_name: Schema.String,
+  platform: Schema.Literals(["ios", "android", "unknown"]),
+  created_at: Schema.Number,
+  last_used_at: Schema.Number,
+  via_link: Schema.Number,
+});
+type MobileAuthDeviceRow = typeof mobileAuthDeviceRowSchema.Type;
+const decodeMobileAuthDeviceRow: AuthD1RowDecoder<MobileAuthDeviceRow> =
+  Schema.decodeUnknownSync(mobileAuthDeviceRowSchema);
 
 const SESSION_ACTIVITY_UPDATE_INTERVAL_MS = 15 * 60_000;
 
-class AuthDatabase extends Context.Service<AuthDatabase, D1Database>()("auth-api/D1AuthRepository/Database") {}
+class AuthDatabase extends Context.Service<AuthDatabase, AuthD1Database>()("auth-api/D1AuthRepository/Database") {}
 export class AuthStoreError extends Schema.TaggedError<AuthStoreError>()("AuthStoreError", {
   message: Schema.String,
 }) {}
@@ -58,9 +161,76 @@ function storeCall<A>(operation: () => Promise<A>): Effect.Effect<A, AuthStoreEr
     catch: () => new AuthStoreError({ message: "Account store operation failed." }),
   });
 }
+
+class WorkerAuthD1Database implements AuthD1Database {
+  readonly #database: D1Database;
+  readonly #owner = Symbol("WorkerAuthD1Database");
+
+  constructor(database: D1Database) {
+    this.#database = database;
+  }
+
+  prepare(query: string): AuthD1PreparedStatement {
+    return new WorkerAuthD1PreparedStatement(this.#database.prepare(query), this.#owner);
+  }
+
+  async batch(statements: AuthD1PreparedStatement[]): Promise<AuthD1WriteResult[]> {
+    if (statements.length === 0) return [];
+    const workerStatements = statements.map((statement) => {
+      if (!(statement instanceof WorkerAuthD1PreparedStatement)) {
+        throw new Error("The account repository received a statement from another database adapter.");
+      }
+      return statement.toBatchStatement(this.#owner);
+    });
+    const results = await this.#database.batch(workerStatements);
+    return results.map(({ meta }) => ({ meta: { changes: meta.changes } }));
+  }
+}
+
+class WorkerAuthD1PreparedStatement implements AuthD1PreparedStatement {
+  readonly #statement: D1PreparedStatement;
+  readonly #owner: symbol;
+
+  constructor(statement: D1PreparedStatement, owner: symbol) {
+    this.#statement = statement;
+    this.#owner = owner;
+  }
+
+  bind(...values: unknown[]): AuthD1PreparedStatement {
+    return new WorkerAuthD1PreparedStatement(this.#statement.bind(...values), this.#owner);
+  }
+
+  async first<A>(decode: AuthD1RowDecoder<A>): Promise<A | null> {
+    const row = await this.#statement.first();
+    return row === null ? null : decode(decodeAuthD1RawRow(row));
+  }
+
+  async all<A>(decode: AuthD1RowDecoder<A>): Promise<AuthD1ReadResult<A>> {
+    const result = await this.#statement.all();
+    return { results: result.results.map((row) => decode(decodeAuthD1RawRow(row))) };
+  }
+
+  async run(): Promise<AuthD1WriteResult> {
+    const result = await this.#statement.run();
+    return { meta: { changes: result.meta.changes } };
+  }
+
+  toBatchStatement(owner: symbol): D1PreparedStatement {
+    if (owner !== this.#owner) {
+      throw new Error("The account repository received a statement from another database adapter.");
+    }
+    return this.#statement;
+  }
+}
+
 export class D1AuthRepository implements AuthRepository {
   readonly #layer: Layer.Layer<AuthDatabase>;
-  constructor(database: D1Database) {
+
+  static fromWorker(database: D1Database): D1AuthRepository {
+    return new D1AuthRepository(new WorkerAuthD1Database(database));
+  }
+
+  constructor(database: AuthD1Database) {
     this.#layer = Layer.succeed(AuthDatabase, database);
   }
 
@@ -75,7 +245,7 @@ export class D1AuthRepository implements AuthRepository {
          ORDER BY created_at DESC LIMIT 1`,
           )
           .bind(email)
-          .first<{ created_at: number }>(),
+          .first(decodeCreatedAtRow),
       );
       return row?.created_at ?? null;
     },
@@ -95,13 +265,7 @@ export class D1AuthRepository implements AuthRepository {
          FROM email_login_challenges WHERE id_hash = ?`,
           )
           .bind(idHash)
-          .first<{
-            email: string;
-            created_at: number;
-            expires_at: number;
-            consumed_at: number | null;
-            delivery_state: EmailChallengeDeliveryState;
-          }>(),
+          .first(decodeChallengeSummaryRow),
       );
       return row
         ? {
@@ -205,7 +369,7 @@ export class D1AuthRepository implements AuthRepository {
          FROM email_login_challenges WHERE id_hash = ?`,
           )
           .bind(input.idHash)
-          .first<ChallengeRow>(),
+          .first(decodeChallengeRow),
       );
       if (!challenge || challenge.delivery_state === "failed" || challenge.consumed_at !== null) {
         return { status: "invalid" };
@@ -293,7 +457,7 @@ export class D1AuthRepository implements AuthRepository {
          RETURNING attempts`,
           )
           .bind(keyHash, windowStart)
-          .first<{ attempts: number }>(),
+          .first(decodeAttemptsRow),
       );
       const count = row?.attempts ?? limit + 1;
       return { allowed: count <= limit, count, windowStart };
@@ -322,7 +486,7 @@ export class D1AuthRepository implements AuthRepository {
            AND auth_sessions.expires_at > ?`,
           )
           .bind(tokenHash, now)
-          .first<AuthenticatedUserRow>(),
+          .first(decodeAuthenticatedUserRow),
       );
       if (!row) return null;
       yield* this.#updateSessionActivityEffect(tokenHash, row.last_used_at, now);
@@ -356,7 +520,7 @@ export class D1AuthRepository implements AuthRepository {
            )`,
           )
           .bind(tokenHash, now)
-          .first<AuthenticatedUserRow>(),
+          .first(decodeAuthenticatedUserRow),
       );
       if (!row) return null;
       yield* this.#updateSessionActivityEffect(tokenHash, row.last_used_at, now);
@@ -401,7 +565,7 @@ export class D1AuthRepository implements AuthRepository {
          RETURNING id`,
           )
           .bind(now, tokenHash)
-          .first<{ id: string }>(),
+          .first(decodeIdRow),
       );
       return result !== null;
     },
@@ -424,7 +588,7 @@ export class D1AuthRepository implements AuthRepository {
          RETURNING id, email, name, avatar_url, analytics_enabled`,
           )
           .bind(name, now, userId)
-          .first<UserRow>(),
+          .first(decodeUserRow),
       );
       if (!row) return yield* new AuthStoreError({ message: "User not found." });
       return mapUser(row);
@@ -455,7 +619,7 @@ export class D1AuthRepository implements AuthRepository {
         database
           .prepare("SELECT id, email, name, avatar_url, analytics_enabled FROM users WHERE id = ?")
           .bind(userId)
-          .first<UserRow>(),
+          .first(decodeUserRow),
       );
       if (!row) return yield* new AuthStoreError({ message: "User not found." });
       return mapUser(row);
@@ -480,7 +644,7 @@ export class D1AuthRepository implements AuthRepository {
          RETURNING id, email, name, avatar_url, analytics_enabled`,
           )
           .bind(avatarUrl, now, userId, expectedAvatarUrl)
-          .first<UserRow>(),
+          .first(decodeUserRow),
       );
       return row ? mapUser(row) : null;
     },
@@ -599,7 +763,7 @@ export class D1AuthRepository implements AuthRepository {
          WHERE team_auth_tickets.ticket_hash = ?`,
           )
           .bind(input.ticketHash)
-          .first<UserRow>(),
+          .first(decodeUserRow),
       );
       return row ? mapUser(row) : null;
     },
@@ -627,7 +791,7 @@ export class D1AuthRepository implements AuthRepository {
        WHERE t.ticket_hash = ? AND t.server_id = ? AND t.consumed_at IS NULL AND t.expires_at > ?`,
           )
           .bind(input.ticketHash, input.serverId, input.now)
-          .first<HostBindingRow>(),
+          .first(decodeHostBindingRow),
       );
       if (!binding || !(yield* hostBindingMatches(binding))) return null;
       const tokenHash = yield* storeHash(input.session.token);
@@ -687,7 +851,7 @@ export class D1AuthRepository implements AuthRepository {
         database
           .prepare("SELECT device_public_key, owner_user_id FROM remote_hosts WHERE host_id = ?")
           .bind(input.host.hostId)
-          .first<Pick<HostBindingRow, "device_public_key" | "owner_user_id">>(),
+          .first(decodeHostKeyOwnerRow),
       );
       if (
         !host ||
@@ -792,7 +956,7 @@ export class D1AuthRepository implements AuthRepository {
          AND d.user_id = l.user_id AND d.revoked_at IS NULL AND d.expires_at > ?`,
           )
           .bind(input.linkHash, input.now)
-          .first<HostBindingRow>(),
+          .first(decodeHostBindingRow),
       );
       if (!binding || !(yield* hostBindingMatches(binding))) return null;
       const tokenHash = yield* storeHash(input.session.token);
@@ -872,7 +1036,7 @@ export class D1AuthRepository implements AuthRepository {
            AND auth_sessions.expires_at > ?`,
           )
           .bind(tokenHash, now)
-          .first<MobileSessionUserRow>(),
+          .first(decodeMobileSessionUserRow),
       );
       if (!row) return null;
       yield* this.#updateSessionActivityEffect(tokenHash, row.last_used_at, now);
@@ -912,14 +1076,7 @@ export class D1AuthRepository implements AuthRepository {
          ORDER BY auth_sessions.last_used_at DESC, auth_sessions.created_at DESC`,
           )
           .bind(userId, now, hostId, hostId)
-          .all<{
-            session_id: string;
-            device_name: string;
-            platform: MobileAuthDevice["platform"];
-            created_at: number;
-            last_used_at: number;
-            via_link: number;
-          }>(),
+          .all(decodeMobileAuthDeviceRow),
       );
       return result.results.map((row) => ({
         sessionId: row.session_id,
@@ -958,7 +1115,7 @@ export class D1AuthRepository implements AuthRepository {
       ORDER BY a.last_used_at DESC, a.created_at DESC
     `)
           .bind(tokenHash, userId, now)
-          .all<Omit<AccountSession, "current" | "hostedServer"> & { is_current: number; is_hosted_server: number }>(),
+          .all(decodeAccountSessionRow),
       );
       return result.results.map(({ is_current, is_hosted_server, ...session }) => ({
         ...session,
@@ -985,7 +1142,7 @@ export class D1AuthRepository implements AuthRepository {
             "UPDATE auth_sessions SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL RETURNING id",
           )
           .bind(now, sessionId, userId)
-          .first<{ id: string }>(),
+          .first(decodeIdRow),
       );
       return result !== null;
     },
@@ -1009,7 +1166,7 @@ export class D1AuthRepository implements AuthRepository {
          RETURNING id`,
           )
           .bind(now, sessionId, userId)
-          .first<{ id: string }>(),
+          .first(decodeIdRow),
       );
       return result !== null;
     },
@@ -1086,7 +1243,7 @@ export class D1AuthRepository implements AuthRepository {
          WHERE auth_sessions.id = ?`,
           )
           .bind(input.session.id)
-          .first<UserRow>(),
+          .first(decodeUserRow),
       );
       return row ? { sessionToken: input.session.token, user: mapUser(row) } : null;
     },
@@ -1120,7 +1277,7 @@ export class D1AuthRepository implements AuthRepository {
       database
         .prepare("SELECT id, email, name, avatar_url, analytics_enabled FROM users WHERE email = ?")
         .bind(email)
-        .first<UserRow>(),
+        .first(decodeUserRow),
     );
     if (existing) return { user: mapUser(existing), created: false };
     const id = crypto.randomUUID();
@@ -1140,10 +1297,10 @@ export class D1AuthRepository implements AuthRepository {
 
 /** Registers the new mobile session and replaces the earlier session of the same device. */
 function mobileSessionStatements(
-  database: D1Database,
+  database: AuthD1Database,
   input: { now: number; session: { id: string }; device: MobileAuthDeviceIdentity },
   linkHostId: string | null,
-): D1PreparedStatement[] {
+): AuthD1PreparedStatement[] {
   return [
     database
       .prepare(

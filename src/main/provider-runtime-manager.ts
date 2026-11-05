@@ -296,6 +296,7 @@ export class ProviderRuntimeManager extends EventEmitter<ProviderRuntimeManagerE
       grok: emptyStatus(unsupportedMessage),
       opencode: emptyStatus(unsupportedMessage),
       antigravity: emptyStatus(unsupportedMessage),
+      devin: emptyStatus(unsupportedMessage),
       cursor: emptyStatus(unsupportedMessage),
       cline: emptyStatus(unsupportedMessage),
       kimi: emptyStatus(unsupportedMessage),

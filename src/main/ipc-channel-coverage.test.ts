@@ -83,7 +83,11 @@ const mainSources = sourceFilesUnder("src/main");
 // The hidden WebRTC window has a preload of its own. It takes one MessagePort that main hands over
 // with webContents.postMessage, which is not an IPC endpoint, so the scan leaves it out.
 const WEBRTC_PRELOAD_MODULE = "src/preload/team-webrtc.ts";
-const preloadSources = sourceFilesUnder("src/preload").filter((file) => file !== WEBRTC_PRELOAD_MODULE);
+const CLIENT_PRELOAD_MODULE = "src/preload/client-index.ts";
+const preloadSources = sourceFilesUnder("src/preload").filter(
+  (file) => file !== WEBRTC_PRELOAD_MODULE && file !== CLIENT_PRELOAD_MODULE,
+);
+const clientPreloadSources = [CLIENT_PRELOAD_MODULE];
 
 // The one module allowed to touch ipcMain, because it is the sender check.
 const TRUSTED_IPC_MODULE = "src/main/trusted-ipc.ts";
@@ -136,6 +140,7 @@ const FORWARDED_CHANNEL_ARGUMENTS: readonly string[] = [
 
 const mainCalls = collectCalls(mainSources, PRELOAD_ONLY_CALLEES);
 const preloadCalls = collectCalls(preloadSources, []);
+const clientPreloadCalls = collectCalls(clientPreloadSources, []);
 
 const sent = channelsCalledBy(mainCalls, MAIN_SEND_CALLEES);
 const bridgedGroups = groupsCalledBy(preloadCalls, PRELOAD_GROUP_CALLEES);
@@ -154,7 +159,7 @@ describe("IPC channel coverage", () => {
   // Either way the call would contribute nothing to the sets compared below
   // while sitting on the trust boundary, so it fails here instead.
   it("names every endpoint through a direct IPC_ENDPOINTS reference", () => {
-    const opaque = [...mainCalls, ...preloadCalls]
+    const opaque = [...mainCalls, ...preloadCalls, ...clientPreloadCalls]
       .filter((call) =>
         PRELOAD_GROUP_CALLEES.includes(call.callee) ? groupOf(call) === null : !ENDPOINT_REFERENCE.test(call.argument),
       )
@@ -172,7 +177,9 @@ describe("IPC channel coverage", () => {
     const stray = [
       ...strayReferences(mainSources, mainCalls),
       ...strayReferences(preloadSources, preloadCalls),
+      ...strayReferences(clientPreloadSources, clientPreloadCalls),
       ...strayGroupReferences(preloadSources, preloadCalls),
+      ...strayGroupReferences(clientPreloadSources, clientPreloadCalls),
     ];
 
     expect(stray).toEqual([]);
@@ -203,6 +210,33 @@ describe("IPC channel coverage", () => {
 
   it("subscribes to exactly the event endpoints from the preload", () => {
     expect(subscribed).toEqual(eventChannels);
+  });
+
+  it("limits the separate client preload to the account request and state-event subset", () => {
+    expect(channelsCalledBy(clientPreloadCalls, PRELOAD_INVOKE_CALLEES)).toEqual([
+      "auth.getState",
+      "auth.logout",
+      "auth.requestEmailCode",
+      "auth.retry",
+      "auth.verifyEmailCode",
+    ]);
+    expect(channelsCalledBy(clientPreloadCalls, PRELOAD_SUBSCRIBE_CALLEES)).toEqual(["auth.event"]);
+    expect(channelsCalledBy(clientPreloadCalls, PRELOAD_UNSUBSCRIBE_CALLEES)).toEqual(["auth.event"]);
+    const source = readFileSync(join(repositoryRoot, CLIENT_PRELOAD_MODULE), "utf8");
+    const exposedNames = [...source.matchAll(/contextBridge\.exposeInMainWorld\s*\(\s*["']([^"']+)["']/gu)].map(
+      (match) => match[1],
+    );
+    const exposedGlobals = [...source.matchAll(/contextBridge\.exposeInMainWorld\s*\(/gu)];
+    const ipcMethods = [...source.matchAll(/\bipcRenderer\.([A-Za-z0-9_]+)\s*\(/gu)].map((match) => match[1]);
+
+    expect(exposedNames).toEqual(["clientAccount"]);
+    expect(exposedGlobals).toHaveLength(1);
+    expect(source).toContain('contextBridge.exposeInMainWorld("clientAccount", Object.freeze(clientAccount))');
+    expect(source).toContain("const clientAccount: ClientAccountApi = {");
+    expect(ipcMethods.sort()).toEqual(["invoke", "invoke", "invoke", "invoke", "invoke", "on", "removeListener"]);
+    expect(source).not.toMatch(/\bbridgeGroup\b/u);
+    expect(source).not.toMatch(/\b(?:window|globalThis)\.openbot\b/u);
+    expect(clientPreloadCalls.map(groupOf).filter((group) => group !== null)).toEqual([]);
   });
 
   it("sends exactly the event endpoints from the main process", () => {

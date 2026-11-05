@@ -46,6 +46,7 @@ import {
 } from "./../cli";
 import { readCursorUsage } from "./../cursor-usage";
 import { causeHelpers } from "../effect-boundary";
+import type { SignInRegion } from "../kimi-region";
 import { McpHandoffLog } from "./../mcp-handoff-log";
 import { providerMcpServerName } from "./../mcp-provider-shapes";
 import { customProvidersOn, openCodeSignInMessage } from "./../opencode-config";
@@ -70,7 +71,8 @@ import {
   requireProviderDriver,
   savedCustomAgents,
 } from "./../provider-drivers";
-import { ProviderTempDiskSpaceError } from "../provider-temp";
+import { type ProviderLifecycleMode, providerLifecycleModeFor } from "../provider-lifecycle";
+import { ProviderTempCleanupError, ProviderTempDiskSpaceError } from "../provider-temp";
 import { startProviderTerminalLogin } from "../provider-terminal-login";
 import { recordRestartActivity } from "../restart-activity";
 import { shortenDiagnostic } from "./../stderr-diagnostics";
@@ -162,17 +164,41 @@ function signInFileVersion(paths: readonly string[]): string {
     .join("|");
 }
 /**
- * Starts that fail in a row before OpenBot stops starting a provider by itself. A start that fails,
- * that times out, or whose process ends within `STABLE_RUN_MS` counts. Only a user action starts the
- * provider again: each start of the Windows Gemini server unpacks about 310 MB, and a loop of starts
- * filled the disk.
+ * Shared limit for failed starts and short-lived process exits. Eligible always-on initialization
+ * timeouts use their separate episode budget and do not consume this count. Each Windows Gemini
+ * server start unpacks about 310 MB, and an unbounded process-exit loop filled the disk.
  */
 const START_FAILURE_LIMIT = 3;
 const STABLE_RUN_MS = 2 * 60_000;
+const INITIALIZATION_RETRY_INITIAL_DELAYS_MS = [5_000, 10_000, 20_000] as const;
+const INITIALIZATION_RETRY_MAX_DELAY_MS = 60 * 60_000;
+const INITIALIZATION_RETRY_WARNING_AFTER_MS = 24 * 60 * 60_000;
+const INITIALIZATION_RETRY_DISK_CHECK_MS = 60 * 60_000;
+/** Interim process-local cap until the target Windows Surface has passed an initialization fault soak. */
+const INITIALIZATION_RETRY_LAUNCH_LIMIT = 48;
 /** How often a restart the user asked for checks whether the provider's turns have ended. */
 const PROVIDER_RESTART_POLL_MS = 1_000;
 /** The start failure of OpenCode 1 on a database that OpenCode 2 made. */
 const OPENCODE_NEWER_DATABASE = /\bDatabase is not empty and has no session table\b/u;
+
+interface InitializationRetryPolicy {
+  initialDelaysMs: readonly number[];
+  maxDelayMs: number;
+  warningAfterMs: number;
+  diskSpaceCheckMs: number;
+  launchLimit: number;
+  jitter(delayMs: number): number;
+}
+
+interface InitializationRetryEpisode {
+  readonly id: number;
+  readonly startedAt: number;
+  launches: number;
+  timeoutFailures: number;
+  warningShown: boolean;
+  retryAt: number | null;
+  lastMessage: string | null;
+}
 /**
  * The providers whose shared process reads the agent environment only when it starts. Claude reads
  * it at each session start, and Codex with each thread's config.
@@ -232,6 +258,7 @@ export type AgentClientFactory = (
   cli: AgentCliInfo,
   confinement?: ProcessConfinement,
   accountEnvironment?: Readonly<Record<string, string>>,
+  providerLifecycleMode?: ProviderLifecycleMode,
 ) => AgentClient;
 
 /**
@@ -350,6 +377,11 @@ export class ProviderRuntime implements ProviderPort {
   readonly #requestTimeoutMs: number;
   /** `LONG_START_TIMEOUT_MS`, shorter in an end-to-end script. */
   readonly #longStartTimeoutMs: number;
+  readonly #providerLifecycleMode: ProviderLifecycleMode;
+  readonly #providerIdleCheckMs: number;
+  readonly #providerIdleReleaseMs: number;
+  readonly #providerUnassignedReleaseMs: number;
+  readonly #providerSessionIdleReleaseMs: number | undefined;
   readonly #clientFactory: AgentClientFactory | null;
   readonly #bundledExecutables: BundledProviderExecutables;
   readonly #credentials: ProviderClientContext;
@@ -472,6 +504,12 @@ export class ProviderRuntime implements ProviderPort {
   #preferredModel: AgentModelId | null;
   /** Per provider: one provider that exits must not delay, or take the retries of, another. */
   readonly #restartAttempts = new Map<AgentProvider, number>();
+  /** Separate opt-in budget for a typed timeout before `initialize` has made any user request. */
+  readonly #initializationRetryEpochs = new Map<AgentProvider, number>();
+  readonly #initializationRetryEpisodes = new Map<AgentProvider, InitializationRetryEpisode>();
+  readonly #initializationRetryStableTimers = new Map<AgentProvider, NodeJS.Timeout>();
+  readonly #initializationRetryTimerIds = new Map<AgentProvider, number>();
+  readonly #initializationRetryPolicy: InitializationRetryPolicy;
   /** Starts in a row that failed (`START_FAILURE_LIMIT`). A user action clears them. */
   readonly #startFailures = new Map<AgentProvider, number>();
   /** Providers that did not answer `initialize` in time, and how long their next start waits (`#countSlowStart`). */
@@ -501,6 +539,15 @@ export class ProviderRuntime implements ProviderPort {
     emitError: (code: string, error: unknown, agentId?: string) => void;
     requestTimeoutMs: number;
     longStartTimeoutMs?: number;
+    providerLifecycleMode?: ProviderLifecycleMode;
+    /** Internal real-process harness seam. The application does not set these values from env. */
+    testInitializationRetryPolicy?: Partial<InitializationRetryPolicy>;
+    /** Test seam: makes the existing idle-release path observable without a long wait. */
+    providerIdleCheckMs?: number;
+    providerIdleReleaseMs?: number;
+    providerUnassignedReleaseMs?: number;
+    /** Test seam: shortens the ACP session idle window without waiting ten minutes. */
+    providerSessionIdleReleaseMs?: number;
     preferredProvider: AgentProvider;
     preferredModel?: AgentModelId | null;
     clientFactory: AgentClientFactory | null;
@@ -518,6 +565,21 @@ export class ProviderRuntime implements ProviderPort {
     this.#emitError = options.emitError;
     this.#requestTimeoutMs = options.requestTimeoutMs;
     this.#longStartTimeoutMs = options.longStartTimeoutMs ?? LONG_START_TIMEOUT_MS;
+    this.#providerLifecycleMode = options.providerLifecycleMode ?? "desktop";
+    this.#initializationRetryPolicy = {
+      initialDelaysMs: options.testInitializationRetryPolicy?.initialDelaysMs ?? INITIALIZATION_RETRY_INITIAL_DELAYS_MS,
+      maxDelayMs: options.testInitializationRetryPolicy?.maxDelayMs ?? INITIALIZATION_RETRY_MAX_DELAY_MS,
+      warningAfterMs: options.testInitializationRetryPolicy?.warningAfterMs ?? INITIALIZATION_RETRY_WARNING_AFTER_MS,
+      diskSpaceCheckMs: options.testInitializationRetryPolicy?.diskSpaceCheckMs ?? INITIALIZATION_RETRY_DISK_CHECK_MS,
+      launchLimit: options.testInitializationRetryPolicy?.launchLimit ?? INITIALIZATION_RETRY_LAUNCH_LIMIT,
+      jitter:
+        options.testInitializationRetryPolicy?.jitter ??
+        ((delayMs) => Math.round(delayMs * (0.8 + Math.random() * 0.4))),
+    };
+    this.#providerIdleCheckMs = options.providerIdleCheckMs ?? PROVIDER_IDLE_CHECK_MS;
+    this.#providerIdleReleaseMs = options.providerIdleReleaseMs ?? PROVIDER_IDLE_RELEASE_MS;
+    this.#providerUnassignedReleaseMs = options.providerUnassignedReleaseMs ?? PROVIDER_UNASSIGNED_RELEASE_MS;
+    this.#providerSessionIdleReleaseMs = options.providerSessionIdleReleaseMs;
     this.#preferredProvider = options.preferredProvider;
     this.#preferredModel = options.preferredModel ?? null;
     this.#clientFactory = options.clientFactory;
@@ -529,7 +591,13 @@ export class ProviderRuntime implements ProviderPort {
       bundledExecutable: () => this.#bundledExecutables.codex,
       createClient: (cli) => {
         const client = this.#clientFactory
-          ? this.#clientFactory("codex", cli)
+          ? this.#clientFactory(
+              "codex",
+              cli,
+              undefined,
+              undefined,
+              providerLifecycleModeFor("codex", this.#providerLifecycleMode),
+            )
           : new CodexAppServerClient(cli.executable, this.#requestTimeoutMs, cliPathEnvironment(cli));
         this.#bindClient(client);
         return client;
@@ -561,7 +629,10 @@ export class ProviderRuntime implements ProviderPort {
           scope: () => this.#scope,
           cli: (provider) =>
             this.#clients.has(provider) || this.#released.has(provider) ? this.#cli.get(provider) : undefined,
-          defaultEmail: (provider) => this.#accounts.get(provider)?.email ?? null,
+          defaultLogin: (provider) => {
+            const account = this.#accounts.get(provider);
+            return account ? { email: account.email ?? null, organization: account.organization ?? null } : null;
+          },
           apiKey: (provider) => this.#credentials.apiKey(provider),
           defaultUsesApiKey: (provider) => this.ownSignInUsesKey(provider),
           signInTemp: (provider) => {
@@ -621,6 +692,21 @@ export class ProviderRuntime implements ProviderPort {
       requestTimeoutMs: this.#requestTimeoutMs,
       recordProviderError: (provider, error) => this.#recordProviderError(provider, error),
     });
+  }
+
+  #providerClientContext(
+    provider: AgentProvider,
+    accountEnvironment?: Readonly<Record<string, string>>,
+    providerLifecycleMode = providerLifecycleModeFor(provider, this.#providerLifecycleMode),
+  ): ProviderClientContext {
+    return {
+      ...this.#credentials,
+      providerLifecycleMode,
+      ...(this.#providerSessionIdleReleaseMs === undefined
+        ? {}
+        : { providerSessionIdleReleaseMs: this.#providerSessionIdleReleaseMs }),
+      ...(accountEnvironment ? { accountEnvironment } : {}),
+    };
   }
 
   /** The account type and plan of the provider's own sign-in, or `null` before it is read. */
@@ -702,6 +788,7 @@ export class ProviderRuntime implements ProviderPort {
         return yield* new ProviderOperationFailed({ cause: new Error(sourceText("error.provider.useBusy")) });
       // Block new starts before the file write yields. A failed write restores the old state.
       this.#off.add(provider);
+      this.#invalidateInitializationRetry(provider);
     }
     yield* this.#saveProviderUse(provider, on).pipe(
       Effect.tapError(() =>
@@ -860,8 +947,9 @@ export class ProviderRuntime implements ProviderPort {
         continue;
       }
       const limit = this.#hooks.isProviderAssigned(provider)
-        ? PROVIDER_IDLE_RELEASE_MS
-        : PROVIDER_UNASSIGNED_RELEASE_MS;
+        ? this.#providerIdleReleaseMs
+        : this.#providerUnassignedReleaseMs;
+      if (providerLifecycleModeFor(provider, this.#providerLifecycleMode) === "always-on") continue;
       if (now - lastUsed < limit) continue;
       // Out of the map before it stops, so #handleExit reads the exit as expected, not as a crash.
       this.#clients.delete(provider);
@@ -878,7 +966,11 @@ export class ProviderRuntime implements ProviderPort {
         continue;
       }
       if (this.#hooks.isAgentBusy(agentId)) confined.lastUsed = now;
-      if (now - confined.lastUsed < PROVIDER_IDLE_RELEASE_MS) continue;
+      if (
+        providerLifecycleModeFor(confined.client.provider, this.#providerLifecycleMode) === "always-on" ||
+        now - confined.lastUsed < this.#providerIdleReleaseMs
+      )
+        continue;
       logger.info("Stopped an idle Workspace only provider process.", { provider: confined.client.provider, agentId });
       yield* this.#stopConfined(agentId, confined);
     }
@@ -909,8 +1001,19 @@ export class ProviderRuntime implements ProviderPort {
     if (account && !this.#providerAccounts?.supported(provider))
       throw new Error(sourceText("error.provider.accountsUnsupported", { provider: providerLabel(provider) }));
     const accountEnvironment = account ? this.#providerAccounts?.environment(account) : undefined;
-    if (this.#clientFactory) return this.#clientFactory(provider, cli, undefined, accountEnvironment);
-    const context = accountEnvironment ? { ...this.#credentials, accountEnvironment } : this.#credentials;
+    if (this.#clientFactory)
+      return this.#clientFactory(
+        provider,
+        cli,
+        undefined,
+        accountEnvironment,
+        providerLifecycleModeFor(provider, "desktop"),
+      );
+    const context = this.#providerClientContext(
+      provider,
+      accountEnvironment,
+      providerLifecycleModeFor(provider, "desktop"),
+    );
     const driver = requireProviderDriver(provider);
     if (driver.createProfileClient) return driver.createProfileClient(cli, this.#requestTimeoutMs, context);
     return driver.createClient(cli, this.#requestTimeoutMs, context);
@@ -1283,7 +1386,7 @@ export class ProviderRuntime implements ProviderPort {
     if (this.#scope.state._tag === "Closed") this.#scope = Scope.makeUnsafe();
     this.#idleCheck ??= setInterval(
       () => Effect.runFork(this.#releaseIdleProviders().pipe(Effect.forkIn(this.#scope))),
-      PROVIDER_IDLE_CHECK_MS,
+      this.#providerIdleCheckMs,
     );
     this.#idleCheck.unref?.();
     this.#watchSignInFiles();
@@ -1408,13 +1511,22 @@ export class ProviderRuntime implements ProviderPort {
     this.#resetRestarts(provider);
     this.#startFailures.delete(provider);
     yield* this.#startProvider(provider, { preserveCheckErrors: true, refreshRuntimeInBackground: true });
+    const row = this.#status.providers?.find((candidate) => candidate.id === provider);
+    if (!this.#off.has(provider) && !this.#clients.has(provider) && row?.state === "checking") {
+      yield* this.#startProvider(provider, { preserveCheckErrors: true, refreshRuntimeInBackground: true });
+    }
     return this.status();
   }).bind(this);
 
   readonly #startProvider = Effect.fn("ProviderRuntime.startProvider")(function* (
     this: ProviderRuntime,
     provider: AgentProvider,
-    options: { notifyReady?: boolean; preserveCheckErrors?: boolean; refreshRuntimeInBackground?: boolean },
+    options: {
+      notifyReady?: boolean;
+      preserveCheckErrors?: boolean;
+      refreshRuntimeInBackground?: boolean;
+      initializationRetryId?: number;
+    },
     phase: "starting" | "restarting" = "starting",
   ) {
     if (this.#off.has(provider) || (provider === "acp" && this.#removingCustomRuntime)) return;
@@ -1439,8 +1551,9 @@ export class ProviderRuntime implements ProviderPort {
     this: ProviderRuntime,
     provider: AgentProvider,
     openExternal: (url: string) => Promise<void>,
+    region: SignInRegion = "global",
   ) {
-    return yield* this.#connectProvider(provider, openExternal, false);
+    return yield* this.#connectProvider(provider, openExternal, false, region);
   }).bind(this);
 
   /** `onHost`: the user is not at this computer, so the CLI's page goes to `openExternal`, never to a browser here. */
@@ -1449,7 +1562,9 @@ export class ProviderRuntime implements ProviderPort {
     provider: AgentProvider,
     openExternal: (url: string) => Promise<void>,
     onHost: boolean,
+    region: SignInRegion = "global",
   ) {
+    this.#invalidateInitializationRetry(provider);
     this.#startFailures.delete(provider);
     const start = this.#providerStarts.get(provider);
     if (start) yield* Deferred.await(start);
@@ -1459,7 +1574,7 @@ export class ProviderRuntime implements ProviderPort {
     }
     const signIn = requireProviderDriver(provider).signIn;
     return yield* this.#runProviderConnectionCommand(provider, () =>
-      this.#signIn(provider, signIn, openExternal, onHost),
+      this.#signIn(provider, signIn, openExternal, onHost, region),
     );
   });
 
@@ -1469,6 +1584,7 @@ export class ProviderRuntime implements ProviderPort {
     signIn: ReturnType<typeof requireProviderDriver>["signIn"],
     openExternal: (url: string) => Promise<void>,
     onHost: boolean,
+    region: SignInRegion,
   ) {
     switch (signIn.kind) {
       case "browser":
@@ -1481,13 +1597,17 @@ export class ProviderRuntime implements ProviderPort {
           .start(provider, (cli) =>
             Effect.gen(function* () {
               const browser = onHost ? yield* captureBrowser(openExternal) : {};
-              const target = cliSpawnTarget(cli.executable, signIn.command.argv);
+              const argv =
+                typeof signIn.command.argv === "function"
+                  ? yield* signIn.command.argv(cli, region)
+                  : signIn.command.argv;
+              const target = cliSpawnTarget(cli.executable, argv);
               const child = yield* Effect.acquireRelease(
                 Effect.try({
                   try: () =>
                     spawn(target.command, target.args, {
                       cwd: process.cwd(),
-                      env: { ...process.env, ...signIn.command.env(cli), ...browser },
+                      env: { ...process.env, ...signIn.command.env(cli, region), ...browser },
                       stdio: "ignore",
                       shell: false,
                       windowsHide: process.platform === "win32",
@@ -1772,6 +1892,7 @@ export class ProviderRuntime implements ProviderPort {
     if (!codeSignIn) {
       throw new Error(sourceText("error.provider.noCodeSignIn", { provider: providerLabel(provider) }));
     }
+    this.#invalidateInitializationRetry(provider);
     const start = this.#providerStarts.get(provider);
     if (start) yield* Deferred.await(start);
     return yield* this.#runProviderConnectionCommand(provider, () => this.#startProviderCode(provider, codeSignIn));
@@ -1785,6 +1906,7 @@ export class ProviderRuntime implements ProviderPort {
     this: ProviderRuntime,
     apiKey: string,
   ) {
+    this.#invalidateInitializationRetry("codex");
     yield* this.#codexLogin.cancel(null);
     yield* this.#codexLogin.saveApiKey(apiKey).pipe(toProviderOperationFailed);
   }).bind(this);
@@ -1813,13 +1935,17 @@ export class ProviderRuntime implements ProviderPort {
       .startCode(
         provider,
         (cli) =>
-          startCliCodeLogin({
-            flow,
-            executable: cli.executable,
-            argv: command.argv,
-            env: { ...cliPathEnvironment(cli), ...command.env(cli) },
-            timeoutMs: command.timeoutMs,
-            ...(command.closeInput ? { closeInput: true } : {}),
+          Effect.gen(function* () {
+            const region: SignInRegion = "global";
+            const argv = typeof command.argv === "function" ? yield* command.argv(cli, region) : command.argv;
+            return yield* startCliCodeLogin({
+              flow,
+              executable: cli.executable,
+              argv,
+              env: { ...cliPathEnvironment(cli), ...command.env(cli, region) },
+              timeoutMs: command.timeoutMs,
+              ...(command.closeInput ? { closeInput: true } : {}),
+            });
           }),
         command.timeoutMs,
       )
@@ -2063,6 +2189,7 @@ export class ProviderRuntime implements ProviderPort {
       return yield* new ProviderOperationFailed({
         cause: new Error(sourceText("error.provider.cliBusyRetry", { provider: providerLabel(provider) })),
       });
+    this.#invalidateInitializationRetry(provider);
     this.#replacingCli.add(provider);
     recordRestartActivity();
     yield* change().pipe(
@@ -2472,6 +2599,7 @@ export class ProviderRuntime implements ProviderPort {
     provider: AgentProvider,
   ) {
     if (this.#restartsWhenIdle.has(provider)) return this.status();
+    this.#invalidateInitializationRetry(provider);
     this.#startFailures.delete(provider);
     if (!this.#clients.has(provider)) {
       if (this.#released.has(provider)) {
@@ -2636,8 +2764,10 @@ export class ProviderRuntime implements ProviderPort {
    */
   readonly dispose = Effect.fn("ProviderRuntime.dispose")(function* (this: ProviderRuntime) {
     this.#disposals += 1;
+    for (const provider of AGENT_PROVIDERS) this.#invalidateInitializationRetry(provider);
     for (const timer of this.#restartTimers.values()) clearTimeout(timer);
     this.#restartTimers.clear();
+    this.#initializationRetryTimerIds.clear();
     for (const timer of this.#restartsWhenIdle.values()) if (timer) clearTimeout(timer);
     this.#restartsWhenIdle.clear();
     if (this.#idleCheck) clearInterval(this.#idleCheck);
@@ -2863,11 +2993,17 @@ export class ProviderRuntime implements ProviderPort {
       return yield* Effect.acquireUseRelease(
         providerStep(() =>
           this.#clientFactory
-            ? this.#clientFactory(provider, cli, confinement, accountEnvironment)
+            ? this.#clientFactory(
+                provider,
+                cli,
+                confinement,
+                accountEnvironment,
+                providerLifecycleModeFor(provider, this.#providerLifecycleMode),
+              )
             : driver.createClient(
                 cli,
                 this.#requestTimeoutMs,
-                accountEnvironment ? { ...this.#credentials, accountEnvironment } : this.#credentials,
+                this.#providerClientContext(provider, accountEnvironment),
                 confinement,
               ),
         ),
@@ -3155,6 +3291,7 @@ export class ProviderRuntime implements ProviderPort {
     cli: AgentCliInfo,
     firstInstall: boolean,
   ) {
+    this.#invalidateInitializationRetry(provider);
     if (!this.#clients.has(provider)) {
       // A slow start comes from the computer, not the version: the new CLI starts with the wait learned so far.
       const learnedWaitMs = this.#slowStarts.get(provider);
@@ -3216,6 +3353,7 @@ export class ProviderRuntime implements ProviderPort {
         cause: new Error(sourceText("error.provider.cliBusyReconnect", { provider: providerLabel(provider) })),
       });
     }
+    this.#invalidateInitializationRetry(provider);
     let cli: AgentCliInfo | null = null;
     return yield* Effect.acquireUseRelease(
       providerStep(() => {
@@ -3301,9 +3439,16 @@ export class ProviderRuntime implements ProviderPort {
       notifyReady?: boolean;
       startTimeoutMs?: number;
       preferInstalled?: boolean;
+      initializationRetryId?: number;
     } = {},
   ) {
     requestedProviders = requestedProviders.filter((provider) => !this.#off.has(provider));
+    const initializationRetryId = options.initializationRetryId;
+    if (initializationRetryId !== undefined) {
+      requestedProviders = requestedProviders.filter((provider) =>
+        this.#isInitializationRetryCurrent(provider, initializationRetryId),
+      );
+    }
     // A provider OpenBot stopped starting keeps its row as it is, and no process starts.
     const stopped = requestedProviders.filter(
       (provider) => this.#startStopped(provider) && !this.#clients.has(provider),
@@ -3326,7 +3471,7 @@ export class ProviderRuntime implements ProviderPort {
         // A released provider is still connected: it only waits for a turn to start its process.
         state: this.#clients.has(provider) || this.#released.has(provider) ? "available" : "checking",
         version: previousVersions.get(provider) ?? null,
-        message: null,
+        message: initializationRetryId === undefined ? null : (current?.message ?? null),
         email: this.#accounts.get(provider)?.email ?? null,
         checkError: options.preserveCheckErrors ? (current?.checkError ?? null) : null,
       });
@@ -3356,8 +3501,12 @@ export class ProviderRuntime implements ProviderPort {
         let stage = "cli";
         let stageStartedAt = performance.now();
         let startTimeoutMs: number | undefined;
+        let childLaunched = false;
+        const retryId = initializationRetryId;
+        const retryIsCurrent = () => retryId === undefined || this.#isInitializationRetryCurrent(provider, retryId);
         const stageMs = () => Math.round(performance.now() - stageStartedAt);
         return Effect.gen({ self: this }, function* () {
+          if (!retryIsCurrent()) return null;
           if (this.#clients.has(provider)) return null;
           const driver = requireProviderDriver(provider);
           const resolvedCli = yield* this.#resolveProviderCli(provider, {
@@ -3375,27 +3524,52 @@ export class ProviderRuntime implements ProviderPort {
           stageStartedAt = performance.now();
           const candidate = yield* providerStep(() =>
             this.#clientFactory
-              ? this.#clientFactory(provider, resolvedCli)
-              : driver.createClient(resolvedCli, this.#requestTimeoutMs, this.#credentials),
+              ? this.#clientFactory(
+                  provider,
+                  resolvedCli,
+                  undefined,
+                  undefined,
+                  providerLifecycleModeFor(provider, this.#providerLifecycleMode),
+                )
+              : driver.createClient(resolvedCli, this.#requestTimeoutMs, this.#providerClientContext(provider)),
           );
           client = candidate;
           yield* providerStep(() => {
             this.#bindClient(candidate);
             candidate.start();
+            childLaunched = true;
+            if (retryId !== undefined && retryIsCurrent()) {
+              const episode = this.#initializationRetryEpisodes.get(provider);
+              if (episode) episode.launches += 1;
+            }
           });
           // A connect of several providers waits for all of them, as a launch does.
           startTimeoutMs =
             options.startTimeoutMs ?? (requestedProviders.length === 1 ? this.#slowStarts.get(provider) : undefined);
           yield* this.#initializeProviderClient(candidate, startTimeoutMs);
+          if (!retryIsCurrent()) {
+            yield* candidate.stop().pipe(Effect.catch(() => Effect.void));
+            return null;
+          }
           logger.info("A provider answered initialize.", { provider, durationMs: stageMs() });
           stage = "account";
           stageStartedAt = performance.now();
           const account = yield* candidate
             .request("account/read", { refreshToken: false }, decodeAccountReadResult, 5_000)
             .pipe(toProviderOperationFailed);
+          if (!retryIsCurrent()) {
+            yield* candidate.stop().pipe(Effect.catch(() => Effect.void));
+            return null;
+          }
           if (!account.account) {
             const message = this.#signInRequiredMessage(provider);
-            yield* candidate.stop().pipe(Effect.catch(() => Effect.void));
+            const stopFailure = yield* candidate.stop().pipe(
+              Effect.map((): unknown => null),
+              Effect.catch((failure) => Effect.succeed(failure)),
+            );
+            const cleanupFailure = findProviderTempCleanupError(stopFailure);
+            if (cleanupFailure) return yield* new ProviderOperationFailed({ cause: cleanupFailure });
+            if (retryId !== undefined) this.#invalidateInitializationRetry(provider);
             this.#setStatus({
               providers: updateProviderStatus(this.#status.providers, provider, {
                 state: "sign-in-required",
@@ -3413,10 +3587,20 @@ export class ProviderRuntime implements ProviderPort {
             yield* candidate.stop().pipe(Effect.catch(() => Effect.void));
             return null;
           }
+          if (!retryIsCurrent()) {
+            yield* candidate.stop().pipe(Effect.catch(() => Effect.void));
+            return null;
+          }
           if (!this.#released.has(provider)) this.#countActivation(provider);
           this.#cli.set(provider, resolvedCli);
           this.#clients.set(provider, candidate);
           this.#activatedAt.set(provider, Date.now());
+          const retryEpisode = this.#initializationRetryEpisodes.get(provider);
+          if (retryEpisode) {
+            retryEpisode.retryAt = null;
+            this.#clearInitializationRetryTimer(provider, retryEpisode.id);
+            this.#scheduleInitializationRetryStableClear(provider, retryEpisode.id, candidate);
+          }
           this.#accounts.set(provider, account.account);
           activated.push(provider);
           this.#setStatus({
@@ -3433,8 +3617,26 @@ export class ProviderRuntime implements ProviderPort {
           Effect.catch((problem) =>
             Effect.gen({ self: this }, function* () {
               const failedClient = client;
-              if (failedClient) yield* failedClient.stop().pipe(Effect.catch(() => Effect.void));
-              const thrown = problem.cause;
+              const stopFailure = failedClient
+                ? yield* failedClient.stop().pipe(
+                    Effect.map((): unknown => null),
+                    Effect.catch((failure) => Effect.succeed(failure)),
+                  )
+                : null;
+              const cleanupFailure = findProviderTempCleanupError(stopFailure);
+              const originalError = this.#withExitDetail(problem.cause);
+              const eligibleTimeout =
+                stage === "initialize" &&
+                isProviderTimeout(originalError) &&
+                providerLifecycleModeFor(provider, this.#providerLifecycleMode) === "always-on";
+              const thrown =
+                cleanupFailure ??
+                (eligibleTimeout && stopFailure
+                  ? new Error(sourceText("error.provider.cliTimedOutRefresh", { provider: providerLabel(provider) }), {
+                      cause: stopFailure,
+                    })
+                  : problem.cause);
+              if (!retryIsCurrent()) return null;
               // Another start of this provider, such as a turn's during a refresh, finished first. Its
               // client runs and its row is current, so this failure describes nothing the app uses.
               if (this.#clients.has(provider)) return null;
@@ -3446,10 +3648,47 @@ export class ProviderRuntime implements ProviderPort {
                 timeout: isProviderTimeout(error),
                 message: shortenDiagnostic(this.#redactMcp(error instanceof Error ? error.message : String(error))),
               });
+              if (
+                stage === "initialize" &&
+                isProviderTimeout(error) &&
+                providerLifecycleModeFor(provider, this.#providerLifecycleMode) === "always-on"
+              ) {
+                this.#recordProviderError(provider, error);
+                this.#countSlowStart(provider, startTimeoutMs);
+                const episode = this.#recordInitializationTimeout(provider, retryId, childLaunched);
+                if (!episode) return null;
+                const message = this.#queueInitializationRetry(provider, episode);
+                this.#setStatus({
+                  providers: updateProviderStatus(this.#status.providers, provider, {
+                    state: "error",
+                    version: cli?.version ?? previousVersions.get(provider) ?? null,
+                    message,
+                  }),
+                });
+                return message;
+              }
+              if (
+                stage === "initialize" &&
+                error instanceof ProviderTempDiskSpaceError &&
+                providerLifecycleModeFor(provider, this.#providerLifecycleMode) === "always-on"
+              ) {
+                const episode = this.#getOrStartInitializationRetry(provider, retryId);
+                if (!episode) return null;
+                const failure = providerFailureStatus(provider, error, cli?.version);
+                const message = this.#queueInitializationDiskCheck(provider, episode, failure.message ?? error.message);
+                this.#setStatus({
+                  providers: updateProviderStatus(this.#status.providers, provider, {
+                    ...failure,
+                    message,
+                  }),
+                });
+                return message;
+              }
               if (isProviderTimeout(error)) {
                 this.#recordProviderError(provider, error);
                 // The process may still be unpacking. The next start waits long enough to finish.
                 if (stage === "initialize") this.#countSlowStart(provider, startTimeoutMs);
+                if (retryId !== undefined) this.#invalidateInitializationRetry(provider);
                 if (this.#countStartFailure(provider)) return this.#showStartStopped(provider);
                 // A busy computer, not a broken CLI: say so, keep the version, and try again later.
                 const message = this.#retryAfterTimeout(provider, !disposed());
@@ -3474,6 +3713,7 @@ export class ProviderRuntime implements ProviderPort {
               // the MCP values go first. `providerFailureStatus` applies only the generic redaction.
               const message = this.#redactMcp(failed instanceof Error ? failed.message : String(failed));
               const failure = providerFailureStatus(provider, failed, cli?.version);
+              if (retryId !== undefined) this.#invalidateInitializationRetry(provider);
               this.#setStatus({
                 providers: updateProviderStatus(this.#status.providers, provider, {
                   ...failure,
@@ -3504,6 +3744,11 @@ export class ProviderRuntime implements ProviderPort {
       { concurrency: "unbounded" },
     );
     if (disposed()) return;
+    if (
+      initializationRetryId !== undefined &&
+      requestedProviders.some((provider) => !this.#isInitializationRetryCurrent(provider, initializationRetryId))
+    )
+      return;
     for (const provider of requestedProviders) this.#released.delete(provider);
     const failures = results.filter((message): message is string => message !== null);
     const finalProviderStatuses = structuredClone(this.#status.providers ?? providerStatuses);
@@ -3721,7 +3966,13 @@ export class ProviderRuntime implements ProviderPort {
     this.#emitProviderError(client.provider, "exited", error);
     // A process that ran for a while was a good start, and its exit is not one more failure.
     const ranFor = Date.now() - (this.#activatedAt.get(client.provider) ?? 0);
-    if (ranFor >= STABLE_RUN_MS) this.#startFailures.delete(client.provider);
+    if (ranFor >= STABLE_RUN_MS) {
+      this.#startFailures.delete(client.provider);
+      const episode = this.#initializationRetryEpisodes.get(client.provider);
+      if (episode) this.#invalidateInitializationRetry(client.provider);
+    } else {
+      this.#cancelInitializationRetryStableClear(client.provider);
+    }
     const startStopped = ranFor < STABLE_RUN_MS && this.#countStartFailure(client.provider);
     const attempts = this.#restartAttempts.get(client.provider) ?? 0;
     const stopped = startStopped || attempts >= 3;
@@ -3781,13 +4032,225 @@ export class ProviderRuntime implements ProviderPort {
    */
   #scheduleRestart(provider: AgentProvider, delayMs: number, afterTimeout = false): void {
     clearTimeout(this.#restartTimers.get(provider));
-    this.#restartTimers.set(
-      provider,
-      setTimeout(() => {
-        this.#restartTimers.delete(provider);
-        Effect.runFork(this.#restart(provider, afterTimeout).pipe(Effect.forkIn(this.#scope)));
-      }, delayMs),
+    this.#initializationRetryTimerIds.delete(provider);
+    const timer = setTimeout(() => {
+      if (this.#restartTimers.get(provider) !== timer) return;
+      this.#restartTimers.delete(provider);
+      Effect.runFork(this.#restart(provider, afterTimeout).pipe(Effect.forkIn(this.#scope)));
+    }, delayMs);
+    this.#restartTimers.set(provider, timer);
+  }
+
+  #isInitializationRetryCurrent(provider: AgentProvider, id: number): boolean {
+    return (
+      this.#initializationRetryEpochs.get(provider) === id && this.#initializationRetryEpisodes.get(provider)?.id === id
     );
+  }
+
+  #getOrStartInitializationRetry(provider: AgentProvider, id: number | undefined): InitializationRetryEpisode | null {
+    if (id !== undefined) {
+      if (!this.#isInitializationRetryCurrent(provider, id)) return null;
+      return this.#initializationRetryEpisodes.get(provider) ?? null;
+    }
+    const current = this.#initializationRetryEpisodes.get(provider);
+    if (current) return current;
+    const nextId = (this.#initializationRetryEpochs.get(provider) ?? 0) + 1;
+    this.#initializationRetryEpochs.set(provider, nextId);
+    const episode: InitializationRetryEpisode = {
+      id: nextId,
+      startedAt: Date.now(),
+      launches: 0,
+      timeoutFailures: 0,
+      warningShown: false,
+      retryAt: null,
+      lastMessage: null,
+    };
+    this.#initializationRetryEpisodes.set(provider, episode);
+    return episode;
+  }
+
+  #recordInitializationTimeout(
+    provider: AgentProvider,
+    id: number | undefined,
+    childLaunched: boolean,
+  ): InitializationRetryEpisode | null {
+    const episode = this.#getOrStartInitializationRetry(provider, id);
+    if (!episode) return null;
+    if (id === undefined && childLaunched) episode.launches += 1;
+    episode.timeoutFailures += 1;
+    return episode;
+  }
+
+  #queueInitializationRetry(provider: AgentProvider, episode: InitializationRetryEpisode): string {
+    episode.lastMessage = sourceText("error.provider.cliTimedOut", { provider: providerLabel(provider) });
+    const elapsed = Date.now() - episode.startedAt;
+    if (elapsed >= this.#initializationRetryPolicy.warningAfterMs) episode.warningShown = true;
+    if (episode.launches >= this.#initializationRetryPolicy.launchLimit) {
+      episode.retryAt = null;
+      this.#clearInitializationRetryTimer(provider, episode.id);
+      return this.#startStoppedMessage(provider);
+    }
+    const baseDelay = episode.warningShown
+      ? this.#initializationRetryPolicy.maxDelayMs
+      : this.#initializationRetryDelay(episode.timeoutFailures);
+    const delay = Math.min(
+      this.#initializationRetryPolicy.maxDelayMs,
+      Math.max(1, this.#initializationRetryPolicy.jitter(baseDelay)),
+    );
+    this.#scheduleInitializationRetry(provider, episode, delay);
+    return this.#initializationRetryMessage(provider, episode);
+  }
+
+  #queueInitializationDiskCheck(provider: AgentProvider, episode: InitializationRetryEpisode, message: string): string {
+    episode.lastMessage = message;
+    if (Date.now() - episode.startedAt >= this.#initializationRetryPolicy.warningAfterMs) episode.warningShown = true;
+    if (episode.launches >= this.#initializationRetryPolicy.launchLimit) {
+      episode.retryAt = null;
+      this.#clearInitializationRetryTimer(provider, episode.id);
+      return this.#startStoppedMessage(provider);
+    }
+    this.#scheduleInitializationRetry(provider, episode, this.#initializationRetryPolicy.diskSpaceCheckMs);
+    return this.#initializationRetryMessage(provider, episode);
+  }
+
+  #initializationRetryDelay(failureCount: number): number {
+    const { initialDelaysMs, maxDelayMs } = this.#initializationRetryPolicy;
+    const first = initialDelaysMs[0] ?? maxDelayMs;
+    const last = initialDelaysMs.at(-1) ?? first;
+    const exponent = Math.max(0, failureCount - initialDelaysMs.length);
+    const base =
+      failureCount <= initialDelaysMs.length ? (initialDelaysMs[failureCount - 1] ?? last) : last * 2 ** exponent;
+    return Math.min(maxDelayMs, base);
+  }
+
+  #initializationRetryMessage(provider: AgentProvider, episode: InitializationRetryEpisode): string {
+    if (episode.launches >= this.#initializationRetryPolicy.launchLimit) return this.#startStoppedMessage(provider);
+    if (!episode.warningShown)
+      return episode.lastMessage ?? sourceText("error.provider.cliTimedOut", { provider: providerLabel(provider) });
+    const warning = sourceText("error.provider.initRetryLongRunning", { provider: providerLabel(provider) });
+    return episode.lastMessage &&
+      episode.lastMessage !== sourceText("error.provider.cliTimedOut", { provider: providerLabel(provider) })
+      ? `${warning} ${episode.lastMessage}`
+      : warning;
+  }
+
+  #scheduleInitializationRetry(provider: AgentProvider, episode: InitializationRetryEpisode, delayMs: number): void {
+    episode.retryAt = Date.now() + delayMs;
+    this.#armInitializationRetryTimer(provider, episode);
+  }
+
+  #armInitializationRetryTimer(provider: AgentProvider, episode: InitializationRetryEpisode): void {
+    if (!this.#isInitializationRetryCurrent(provider, episode.id) || episode.retryAt === null) return;
+    const retryAt = episode.retryAt;
+    this.#clearInitializationRetryTimer(provider, episode.id);
+    const warningAt = episode.startedAt + this.#initializationRetryPolicy.warningAfterMs;
+    const showWarningBeforeRetry = !episode.warningShown && warningAt <= episode.retryAt;
+    const dueAt = showWarningBeforeRetry ? warningAt : episode.retryAt;
+    const timer = setTimeout(
+      () => {
+        if (this.#restartTimers.get(provider) !== timer || !this.#isInitializationRetryCurrent(provider, episode.id))
+          return;
+        this.#restartTimers.delete(provider);
+        this.#initializationRetryTimerIds.delete(provider);
+        if (!episode.warningShown && Date.now() >= warningAt) {
+          episode.warningShown = true;
+          this.#publishInitializationRetryStatus(provider, episode);
+        }
+        if (Date.now() < retryAt) {
+          this.#armInitializationRetryTimer(provider, episode);
+          return;
+        }
+        episode.retryAt = null;
+        Effect.runFork(this.#restartInitializationRetry(provider, episode.id).pipe(Effect.forkIn(this.#scope)));
+      },
+      Math.max(0, dueAt - Date.now()),
+    );
+    timer.unref?.();
+    this.#restartTimers.set(provider, timer);
+    this.#initializationRetryTimerIds.set(provider, episode.id);
+  }
+
+  #clearInitializationRetryTimer(provider: AgentProvider, id: number): void {
+    if (this.#initializationRetryTimerIds.get(provider) !== id) return;
+    clearTimeout(this.#restartTimers.get(provider));
+    this.#restartTimers.delete(provider);
+    this.#initializationRetryTimerIds.delete(provider);
+  }
+
+  #publishInitializationRetryStatus(provider: AgentProvider, episode: InitializationRetryEpisode): void {
+    if (!this.#isInitializationRetryCurrent(provider, episode.id)) return;
+    this.#setStatus({
+      providers: updateProviderStatus(this.#status.providers, provider, {
+        state: "error",
+        version:
+          this.#cli.get(provider)?.version ??
+          this.#status.providers?.find((candidate) => candidate.id === provider)?.version ??
+          null,
+        message: this.#initializationRetryMessage(provider, episode),
+      }),
+    });
+  }
+
+  readonly #restartInitializationRetry = Effect.fn("ProviderRuntime.restartInitializationRetry")(function* (
+    this: ProviderRuntime,
+    provider: AgentProvider,
+    id: number,
+  ) {
+    const disposals = this.#disposals;
+    for (let pending = this.#providerStarts.get(provider); pending; pending = this.#providerStarts.get(provider)) {
+      yield* Deferred.await(pending).pipe(Effect.ignore);
+    }
+    if (!this.#isInitializationRetryCurrent(provider, id)) return;
+    const episode = this.#initializationRetryEpisodes.get(provider);
+    if (!episode) return;
+    if (episode.retryAt !== null || this.#initializationRetryTimerIds.get(provider) === id) return;
+    if (episode.launches >= this.#initializationRetryPolicy.launchLimit) {
+      this.#publishInitializationRetryStatus(provider, episode);
+      return;
+    }
+    if (
+      this.#hooks.isStopping() ||
+      disposals !== this.#disposals ||
+      this.#off.has(provider) ||
+      this.#clients.has(provider)
+    )
+      return;
+    const notifyReady = this.#exitRecovery.has(provider) || (this.#clients.size === 0 && this.#released.size === 0);
+    yield* this.#startProvider(provider, { notifyReady, initializationRetryId: id }, "restarting").pipe(
+      Effect.catch((failure) => Effect.sync(() => this.#emitProviderError(provider, "restart_failed", failure.cause))),
+    );
+    recordRestartActivity();
+  }, Effect.uninterruptible);
+
+  #scheduleInitializationRetryStableClear(provider: AgentProvider, id: number, client: AgentClient): void {
+    if (!this.#isInitializationRetryCurrent(provider, id)) return;
+    this.#cancelInitializationRetryStableClear(provider);
+    const timer = setTimeout(() => {
+      this.#initializationRetryStableTimers.delete(provider);
+      if (!this.#isInitializationRetryCurrent(provider, id) || this.#clients.get(provider) !== client) return;
+      const activatedAt = this.#activatedAt.get(provider) ?? Date.now();
+      if (Date.now() - activatedAt < STABLE_RUN_MS) {
+        this.#scheduleInitializationRetryStableClear(provider, id, client);
+        return;
+      }
+      this.#startFailures.delete(provider);
+      this.#invalidateInitializationRetry(provider);
+    }, STABLE_RUN_MS);
+    timer.unref?.();
+    this.#initializationRetryStableTimers.set(provider, timer);
+  }
+
+  #cancelInitializationRetryStableClear(provider: AgentProvider): void {
+    clearTimeout(this.#initializationRetryStableTimers.get(provider));
+    this.#initializationRetryStableTimers.delete(provider);
+  }
+
+  #invalidateInitializationRetry(provider: AgentProvider): void {
+    this.#initializationRetryEpochs.set(provider, (this.#initializationRetryEpochs.get(provider) ?? 0) + 1);
+    const episode = this.#initializationRetryEpisodes.get(provider);
+    if (episode) this.#clearInitializationRetryTimer(provider, episode.id);
+    this.#initializationRetryEpisodes.delete(provider);
+    this.#cancelInitializationRetryStableClear(provider);
   }
 
   /** The wait of a start that may unpack the CLI: the learned wait of a slow provider, else `#longStartTimeoutMs`. */
@@ -3841,8 +4304,10 @@ export class ProviderRuntime implements ProviderPort {
   /** A refresh the user asked for gets new automatic retries, and no retry of the old ones is left. */
   #resetRestarts(provider: AgentProvider): void {
     this.#restartAttempts.delete(provider);
+    this.#invalidateInitializationRetry(provider);
     clearTimeout(this.#restartTimers.get(provider));
     this.#restartTimers.delete(provider);
+    this.#initializationRetryTimerIds.delete(provider);
   }
 
   readonly #restart = Effect.fn("ProviderRuntime.restart")(function* (
@@ -3974,5 +4439,19 @@ export class ProviderOperationFailed extends Schema.TaggedError<ProviderOperatio
   cause: Schema.Defect(),
 }) {}
 const { sync: providerStep, rewrap: toProviderOperationFailed } = causeHelpers(ProviderOperationFailed);
+
+function findProviderTempCleanupError(error: unknown, seen: Set<object> = new Set()): ProviderTempCleanupError | null {
+  if (error instanceof ProviderTempCleanupError) return error;
+  if (error === null || typeof error !== "object" || seen.has(error)) return null;
+  seen.add(error);
+  if (error instanceof AggregateError) {
+    for (const nested of error.errors) {
+      const found = findProviderTempCleanupError(nested, seen);
+      if (found) return found;
+    }
+  }
+  if ("cause" in error) return findProviderTempCleanupError(error.cause, seen);
+  return null;
+}
 
 export { toProviderOperationFailed };

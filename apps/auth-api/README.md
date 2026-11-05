@@ -95,6 +95,34 @@ bun run dev:api
 The local address is `http://127.0.0.1:3100`. The explicit development flag
 returns the sign-in code in the API response. It never writes the code to logs.
 
+## Local self-hosted account runtime
+
+The self-hosted runtime serves the desktop email-code routes, `/v1/me`, logout, and the public ticket
+JWKS endpoint over loopback. It opens SQLite without changing its schema. Initialize a new local
+file once before starting the runtime:
+
+```bash
+bun run self-hosted:init --database account.sqlite
+bun run self-hosted
+```
+
+The initializer accepts only a new file below `.openbot-build/011-self-hosted/`, records the full
+migration filenames and their SHA-256 hashes, and rejects an existing file. The runtime never
+applies migrations. Back up and import account data only through a separate reviewed process.
+
+The runtime defaults to `127.0.0.1:3187`. It reports readiness as `503` until SQLite has the
+supported schema, a matching ES256 ticket private/public key pair is configured, and SMTP delivery
+is configured. Set `OPENBOT_SELF_HOSTED_TICKET_PRIVATE_JWK`,
+`OPENBOT_SELF_HOSTED_TICKET_PUBLIC_JWKS`, and `OPENBOT_SELF_HOSTED_TICKET_KEY_ID` in the process
+environment. Email delivery uses `EMAIL_SMTP_HOST`, `EMAIL_SMTP_PORT=465`,
+`EMAIL_SMTP_USERNAME`, `EMAIL_SMTP_PASSWORD`, and `EMAIL_FROM`; the Node adapter requires verified
+implicit TLS and does not use Cloudflare sockets.
+
+For local development only, `OPENBOT_SELF_HOSTED_MODE=development` and
+`OPENBOT_SELF_HOSTED_EXPOSE_DEVELOPMENT_CODE=true` return the one-time code in the response and
+allow the routes to run without SMTP. Both settings are accepted only on a loopback listener. Do
+not set this mode on a public service.
+
 Update and validate the encrypted production file with these commands:
 
 ```bash

@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "verbatimModuleSyntax": true,
+    "incremental": false
+  },
+  "include": ["./noise-library-spike.ts"]
+}

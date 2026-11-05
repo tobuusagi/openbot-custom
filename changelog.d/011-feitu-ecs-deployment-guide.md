@@ -1,0 +1,1 @@
+Add draft Aliyun ECS Caddy and systemd templates and an operator runbook for the self-hosted account service. The relay subdomain returns `503` until WSS support exists. The service unit remains blocked until secure credential loading has separate review. No deployment or production data change was made.

@@ -18,7 +18,7 @@ if (!databasePath) throw new Error("Pass the database path.");
 const database = new DatabaseSync(databasePath);
 database.exec("PRAGMA foreign_keys = ON");
 const service = new AuthService({
-  repository: new D1AuthRepository(sqliteD1(database)),
+  repository: D1AuthRepository.fromWorker(sqliteD1(database)),
   delivery: null,
   exposeDevelopmentCode: true,
 });

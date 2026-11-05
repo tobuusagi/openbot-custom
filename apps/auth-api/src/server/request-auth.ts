@@ -62,7 +62,7 @@ export function requestAuthService(): AuthService {
   const exposeDevelopmentCode = bindings.AUTH_EXPOSE_DEVELOPMENT_CODE === "true";
   const analytics = accountAnalytics(bindings);
   return new AuthService({
-    repository: new D1AuthRepository(bindings.DB),
+    repository: D1AuthRepository.fromWorker(bindings.DB),
     delivery: exposeDevelopmentCode ? null : createEmailCodeDelivery(bindings, analytics),
     exposeDevelopmentCode,
     // The revocation is already written and the cron redelivers it, so the answer does not wait.
@@ -315,7 +315,7 @@ export const requireServerClaimsAdmin = Effect.fn("Auth.requireServerClaimsAdmin
 export function requestContactMessageServices(): ContactMessageServices {
   const bindings = requireWorkerBindings(env);
   return {
-    repository: new D1AuthRepository(bindings.DB),
+    repository: D1AuthRepository.fromWorker(bindings.DB),
     now: () => Date.now(),
     delivery: () => createContactMessageDelivery(bindings, accountAnalytics(bindings)),
   };

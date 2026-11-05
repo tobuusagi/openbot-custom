@@ -166,7 +166,7 @@ async function runCase(name: string, behaviors: Behavior[], route: Route = "dire
         sendPrivateEmailCode(
           worker ? { ...CONFIG, relay: worker } : CONFIG,
           { email: "user@example.com", code: "ABCD-EFGH", expiresAt: Date.now() + 10 * 60_000 },
-          worker ? undefined : relay.connector,
+          relay.connector,
         ),
       ),
     );

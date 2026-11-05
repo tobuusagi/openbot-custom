@@ -1,0 +1,51 @@
+[Unit]
+Description=OpenBot self-hosted account gateway
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=openbot-gateway
+Group=openbot-gateway
+WorkingDirectory=/opt/openbot-runtime
+Environment=TMPDIR=/tmp
+Environment=OPENBOT_SELF_HOSTED_HOST=127.0.0.1
+Environment=OPENBOT_SELF_HOSTED_PORT=3187
+Environment=OPENBOT_SELF_HOSTED_DATABASE_PATH=/var/lib/openbot-gateway/account.sqlite
+Environment=OPENBOT_SELF_HOSTED_MODE=production
+Environment=OPENBOT_SELF_HOSTED_EXPOSE_DEVELOPMENT_CODE=false
+# BLOCKED: no reviewed reader maps systemd credentials to the runtime's secret settings.
+# Without the ticket and SMTP settings, /health/ready stays 503. Do not expose this service.
+# Do not add EnvironmentFile or shell `source` until credential loading has separate review.
+StateDirectory=openbot-gateway
+StateDirectoryMode=0700
+UMask=0077
+ExecStart=/usr/local/bin/bun run --cwd /opt/openbot-runtime/apps/auth-api self-hosted
+Restart=on-failure
+RestartSec=5s
+KillSignal=SIGTERM
+TimeoutStopSec=30s
+
+# Initial limits for review on the 2 vCPU / 2 GiB ECS. They are not load-test results.
+CPUQuota=150%
+MemoryHigh=1024M
+MemoryMax=1280M
+
+# Keep application code read-only. SQLite state and private temporary files are writable.
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadOnlyPaths=/opt/openbot-runtime
+ReadWritePaths=/var/lib/openbot-gateway
+
+[Install]
+WantedBy=multi-user.target

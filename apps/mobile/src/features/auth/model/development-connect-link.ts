@@ -3,6 +3,7 @@ import {
   type MobileConnectHostBinding,
   parseMobileConnectUrl,
 } from "@openbot/contracts/mobile-connect";
+import { canonicalMobileProductLink } from "@/shared/lib/mobile-product";
 
 // `bun run dev:mobile` pairs a simulator, which has no camera, by opening the
 // Mobile Connect QR link with `simctl openurl`. Any app or web page on a device
@@ -20,8 +21,8 @@ function isMobileConnectLink(value: string): boolean {
 }
 
 function readDevelopmentConnectLink(value: string, development: boolean): string | null {
-  if (!development || !isMobileConnectLink(value)) return null;
-  const link = value.trim();
+  const link = canonicalMobileProductLink(value.trim());
+  if (!development || !isMobileConnectLink(link)) return null;
   const payload = parseMobileConnectUrl(link);
   if (!payload?.host) return null;
   const api = new URL(payload.apiUrl);
@@ -57,6 +58,6 @@ export function isSameMobileConnectTarget(
   session: { apiUrl: string; host?: MobileConnectHostBinding },
   link: string,
 ): boolean {
-  const payload = parseMobileConnectUrl(link);
+  const payload = parseMobileConnectUrl(canonicalMobileProductLink(link));
   return payload?.apiUrl === session.apiUrl && payload.host?.hostId === session.host?.hostId;
 }

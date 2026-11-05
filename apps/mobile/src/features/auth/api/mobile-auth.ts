@@ -16,6 +16,11 @@ import * as Crypto from "expo-crypto";
 import * as Device from "expo-device";
 import * as SecureStore from "expo-secure-store";
 import { z } from "zod";
+import {
+  canonicalMobileProductLink,
+  feituAndroidAccountApiUrl,
+  isFeituAndroidClient,
+} from "@/shared/lib/mobile-product";
 import { isAndroid, isIOS } from "@/shared/lib/platform";
 import { currentText } from "@/shared/lib/text";
 import * as LockedKeychain from "../../../shared/lib/locked-keychain";
@@ -66,7 +71,7 @@ export async function redeemMobileConnectUrl(value: string): Promise<MobileSessi
 
 async function redeemMobileConnectSession(value: string): Promise<MobileSession> {
   void retryMobileSessionRevocations();
-  const payload = parseMobileConnectUrl(value);
+  const payload = parseMobileConnectUrl(canonicalMobileProductLink(value));
   if (!payload) {
     throw new Error(currentText().t("mobile.auth.error.invalidCode"));
   }
@@ -118,6 +123,14 @@ async function redeemMobileConnectSession(value: string): Promise<MobileSession>
 
 /** The account service for email sign-in. A development build can name a local one. */
 function mobileAccountApiUrl(): string {
+  if (isFeituAndroidClient()) {
+    const configuredUrl = feituAndroidAccountApiUrl();
+    const normalizedUrl = configuredUrl && normalizeAccountApiUrl(configuredUrl);
+    if (!normalizedUrl || normalizedUrl !== configuredUrl) {
+      throw new Error(currentText().t("mobile.auth.error.accountServiceUnreachable"));
+    }
+    return normalizedUrl;
+  }
   const override = process.env.EXPO_PUBLIC_OPENBOT_API_URL;
   return (override && __DEV__ && normalizeAccountApiUrl(override)) || OPENBOT_CONTROL_PLANE_ORIGIN;
 }

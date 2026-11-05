@@ -53,6 +53,7 @@ import {
 import { sourceText } from "@openbot/i18n/source";
 import { Context, Effect, Layer, Option, Result, Schema } from "effect";
 import { importJWK, type JWK, type JWTPayload, SignJWT } from "jose";
+import { accountSessionLogoutDatabaseFromWorker, endAccountSession } from "./account-session-logout";
 import {
   getServerEntitlement,
   type OwnerLicense,
@@ -1843,22 +1844,19 @@ export class RemoteControlPlane {
       authSessionHash: string,
     ): Effect.fn.Return<void, RemoteFailure, RemoteDependencies> {
       const dependencies = yield* RemoteDependencies;
-      const now = dependencies.now();
       // The database trigger revokes the bound remote sessions and writes the
       // disconnect outbox atomically with logout, including concurrent starts.
       // RETURNING, not meta.changes: D1 also counts the rows that the trigger changes.
-      const revoked = yield* remoteCall(() =>
-        dependencies.database
-          .prepare(
-            "UPDATE auth_sessions SET revoked_at = ? WHERE token_hash = ? AND user_id = ? AND revoked_at IS NULL RETURNING token_hash",
-          )
-          .bind(now, authSessionHash, userId)
-          .first<{ token_hash: string }>(),
-      );
-      if (!revoked) {
-        return yield* new RemoteControlPlaneError(401, "auth_session_revoked", "The account session has ended.");
-      }
-      yield* this.#flushAuthEvents();
+      yield* endAccountSession({
+        database: accountSessionLogoutDatabaseFromWorker(dependencies.database),
+        userId,
+        authSessionHash,
+        now: dependencies.now(),
+        sessionAlreadyEnded: () =>
+          new RemoteControlPlaneError(401, "auth_session_revoked", "The account session has ended."),
+        databaseFailure: (cause) => (cause instanceof RemoteControlPlaneError ? cause : new RemoteOperationError({})),
+        flushAuthEvents: () => this.#flushAuthEvents(),
+      });
     },
     (operation) => operation.pipe(Effect.provide(this.#layer)),
   ).bind(this);

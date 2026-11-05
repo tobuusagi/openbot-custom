@@ -137,3 +137,9 @@ export interface OpenBotDesktopApi extends Omit<BridgedDesktopApi, "agent" | "br
   browser: BrowserDesktopApi;
   servers: ServersDesktopApi;
 }
+
+/** The local account commands available to the bundled Feitu client renderer. */
+export type ClientAccountApi = Pick<
+  OpenBotDesktopApi["auth"],
+  "getState" | "retry" | "requestEmailCode" | "verifyEmailCode" | "logout" | "onEvent"
+>;

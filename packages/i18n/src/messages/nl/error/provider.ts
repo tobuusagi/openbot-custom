@@ -160,8 +160,12 @@ export const messages = {
     "{provider} gaf de modellen niet binnen {seconds} s. De computer is misschien bezet.",
   "error.provider.startStopped":
     "{provider} is meerdere keren achter elkaar niet gestart, dus OpenBot probeert het niet meer. Vernieuw de aanbieders om het opnieuw te proberen.",
+  "error.provider.initRetryLongRunning":
+    "{provider} is al meer dan 24 uur niet beschikbaar. OpenBot blijft het met langere tussenpozen proberen.",
   "error.provider.tempDiskSpace":
     "{provider} heeft minstens 1 GB vrije schijfruimte nodig om te starten. Maak ruimte vrij en vernieuw daarna de aanbieders.",
+  "error.provider.tempCleanupFailed":
+    "OpenBot kon de privé tijdelijke bestanden van {provider} niet verwijderen. Automatische pogingen zijn gestopt; controleer de vrije schijfruimte voordat je de aanbieder vernieuwt.",
   "error.provider.noCodeSignIn": "Bij {provider} kun je niet inloggen met een code.",
   "error.provider.codeLoginNoLink": "De aanbieder toonde geen inloglink. Probeer het opnieuw.",
   "error.provider.hostSignInEnded": "{provider} heeft het inloggen niet afgerond. Probeer het opnieuw.",

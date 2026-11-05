@@ -1,0 +1,57 @@
+@import "tailwindcss";
+@import "@openbot/brand/tokens.css";
+@import "@openbot/brand/tokens-light.css";
+@import "@openbot/brand/logo.css";
+@import "@openbot/ui/styles.css";
+@import "@openbot/ui/features/account/otp-input.css";
+@import "@openbot/ui/features/account/auth.css";
+
+@source "../../../packages/ui/src";
+
+html,
+body,
+#root {
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--openbot-bg-canvas);
+  color: var(--openbot-text-primary);
+  font-family: system-ui, sans-serif;
+}
+
+.client-account-shell {
+  align-items: center;
+}
+
+.client-account-panel {
+  display: grid;
+  gap: 16px;
+  text-align: center;
+}
+
+.client-account-panel h1 {
+  margin: 0;
+  color: var(--openbot-text-primary);
+  font-size: var(--openbot-text-3xl);
+  font-weight: 580;
+  letter-spacing: -0.035em;
+}
+
+.client-account-name {
+  margin: 0;
+  color: var(--openbot-text-primary);
+  font-size: var(--openbot-text-lg);
+}
+
+.client-account-email {
+  margin: -12px 0 0;
+  color: var(--openbot-text-secondary);
+  font-size: var(--openbot-text-md);
+}
+
+.client-account-sign-out {
+  -webkit-app-region: no-drag;
+}

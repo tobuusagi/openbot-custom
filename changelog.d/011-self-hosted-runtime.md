@@ -1,0 +1,1 @@
+Add a loopback-only local account runtime with liveness and explicit not-ready health checks, graceful shutdown, and a SQLite adapter for the account repository's D1 `prepare`, `first`, `all`, `run`, and atomic `batch` operations. Unsupported auth routes stay unavailable until their handlers and signing configuration are implemented.

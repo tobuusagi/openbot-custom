@@ -98,6 +98,7 @@ import {
 } from "./process-confinement";
 import { type AccountReadResult, isCodexLoginType, type ModelListResponse } from "./protocol";
 import { type ProviderClientOperationError, providerCall, providerFailure } from "./provider-client-effects";
+import { type ProviderLifecycleMode, providerLifecycleModeFor } from "./provider-lifecycle";
 
 /** One command OpenBot runs against a provider's own CLI, waiting for the process to exit. */
 interface ProviderCliCommand {
@@ -416,6 +417,10 @@ const DEVIN_ARGV: readonly string[] = ["acp"];
  */
 export interface ProviderClientContext {
   apiKey(provider: AgentProviderId): string | null;
+  /** Keeps host provider processes and their idle sessions open. */
+  readonly providerLifecycleMode?: ProviderLifecycleMode | undefined;
+  /** Test seam: shortens the ACP idle-session window for the provider lifecycle E2E. */
+  readonly providerSessionIdleReleaseMs?: number | undefined;
   /** Durable provider-history ports, selected by the external provider id. */
   readonly history?: (provider: AgentProviderId) => AcpHistoryPersistence | undefined;
   readonly customProviders: CustomProviderSource;
@@ -980,6 +985,8 @@ export const BUILT_IN_PROVIDER_DRIVERS: readonly BuiltInProviderDriver[] = [
     createClient: (cli, timeout, context, confinement) =>
       new AcpAgentClient(cli, timeout, {
         provider: "antigravity",
+        providerLifecycleMode: providerLifecycleModeFor("antigravity", context.providerLifecycleMode ?? "desktop"),
+        providerSessionIdleReleaseMs: context.providerSessionIdleReleaseMs,
         flavor: ANTIGRAVITY_ACP_FLAVOR,
         argv: ANTIGRAVITY_ARGV,
         ...ANTIGRAVITY_SERVING_OPTIONS,

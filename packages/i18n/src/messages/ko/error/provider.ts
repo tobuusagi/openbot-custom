@@ -161,8 +161,12 @@ export const messages = {
     "{provider}이(가) {seconds}초 안에 모델 목록을 가져오지 못했어요. 컴퓨터가 바쁜 것 같아요.",
   "error.provider.startStopped":
     "{provider}이(가) 연속으로 여러 번 시작되지 않아 OpenBot이 시도를 멈췄어요. 제공자를 새로 고쳐 다시 시도해 주세요.",
+  "error.provider.initRetryLongRunning":
+    "{provider}을(를) 24시간 넘게 사용할 수 없어요. OpenBot이 긴 간격으로 계속 재시도하고 있어요.",
   "error.provider.tempDiskSpace":
     "{provider}을(를) 시작하려면 디스크 여유 공간이 1GB 이상 필요해요. 공간을 확보한 후 제공자를 새로 고치세요.",
+  "error.provider.tempCleanupFailed":
+    "OpenBot이 {provider}의 전용 임시 파일을 삭제하지 못했어요. 자동 재시도를 멈췄어요. 제공자를 새로 고치기 전에 디스크 여유 공간을 확인하세요.",
   "error.provider.noCodeSignIn": "{provider}은(는) 코드로 로그인할 수 없어요.",
   "error.provider.codeLoginNoLink": "제공자가 로그인 링크를 표시하지 않았어요. 다시 시도해 주세요.",
   "error.provider.hostSignInEnded": "{provider} 로그인이 완료되지 않았어요. 다시 시도해 주세요.",

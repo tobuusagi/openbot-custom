@@ -167,8 +167,12 @@ export const messages = {
     "{provider} hat seine Modelle nicht innerhalb von {seconds} s aufgelistet. Der Computer ist möglicherweise ausgelastet.",
   "error.provider.startStopped":
     "{provider} ist mehrmals hintereinander nicht gestartet, daher versucht OpenBot es nicht mehr. Aktualisiere die Anbieter, um es erneut zu versuchen.",
+  "error.provider.initRetryLongRunning":
+    "{provider} ist seit mehr als 24 Stunden nicht verfügbar. OpenBot versucht es weiterhin in größeren Abständen.",
   "error.provider.tempDiskSpace":
     "{provider} braucht zum Starten mindestens 1 GB freien Speicherplatz. Gib Speicherplatz frei und aktualisiere dann die Anbieter.",
+  "error.provider.tempCleanupFailed":
+    "OpenBot konnte die privaten temporären Dateien von {provider} nicht entfernen. Automatische Wiederholungen wurden gestoppt. Prüfe den freien Speicherplatz, bevor du den Anbieter aktualisierst.",
   "error.provider.noCodeSignIn": "Bei {provider} ist keine Anmeldung mit einem Code möglich.",
   "error.provider.codeLoginNoLink": "Der Anbieter hat keinen Anmeldelink angezeigt. Versuche es erneut.",
   "error.provider.hostSignInEnded": "Die Anmeldung bei {provider} wurde nicht abgeschlossen. Versuche es erneut.",

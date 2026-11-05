@@ -1,8 +1,10 @@
+import { connect } from "cloudflare:sockets";
 import { Cause, Effect, Exit, Option, Schema } from "effect";
 import type { AccountAnalytics, EmailKind, EmailResult } from "./account-analytics";
 import {
   AMBIGUOUS_DELIVERY_ERRORS,
   RATE_LIMITED_DELIVERY_ERROR,
+  type SmtpConnector,
   type SmtpEmailConfig,
   sendPrivateContactMessage,
   sendPrivateEmailCode,
@@ -18,6 +20,8 @@ import type {
   WelcomeEmailDelivery,
   WorkerBindings,
 } from "./types";
+
+const workerSmtpConnector: SmtpConnector = (address, options) => connect(address, options);
 
 export class EmailDeliveryError extends Schema.TaggedError<EmailDeliveryError>()("EmailDeliveryError", {
   message: Schema.String,
@@ -43,7 +47,7 @@ export function createEmailCodeDelivery(
   const smtp = readSmtpConfig(bindings);
   if (smtp) {
     return {
-      send: (message) => tracked(analytics, "sign_in_code", sendPrivateEmailCode(smtp, message)),
+      send: (message) => tracked(analytics, "sign_in_code", sendPrivateEmailCode(smtp, message, workerSmtpConnector)),
     };
   }
 
@@ -76,7 +80,11 @@ export function createTeamInviteEmailDelivery(
   analytics: AccountAnalytics,
 ): TeamInviteEmailDelivery | null {
   const smtp = readSmtpConfig(bindings);
-  return smtp ? { send: (message) => tracked(analytics, "team_invite", sendPrivateTeamInvite(smtp, message)) } : null;
+  return smtp
+    ? {
+        send: (message) => tracked(analytics, "team_invite", sendPrivateTeamInvite(smtp, message, workerSmtpConnector)),
+      }
+    : null;
 }
 
 export function createContactMessageDelivery(
@@ -84,7 +92,11 @@ export function createContactMessageDelivery(
   analytics: AccountAnalytics,
 ): ContactMessageDelivery | null {
   const smtp = readSmtpConfig(bindings);
-  return smtp ? { send: (message) => tracked(analytics, "contact", sendPrivateContactMessage(smtp, message)) } : null;
+  return smtp
+    ? {
+        send: (message) => tracked(analytics, "contact", sendPrivateContactMessage(smtp, message, workerSmtpConnector)),
+      }
+    : null;
 }
 
 export function createWelcomeEmailDelivery(
@@ -92,7 +104,9 @@ export function createWelcomeEmailDelivery(
   analytics: AccountAnalytics,
 ): WelcomeEmailDelivery | null {
   const smtp = readSmtpConfig(bindings);
-  return smtp ? { send: (message) => tracked(analytics, "welcome", sendPrivateWelcomeEmail(smtp, message)) } : null;
+  return smtp
+    ? { send: (message) => tracked(analytics, "welcome", sendPrivateWelcomeEmail(smtp, message, workerSmtpConnector)) }
+    : null;
 }
 
 /**
@@ -106,7 +120,9 @@ export function createLicenseEmailDelivery(
   const smtp = readSmtpConfig(bindings);
   if (!smtp) return null;
   const config = { ...smtp, from: bindings.EMAIL_LICENSE_FROM?.trim() || smtp.from };
-  return { send: (message) => tracked(analytics, "license", sendPrivateLicenseEmail(config, message)) };
+  return {
+    send: (message) => tracked(analytics, "license", sendPrivateLicenseEmail(config, message, workerSmtpConnector)),
+  };
 }
 
 /**

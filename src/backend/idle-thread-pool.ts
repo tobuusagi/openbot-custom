@@ -15,7 +15,9 @@ export interface IdleThread {
 
 export interface IdleThreadPoolOptions<Thread extends IdleThread, Released> {
   /** How long a thread with no turn stays open. */
-  releaseAfterMs: number;
+  releaseAfterMs: number | (() => number);
+  /** Retains idle threads until an explicit stop or a memory-pressure release. */
+  retainIdle?: () => boolean;
   scope(): Scope.Scope;
   /** How many idle threads stay open before the timeout. */
   idleLimit: number;
@@ -137,7 +139,7 @@ export class IdleThreadPool<Thread extends IdleThread, Released> {
   ) {
     thread.idleSince = Date.now();
     this.#arm(thread);
-    yield* this.#releaseIdleOver(this.#options.idleLimit);
+    if (!this.#options.retainIdle?.()) yield* this.#releaseIdleOver(this.#options.idleLimit);
   });
 
   /** Opens a released thread again. One reopen per thread, however many callers ask for it. */
@@ -183,12 +185,16 @@ export class IdleThreadPool<Thread extends IdleThread, Released> {
 
   #arm(thread: Thread): void {
     this.#disarm(thread);
-    if (!this.#options.canRelease(thread)) return;
+    if (this.#options.retainIdle?.() || !this.#options.canRelease(thread)) return;
+    const releaseAfterMs =
+      typeof this.#options.releaseAfterMs === "function"
+        ? this.#options.releaseAfterMs()
+        : this.#options.releaseAfterMs;
     thread.idleRelease = setTimeout(() => {
       thread.idleRelease = null;
       if (!this.#isIdle(thread)) return;
       Effect.runFork(this.#release(thread));
-    }, this.#options.releaseAfterMs);
+    }, releaseAfterMs);
     thread.idleRelease.unref?.();
   }
 
@@ -206,16 +212,22 @@ export class IdleThreadPool<Thread extends IdleThread, Released> {
    * machine is low on memory. Its next turn opens it again from its session.
    */
   releaseIdle(): Effect.Effect<void, ProviderClientOperationError> {
-    return this.#releaseIdleOver(0);
+    return this.#releaseIdleOver(0, true);
   }
 
   /** An armed release timer marks a thread that is idle and can be opened again. */
   readonly #releaseIdleOver = Effect.fn("IdleThreadPool.releaseIdleOver")(function* (
     this: IdleThreadPool<Thread, Released>,
     limit: number,
+    force = false,
   ) {
     const idle = [...this.#threads.values()]
-      .filter((thread) => thread.idleRelease !== null && thread.idleSince > 0 && this.#isIdle(thread))
+      .filter(
+        (thread) =>
+          (force ? this.#options.canRelease(thread) : thread.idleRelease !== null) &&
+          thread.idleSince > 0 &&
+          this.#isIdle(thread),
+      )
       .sort((left, right) => left.idleSince - right.idleSince);
     for (const thread of idle.slice(0, Math.max(0, idle.length - limit))) {
       yield* this.#release(thread);
