@@ -149,6 +149,8 @@ function requestContext(request: IncomingMessage, response: ServerResponse, url:
     member,
     token: "token",
     agentLevel: () => "manage",
+    currentSession: () => ({ member, sessionId: "session" }),
+    currentAgentLevel: () => "manage",
     sessionId: "session",
     sessionExpiresAt: new Date(Date.now() + 60_000).toISOString(),
     json: (status, value) => {

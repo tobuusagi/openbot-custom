@@ -1,0 +1,10 @@
+{
+  "hostId": "server-1",
+  "userId": "member-1",
+  "deviceId": "team-session:session-1",
+  "grantId": "team-session:session-1",
+  "capability": "chat",
+  "hostEpoch": 2,
+  "authEpoch": 3,
+  "grantEpoch": 4
+}

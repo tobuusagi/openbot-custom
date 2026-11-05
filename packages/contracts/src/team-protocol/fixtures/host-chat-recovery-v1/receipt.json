@@ -1,0 +1,7 @@
+{
+  "receiptId": "receipt-1",
+  "requestId": "request-1",
+  "messageId": "message-1",
+  "eventSequence": 1,
+  "acceptedAt": "2026-01-01T00:00:00.000Z"
+}

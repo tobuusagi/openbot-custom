@@ -38,6 +38,7 @@ export * from "./ipc-browser-secret";
 export * from "./ipc-channel-memories";
 export * from "./ipc-channel-routines";
 export * from "./ipc-chat-channels";
+export * from "./ipc-client-recovery";
 export * from "./ipc-conversation-events";
 export * from "./ipc-conversation-memory-changes";
 export * from "./ipc-conversation-messages";

@@ -10,6 +10,7 @@
 
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import type { TeamCurrentCapability } from "@openbot/contracts/team-protocol/current";
+import { HOST_CHAT_RECOVERY_CAPABILITY } from "@openbot/contracts/team-protocol/host-chat-recovery-v1";
 import { teamHttpCodec } from "@openbot/contracts/team-protocol/http-codecs";
 import { teamSideRouteCodec } from "@openbot/contracts/team-protocol/side-routes";
 import {
@@ -52,17 +53,17 @@ export const requestJson = Effect.fn("RemoteHttp.requestJson")(function* <T>(
   const method = options.method ?? (options.body === undefined ? "GET" : "POST");
   const sideRoute = teamSideRouteCodec(path);
   const codec = teamHttpCodec(options.protocol);
+  const codecOptions = {
+    ...(options.preserveSemanticTags === undefined ? {} : { preserveSemanticTags: options.preserveSemanticTags }),
+    ...(options.agentCreateModel === undefined ? {} : { agentCreateModel: options.agentCreateModel }),
+    hostChatRecovery: options.capabilities?.includes(HOST_CHAT_RECOVERY_CAPABILITY) === true,
+  };
   const body =
     options.body === undefined
       ? undefined
       : sideRoute
         ? JSON.stringify(sideRoute.request(path, options.body))
-        : codec.encodeRequest(method, path, options.body, {
-            ...(options.preserveSemanticTags === undefined
-              ? {}
-              : { preserveSemanticTags: options.preserveSemanticTags }),
-            ...(options.agentCreateModel === undefined ? {} : { agentCreateModel: options.agentCreateModel }),
-          });
+        : codec.encodeRequest(method, path, options.body, codecOptions);
   const profile = yield* Effect.acquireRelease(
     Effect.sync(() => startRemoteRequest(method, path, body ?? "", "http")),
     (profile, exit) => Effect.sync(() => profile?.end(exit)),
@@ -114,7 +115,7 @@ export const requestJson = Effect.fn("RemoteHttp.requestJson")(function* <T>(
               channelAttention: true,
               agentTaskUiBlocks: true,
             })
-          : codec.decodeResponse(method, path, response.status, input),
+          : codec.decodeResponse(method, path, response.status, input, codecOptions),
       catch: (cause) =>
         new RemoteProtocolError("protocol_error", sourceText("error.remote.unsafeData"), null, { cause }),
     });

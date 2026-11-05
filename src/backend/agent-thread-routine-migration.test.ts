@@ -5,7 +5,7 @@ import { migrateOpenBotDatabase } from "./openbot-database-schema";
 
 // Failure modes: the upgrade changes or loses a row of any table; an old thread reads as the thread of a
 // routine; a failed upgrade leaves the column, the index or the marker; a retry adds the column twice; a
-// newer or incomplete history is accepted; a routine gets two threads. Sources 8 to 46 reach version 55
+// newer or incomplete history is accepted; a routine gets two threads. Sources 8 to 46 reach version 56
 // in `agent-thread-migration.test.ts`; these fixtures cover every released source that has the table.
 const databases: DatabaseSync[] = [];
 afterEach(() => {
@@ -89,7 +89,7 @@ function routineIndex(db: DatabaseSync): SQLOutputValue | undefined {
 }
 
 function expectHealthy(db: DatabaseSync): void {
-  expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: 55 });
+  expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: 56 });
   expect(db.prepare("PRAGMA foreign_keys").get()).toEqual({ foreign_keys: 1 });
   expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
   expect(db.prepare("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });

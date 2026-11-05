@@ -36,6 +36,10 @@ export interface TeamApiRequestContext {
   readonly sessionExpiresAt: string;
   /** What the roles let the member do with one agent. Owners and admins always get `manage`. */
   readonly agentLevel: (agentId: string) => AgentAccessLevel;
+  /** Re-reads this bearer session from the authoritative TeamStore at the time of a sensitive operation. */
+  readonly currentSession: () => { member: TeamMemberSummary; sessionId: string } | null;
+  /** Re-reads both the session and its current agent grant. */
+  readonly currentAgentLevel: (agentId: string) => AgentAccessLevel;
   readonly json: (status: number, value: object | null) => RouteOutcome;
   readonly empty: (status: number) => RouteOutcome;
 }

@@ -143,3 +143,6 @@ export type ClientAccountApi = Pick<
   OpenBotDesktopApi["auth"],
   "getState" | "retry" | "requestEmailCode" | "verifyEmailCode" | "logout" | "onEvent"
 >;
+
+/** Local recovery commands exposed only by the separate Feitu client preload. */
+export type ClientRecoveryApi = GroupApi<IpcEndpoints["clientRecovery"]>;

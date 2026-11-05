@@ -51,6 +51,7 @@ import { hostAllowsTenantLaunch } from "./host-update-coordinator";
 import { takeHostedServerEnvironment } from "./hosted-server-bootstrap";
 import { takeHostingDeveloperKey } from "./hosted-server-service";
 import { accountIpcHandlers } from "./ipc/account-handlers";
+import { unavailableClientRecoveryIpcHandlers } from "./ipc/client-recovery-handlers";
 import { acpRegistryIpcHandlers } from "./ipc/acp-registry-handlers";
 import { agentAdminIpcHandlers } from "./ipc/agent-admin-handlers";
 import { agentFolderIpcHandlers } from "./ipc/agent-folder-handlers";
@@ -707,6 +708,7 @@ function registerIpcHandlers({
   const getDialogParent = () => windows.getChatWindows().find((window) => window.isFocused()) ?? windowHolder.current;
 
   registerIpcGroups({
+    clientRecovery: unavailableClientRecoveryIpcHandlers(),
     ...appIpcHandlers({
       service,
       mailbox,

@@ -15,6 +15,7 @@ export default defineConfig({
           "@openbot/contracts",
           "@openbot/i18n",
           "@openbot/logging",
+          "@openbot/team-client",
           "@openbot/user-errors",
           "effect",
           "jose",

@@ -61,6 +61,7 @@ import { EVENTS_CAPABILITY } from "./events-v1";
 import { FOCUS_USE_CAPABILITY } from "./focus-use-v1";
 import { TEAM_HISTORY_EXTENT_CAPABILITY } from "./history-extent-v1";
 import { HOST_ADMIN_CAPABILITY } from "./host-admin-v1";
+import { HOST_CHAT_RECOVERY_CAPABILITY } from "./host-chat-recovery-v1";
 import { HOST_KEY_ROTATION_CAPABILITY } from "./host-key-rotation-v1";
 import { HOST_MEMBER_UPDATE_CAPABILITY } from "./host-member-update-v1";
 import { HOST_RELEASE_CAPABILITY } from "./host-release-v1";
@@ -293,6 +294,7 @@ export {
 export const TEAM_CURRENT_CAPABILITIES = [
   BROWSER_SECRET_CAPABILITY,
   ...TEAM_PROTOCOL_V9_CAPABILITIES,
+  HOST_CHAT_RECOVERY_CAPABILITY,
   "remote-desktop-setup",
   TEAM_QUEUE_EDIT_CAPABILITY,
   TEAM_BROWSER_NAVIGATION_CAPABILITY,
@@ -633,6 +635,7 @@ export const TEAM_PROTOCOL_V9_ONLY_CAPABILITIES: ReadonlySet<string> = new Set<T
   WEBHOOK_SENDER_SECRET_CAPABILITY,
   WHATSAPP_CONNECTOR_CAPABILITY,
   MESSAGE_DELETE_CAPABILITY,
+  HOST_CHAT_RECOVERY_CAPABILITY,
 ]);
 // A v8 host reads at most 128 capabilities, so a client sends the protocol 9 ones only after it
 // negotiates protocol 9.

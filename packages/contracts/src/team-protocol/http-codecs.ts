@@ -55,6 +55,16 @@ import {
   encodeTeamProtocolV8CurrentHttpResponse,
 } from "./v8-adapter";
 import { decodeTeamProtocolSupportV9, TEAM_PROTOCOL_V9 } from "./v9";
+import {
+  HOST_CHAT_RECOVERY_ROUTES,
+  decodeHostChatAcceptRequest,
+  decodeHostChatEventPage,
+  decodeHostChatInboxSnapshot,
+  decodeHostChatQueuedReceipt,
+  decodeHostChatReceipt,
+  decodeHostChatRecoveryScope,
+  decodeHostChatConsumeRequest,
+} from "./host-chat-recovery-v1";
 
 export interface TeamHttpCodecOptions {
   preserveSemanticTags?: boolean;
@@ -68,6 +78,8 @@ export interface TeamHttpCodecOptions {
   subagents?: boolean;
   /** Read only by V7 responses: the negotiated prompt-multi-select-v1 capability. */
   promptMultiSelect?: boolean;
+  /** Read only by protocol 9 for the opt-in Host chat recovery capability. */
+  hostChatRecovery?: boolean;
 }
 
 type DecodedRequest =
@@ -76,20 +88,27 @@ type DecodedRequest =
   | ReturnType<typeof decodeTeamProtocolV5CurrentHttpRequest>
   | ReturnType<typeof decodeTeamProtocolV6CurrentHttpRequest>
   | ReturnType<typeof decodeTeamProtocolV7CurrentHttpRequest>
-  | ReturnType<typeof decodeTeamProtocolV8CurrentHttpRequest>;
+  | ReturnType<typeof decodeTeamProtocolV8CurrentHttpRequest>
+  | ReturnType<typeof decodeHostChatAcceptRequest>
+  | ReturnType<typeof decodeHostChatConsumeRequest>;
 type DecodedResponse =
   | ReturnType<typeof decodeTeamProtocolV1CurrentHttpResponse>
   | ReturnType<typeof decodeTeamProtocolV4CurrentHttpResponse>
   | ReturnType<typeof decodeTeamProtocolV5CurrentHttpResponse>
   | ReturnType<typeof decodeTeamProtocolV6CurrentHttpResponse>
   | ReturnType<typeof decodeTeamProtocolV7CurrentHttpResponse>
-  | ReturnType<typeof decodeTeamProtocolV8CurrentHttpResponse>;
+  | ReturnType<typeof decodeTeamProtocolV8CurrentHttpResponse>
+  | ReturnType<typeof decodeHostChatRecoveryScope>
+  | ReturnType<typeof decodeHostChatReceipt>
+  | ReturnType<typeof decodeHostChatQueuedReceipt>
+  | ReturnType<typeof decodeHostChatEventPage>
+  | ReturnType<typeof decodeHostChatInboxSnapshot>;
 
 export interface TeamHttpCodec {
   encodeRequest(method: string, path: string, value: unknown, options: TeamHttpCodecOptions): string;
   decodeRequest(method: string, path: string, value: unknown, options: TeamHttpCodecOptions): DecodedRequest;
   encodeResponse(method: string, path: string, status: number, value: unknown, options: TeamHttpCodecOptions): string;
-  decodeResponse(method: string, path: string, status: number, value: unknown): DecodedResponse;
+  decodeResponse(method: string, path: string, status: number, value: unknown, options?: TeamHttpCodecOptions): DecodedResponse;
 }
 
 const V1_CODEC: TeamHttpCodec = {
@@ -138,15 +157,62 @@ const V8_CODEC: TeamHttpCodec = {
 /** Protocol 9 is the protocol 8 wire. Only its compatibility response has up to 256 capabilities. */
 const V9_CODEC: TeamHttpCodec = {
   ...V8_CODEC,
+  encodeRequest: (method, path, value, options) => {
+    if (options.hostChatRecovery && isHostChatRecoveryRequest(method, path)) {
+      return JSON.stringify(method === "POST" && path === HOST_CHAT_RECOVERY_ROUTES.accept
+        ? decodeHostChatAcceptRequest(value)
+        : decodeHostChatConsumeRequest(value));
+    }
+    return V8_CODEC.encodeRequest(method, path, value, options);
+  },
+  decodeRequest: (method, path, value, options) => {
+    if (options.hostChatRecovery && isHostChatRecoveryRequest(method, path)) {
+      return method === "POST" && path === HOST_CHAT_RECOVERY_ROUTES.accept
+        ? decodeHostChatAcceptRequest(value)
+        : decodeHostChatConsumeRequest(value);
+    }
+    return V8_CODEC.decodeRequest(method, path, value, options);
+  },
   encodeResponse: (method, path, status, value, options) =>
     isCompatibilityRead(method, path, status)
       ? JSON.stringify(decodeTeamProtocolSupportV9(value))
-      : V8_CODEC.encodeResponse(method, path, status, value, options),
-  decodeResponse: (method, path, status, value) =>
+      : options.hostChatRecovery && isHostChatRecoveryResponse(method, path, status)
+        ? JSON.stringify(decodeHostChatRecoveryResponse(method, path, value))
+        : V8_CODEC.encodeResponse(method, path, status, value, options),
+  decodeResponse: (method, path, status, value, options) =>
     isCompatibilityRead(method, path, status)
       ? { ...decodeTeamProtocolSupportV9(value) }
-      : V8_CODEC.decodeResponse(method, path, status, value),
+      : options?.hostChatRecovery && isHostChatRecoveryResponse(method, path, status)
+        ? decodeHostChatRecoveryResponse(method, path, value)
+        : V8_CODEC.decodeResponse(method, path, status, value, options),
 };
+
+function isHostChatRecoveryRequest(method: string, path: string): boolean {
+  const route = new URL(path, "http://openbot.invalid").pathname;
+  return method === "POST" && (route === HOST_CHAT_RECOVERY_ROUTES.accept || route === HOST_CHAT_RECOVERY_ROUTES.consume);
+}
+
+function isHostChatRecoveryResponse(method: string, path: string, status: number): boolean {
+  if (status >= 400) return false;
+  const route = new URL(path, "http://openbot.invalid").pathname;
+  return (
+    (method === "GET" && route === HOST_CHAT_RECOVERY_ROUTES.scope && status === 200) ||
+    (method === "POST" && route === HOST_CHAT_RECOVERY_ROUTES.accept && status === 202) ||
+    (method === "POST" && route === HOST_CHAT_RECOVERY_ROUTES.consume && status === 200) ||
+    (method === "GET" && route === HOST_CHAT_RECOVERY_ROUTES.events && status === 200) ||
+    (method === "GET" && route === HOST_CHAT_RECOVERY_ROUTES.snapshot && status === 200)
+  );
+}
+
+function decodeHostChatRecoveryResponse(method: string, path: string, value: unknown) {
+  const route = new URL(path, "http://openbot.invalid").pathname;
+  if (method === "GET" && route === HOST_CHAT_RECOVERY_ROUTES.scope) return decodeHostChatRecoveryScope(value);
+  if (method === "POST" && route === HOST_CHAT_RECOVERY_ROUTES.accept) return decodeHostChatReceipt(value);
+  if (method === "POST" && route === HOST_CHAT_RECOVERY_ROUTES.consume) return decodeHostChatQueuedReceipt(value);
+  if (method === "GET" && route === HOST_CHAT_RECOVERY_ROUTES.events) return decodeHostChatEventPage(value);
+  if (method === "GET" && route === HOST_CHAT_RECOVERY_ROUTES.snapshot) return decodeHostChatInboxSnapshot(value);
+  throw new Error("Unsupported Host chat recovery response.");
+}
 
 function isCompatibilityRead(method: string, path: string, status: number): boolean {
   return (

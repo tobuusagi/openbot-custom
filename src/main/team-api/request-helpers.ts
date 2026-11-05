@@ -41,6 +41,7 @@ import {
   supportsTeamSemanticTags,
   TEAM_AGENT_CREATE_MODEL_CAPABILITY,
 } from "@openbot/contracts/team-protocol/current";
+import { HOST_CHAT_RECOVERY_CAPABILITY } from "@openbot/contracts/team-protocol/host-chat-recovery-v1";
 import { teamHttpCodec } from "@openbot/contracts/team-protocol/http-codecs";
 import { teamSideRouteCodec } from "@openbot/contracts/team-protocol/side-routes";
 import {
@@ -265,6 +266,7 @@ export async function readJson(request: IncomingMessage): Promise<DynamicRecord>
     return teamHttpCodec(requestProtocol(request)).decodeRequest(request.method ?? "GET", path, value, {
       preserveSemanticTags: supportsTeamSemanticTags(capabilities),
       agentCreateModel: capabilities.has(TEAM_AGENT_CREATE_MODEL_CAPABILITY),
+      hostChatRecovery: capabilities.has(HOST_CHAT_RECOVERY_CAPABILITY),
     });
   } catch {
     throw new HttpError(400, "A valid JSON object is required.");

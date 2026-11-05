@@ -167,6 +167,23 @@ type TeamApiAgentMethods = Pick<
   | "respondToBrowserTakeover"
 >;
 
+export type TeamApiHostChatRecovery = Pick<
+  AgentService,
+  | "sendDurableHostChat"
+  | "recordDurableHostChatRequest"
+  | "readDurableHostChatEvents"
+  | "readDurableHostChatSnapshot"
+  | "isDurableHostChatTarget"
+  | "listAgents"
+>;
+
+export interface TeamApiHostChatRecoveryAuthority {
+  /** Explicit persistent values owned by the Host's logical Team API authority. All must be positive safe integers. */
+  hostEpoch: number;
+  authEpoch: number;
+  grantEpoch: number;
+}
+
 export type TeamApiAgents = TeamApiAgentMethods & {
   on: (event: "event", listener: (event: AgentEvent) => void) => void;
   off: (event: "event", listener: (event: AgentEvent) => void) => void;
@@ -622,6 +639,9 @@ export interface TeamApiOptions {
   /** `server-audit-v1`: the changes to members, roles and agent access, for owners and admins. */
   serverAudit?: TeamApiServerAudit;
   agentTasks?: TeamApiAgentTasks;
+  hostChatRecovery?: TeamApiHostChatRecovery;
+  /** Explicit opt-in to the authenticated logical-session Host chat recovery namespace. */
+  hostChatRecoveryAuthority?: TeamApiHostChatRecoveryAuthority;
   browserProfiles?: TeamApiBrowserProfiles;
   admin?: TeamApiAdmin;
   appVersion?: string;

@@ -1,0 +1,15 @@
+{
+  "status": "events",
+  "events": [
+    {
+      "sequence": 1,
+      "messageId": "message-1",
+      "requestId": "request-1",
+      "target": { "agentId": "agent-1", "threadId": "thread-1" },
+      "content": "hello",
+      "occurredAt": "2026-01-01T00:00:00.000Z"
+    }
+  ],
+  "cursor": { "scopeKey": "scope-key", "sequence": 1 },
+  "hasMore": false
+}

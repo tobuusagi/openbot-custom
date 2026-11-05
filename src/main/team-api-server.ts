@@ -136,6 +136,7 @@ import {
 import { CUSTOM_AGENTS_CAPABILITY } from "@openbot/contracts/team-protocol/custom-agents-v1";
 import { CUSTOM_PROVIDER_HARNESS_CAPABILITY } from "@openbot/contracts/team-protocol/custom-provider-harness-v1";
 import { FOCUS_USE_INTERVAL_MS } from "@openbot/contracts/team-protocol/focus-use-v1";
+import { HOST_CHAT_RECOVERY_CAPABILITY } from "@openbot/contracts/team-protocol/host-chat-recovery-v1";
 import {
   HOST_RESTART_EVENT,
   type HostRestartEvent,
@@ -270,6 +271,7 @@ import { routeEvents } from "./team-api/route-events";
 import { routeFiles } from "./team-api/route-files";
 import { routeFocusUse } from "./team-api/route-focus-use";
 import { routeHostAdmin } from "./team-api/route-host-admin";
+import { routeHostChatRecovery } from "./team-api/route-host-chat-recovery";
 import { routeHostKeyRotation } from "./team-api/route-host-key-rotation";
 import { routeHostTimezone } from "./team-api/route-host-timezone";
 import { routeHostUpdate } from "./team-api/route-host-update";
@@ -1121,6 +1123,21 @@ export class TeamApiServer {
       )
         return;
       if ((await this.#routeAgents(context)) === "handled") return;
+      if (
+        (await routeHostChatRecovery(
+          context,
+          this.#options.hostChatRecovery,
+          this.#options.hostChatRecoveryAuthority,
+          this.#options.store.getIdentity()?.serverId,
+          hidden,
+          () => {
+            const serverId = this.#options.store.getIdentity()?.serverId;
+            return serverId && this.#options.agentAccess ? this.#options.agentAccess.get(serverId).revision : 0;
+          },
+          (memberId) => this.#options.store.memberAuthorizationRevision(memberId),
+        )) === "handled"
+      )
+        return;
 
       // The only 404 in the Team API.
       return this.#json(response, 404, { error: sourceText("error.team.routeNotFound") });
@@ -2002,6 +2019,7 @@ export class TeamApiServer {
     if (!route) throw new Error("Team API response route is unavailable.");
     const options = {
       preserveSemanticTags: supportsTeamSemanticTags(route.capabilities),
+      hostChatRecovery: route.capabilities.has(HOST_CHAT_RECOVERY_CAPABILITY),
       historyExtent: route.capabilities.has(TEAM_HISTORY_EXTENT_CAPABILITY),
       channelAttention: route.capabilities.has(TEAM_CHANNEL_ATTENTION_CAPABILITY),
       agentTaskUiBlocks: route.capabilities.has(AGENT_TASK_UI_BLOCKS_CAPABILITY),
@@ -2162,6 +2180,16 @@ export class TeamApiServer {
    * older peers the legacy one. Below protocol 9 the list leaves out the protocol 9 capabilities, so it
    * stays within the 128 that protocols 7 and 8 read.
    */
+  #validHostChatRecoveryAuthority(): boolean {
+    const authority = this.#options.hostChatRecoveryAuthority;
+    return (
+      !!authority &&
+      [authority.hostEpoch, authority.authEpoch, authority.grantEpoch].every(
+        (epoch) => Number.isSafeInteger(epoch) && epoch > 0,
+      )
+    );
+  }
+
   #protocolSupport(protocol: number | null = null): TeamProtocolSupportV1 {
     const expanded = protocol !== null && protocol >= 7;
     return {
@@ -2232,6 +2260,12 @@ export class TeamApiServer {
           if (capability === AGENT_THREAD_FILES_CAPABILITY) return this.#options.agentTasks !== undefined;
           if (capability === AGENT_THREAD_REPLIES_CAPABILITY) return this.#options.agentTasks !== undefined;
           if (capability === AGENT_THREAD_BRANCHES_CAPABILITY) return this.#options.agentTasks !== undefined;
+          if (capability === HOST_CHAT_RECOVERY_CAPABILITY)
+            return (
+              this.#options.hostChatRecovery !== undefined &&
+              !!this.#options.store.getIdentity()?.serverId &&
+              this.#validHostChatRecoveryAuthority()
+            );
           if (capability === AGENT_HOST_SETTINGS_CAPABILITY) return this.#options.admin?.agentHost !== undefined;
           if (capability === AGENT_BACKUP_MODELS_CAPABILITY) return this.#options.admin?.agentHost !== undefined;
           if (capability === AGENT_TASK_LIMIT_CAPABILITY) return this.#options.admin?.agentHost !== undefined;
@@ -2372,6 +2406,14 @@ export class TeamApiServer {
       sessionId: authenticated.sessionId,
       sessionExpiresAt: authenticated.sessionExpiresAt,
       agentLevel: (agentId) => this.agentLevel(authenticated.member, agentId),
+      currentSession: () => {
+        const current = this.#options.store.authenticateSession(token);
+        return current ? { member: current.member, sessionId: current.sessionId } : null;
+      },
+      currentAgentLevel: (agentId) => {
+        const current = this.#options.store.authenticateSession(token);
+        return current ? this.agentLevel(current.member, agentId) : "none";
+      },
       json: (status, value) => this.#json(response, status, value),
       empty: (status) => this.#empty(response, status),
     };

@@ -10,6 +10,8 @@
     "./remote-directory": "./src/remote-directory.ts",
     "./remote-peer": "./src/remote-peer.ts",
     "./remote-recovery": "./src/remote-recovery.ts",
+    "./message-recovery": "./src/message-recovery.ts",
+    "./host-chat-recovery-transport": "./src/host-chat-recovery-transport.ts",
     "./request-id": "./src/request-id.ts",
     "./sync-profile": "./src/sync-profile.ts",
     "./routine-calendar": "./src/routine-calendar.ts",

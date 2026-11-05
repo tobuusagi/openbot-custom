@@ -212,13 +212,16 @@ describe("IPC channel coverage", () => {
     expect(subscribed).toEqual(eventChannels);
   });
 
-  it("limits the separate client preload to the account request and state-event subset", () => {
+  it("limits the separate client preload to its account and recovery requests", () => {
     expect(channelsCalledBy(clientPreloadCalls, PRELOAD_INVOKE_CALLEES)).toEqual([
       "auth.getState",
       "auth.logout",
       "auth.requestEmailCode",
       "auth.retry",
       "auth.verifyEmailCode",
+      "clientRecovery.getState",
+      "clientRecovery.recover",
+      "clientRecovery.sendChat",
     ]);
     expect(channelsCalledBy(clientPreloadCalls, PRELOAD_SUBSCRIBE_CALLEES)).toEqual(["auth.event"]);
     expect(channelsCalledBy(clientPreloadCalls, PRELOAD_UNSUBSCRIBE_CALLEES)).toEqual(["auth.event"]);
@@ -229,11 +232,23 @@ describe("IPC channel coverage", () => {
     const exposedGlobals = [...source.matchAll(/contextBridge\.exposeInMainWorld\s*\(/gu)];
     const ipcMethods = [...source.matchAll(/\bipcRenderer\.([A-Za-z0-9_]+)\s*\(/gu)].map((match) => match[1]);
 
-    expect(exposedNames).toEqual(["clientAccount"]);
-    expect(exposedGlobals).toHaveLength(1);
+    expect(exposedNames).toEqual(["clientAccount", "clientRecovery"]);
+    expect(exposedGlobals).toHaveLength(2);
     expect(source).toContain('contextBridge.exposeInMainWorld("clientAccount", Object.freeze(clientAccount))');
     expect(source).toContain("const clientAccount: ClientAccountApi = {");
-    expect(ipcMethods.sort()).toEqual(["invoke", "invoke", "invoke", "invoke", "invoke", "on", "removeListener"]);
+    expect(source).toContain("const clientRecovery: ClientRecoveryApi = {");
+    expect(ipcMethods.sort()).toEqual([
+      "invoke",
+      "invoke",
+      "invoke",
+      "invoke",
+      "invoke",
+      "invoke",
+      "invoke",
+      "invoke",
+      "on",
+      "removeListener",
+    ]);
     expect(source).not.toMatch(/\bbridgeGroup\b/u);
     expect(source).not.toMatch(/\b(?:window|globalThis)\.openbot\b/u);
     expect(clientPreloadCalls.map(groupOf).filter((group) => group !== null)).toEqual([]);

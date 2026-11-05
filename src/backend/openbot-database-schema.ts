@@ -17,6 +17,7 @@ import { AGENT_WAIT_SCHEMA_SQL } from "./agent-waits/agent-wait-schema";
 import { BROWSER_PROFILE_SCHEMA_SQL } from "./browser-profiles/browser-profile-schema";
 import { CHANNEL_SCHEMA_SQL, CHANNEL_SETTINGS_SCHEMA_SQL } from "./channel-schema";
 import { DELETED_THREAD_MESSAGES_SCHEMA_SQL } from "./database/deleted-thread-messages-schema";
+import { HOST_CHAT_DELIVERY_SCHEMA_SQL, HOST_CHAT_RECOVERY_SCHEMA_SQL } from "./database/host-chat-recovery-schema";
 import { PROVIDER_HISTORY_SCHEMA_SQL } from "./database/provider-history-schema";
 import { MCP_SERVERS_SCHEMA_SQL } from "./mcp-schema";
 import {
@@ -622,7 +623,9 @@ const LATEST_SCHEMA_SQL =
   AGENT_THREAD_SCHEMA_SQL +
   WORKFLOW_GITHUB_SCHEMA_SQL +
   MESSAGING_ALLOWED_SENDERS_SCHEMA_SQL +
-  DELETED_THREAD_MESSAGES_SCHEMA_SQL;
+  DELETED_THREAD_MESSAGES_SCHEMA_SQL +
+  HOST_CHAT_RECOVERY_SCHEMA_SQL +
+  HOST_CHAT_DELIVERY_SCHEMA_SQL;
 
 /** The end of the thread message table with the migration 40 columns before its PRIMARY KEY constraint. */
 function withThreadMessageOrderColumns(tableEnd: string): string {
@@ -944,6 +947,16 @@ const MIGRATIONS: readonly OpenBotMigration[] = [
     // Only creates a table, so no foreign-key pause and no vacuum. No message was deleted before it,
     // so the table starts empty and no thread loses a message.
     up: (db) => db.exec(DELETED_THREAD_MESSAGES_SCHEMA_SQL),
+  },
+  {
+    version: 56,
+    // Only creates empty scoped receipt and event tables. Existing chat history remains untouched.
+    up: (db) => db.exec(HOST_CHAT_RECOVERY_SCHEMA_SQL),
+  },
+  {
+    version: 57,
+    // Adds an empty ledger that commits Host deliveries with their mailbox queue rows.
+    up: (db) => db.exec(HOST_CHAT_DELIVERY_SCHEMA_SQL),
   },
 ];
 

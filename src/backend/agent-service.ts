@@ -234,6 +234,18 @@ import { ChannelRoutineScheduler } from "./channel-routine-scheduler";
 import { ChannelService } from "./channel-service";
 import type { BundledProviderExecutables } from "./cli";
 import type { ConversationMarkerExclusions } from "./conversation-read-store";
+import {
+  type AcceptedHostChatRequest,
+  type DurableChatReceipt,
+  type HostChatRecoveryAuthorization,
+  type HostChatRecoveryCursor,
+  HostChatRecoveryError,
+  type HostChatRecoveryRead,
+  type HostChatRecoveryReadAuthorization,
+  type HostChatRecoveryScope,
+  type HostChatRecoverySnapshot,
+  type HostChatRecoveryTarget,
+} from "./database/host-chat-recovery";
 import type { ProviderSession } from "./database/provider-sessions";
 import { reportOriginalFailure } from "./effect-boundary";
 import type { HostMemory } from "./host-memory";
@@ -415,6 +427,14 @@ export interface AgentServiceOptions {
    */
   hostMemory?: HostMemory | null;
 }
+
+export interface DurableHostChatDelivery {
+  scope: HostChatRecoveryScope;
+  requestId: string;
+  authorize: HostChatRecoveryReadAuthorization;
+}
+
+type HostChatEnqueueContext = DurableHostChatDelivery & AcceptedHostChatRequest;
 
 /** How long a user send's `clientMessageId` answers a retry. A retry follows a lost reply, not a day. */
 const USER_SEND_RETRY_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -4822,12 +4842,90 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     );
   }).bind(this);
 
+  /** Explicit opt-in for a trusted Host adapter. Acceptance is re-authorized before enqueue. */
+  readonly sendDurableHostChat = Effect.fn("AgentService.sendDurableHostChat")(function* (
+    this: AgentService,
+    delivery: DurableHostChatDelivery,
+  ): Effect.fn.Return<QueuedMessageReceipt, AgentLifecycleFailed> {
+    let accepted: AcceptedHostChatRequest;
+    if (delivery.requestId.length === 0 || delivery.requestId.length > 128)
+      return yield* new AgentLifecycleFailed({
+        operation: "authorize Host chat delivery",
+        cause: new HostChatRecoveryError({ code: "INVALID_INPUT" }),
+      });
+    try {
+      accepted = this.#store.database.readAcceptedHostChatRequest(
+        delivery.scope,
+        delivery.requestId,
+        delivery.authorize,
+      );
+    } catch (error) {
+      return yield* new AgentLifecycleFailed({
+        operation: "authorize Host chat delivery",
+        cause: error,
+      });
+    }
+    try {
+      const receipt = this.#mailbox.readHostChatReceipt({
+        scopeKey: accepted.scopeKey,
+        requestId: accepted.requestId,
+        requestHash: accepted.requestHash,
+      });
+      if (receipt) return receipt;
+    } catch (error) {
+      return yield* new AgentLifecycleFailed({
+        operation: "load Host chat delivery receipt",
+        cause: error,
+      });
+    }
+    return yield* this.#sendUserMessage(
+      {
+        agentId: accepted.target.agentId,
+        text: accepted.content,
+        attachmentDraftIds: [],
+      },
+      undefined,
+      undefined,
+      undefined,
+      { ...delivery, ...accepted },
+    );
+  }).bind(this);
+
+  /** The authenticated Team API accepts a request into the durable inbox before asking the Host to consume it. */
+  recordDurableHostChatRequest(
+    input: { scope: HostChatRecoveryScope; target: HostChatRecoveryTarget; requestId: string; content: string },
+    authorize: HostChatRecoveryAuthorization,
+  ): DurableChatReceipt {
+    return this.#store.database.recordDurableChatRequest(input, authorize);
+  }
+
+  readDurableHostChatEvents(
+    scope: HostChatRecoveryScope,
+    after: HostChatRecoveryCursor | undefined,
+    authorize: HostChatRecoveryReadAuthorization,
+  ): HostChatRecoveryRead {
+    return this.#store.database.readDurableChatEvents(scope, after, authorize);
+  }
+
+  readDurableHostChatSnapshot(
+    scope: HostChatRecoveryScope,
+    authorize: HostChatRecoveryReadAuthorization,
+  ): HostChatRecoverySnapshot {
+    return this.#store.database.readDurableChatSnapshot(scope, authorize);
+  }
+
+  /** The durable delivery route supports the agent's main thread, never an arbitrary thread identifier. */
+  isDurableHostChatTarget(agentId: string, threadId: string): boolean {
+    return this.#store.list().some((agent) => agent.id === agentId && agent.threadId === threadId);
+  }
+
   readonly #sendUserMessage = Effect.fn("AgentService.sendUserMessage")(function* (
     this: AgentService,
     input: SendMessageInput,
     sender: ConversationMessageSender | undefined,
     timezone: string | undefined,
     idempotencyKey?: string,
+    hostDelivery?: HostChatEnqueueContext,
   ) {
     const validateRecipient = yield* lifecycleStep("prepare message delivery", () =>
       this.#mailbox.prepareDelivery([input.agentId]),
@@ -4862,22 +4960,51 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const task = taskId
       ? yield* lifecycleStep("find message task", () => this.#tasks.requireOpen(agent.id, taskId))
       : null;
-    const receipt = yield* this.#mailbox
-      .enqueue({
-        sender: { kind: "user" },
-        ...(sender ? { senderMember: sender } : {}),
-        ...(task ? { taskId: task.taskId } : {}),
-        recipientAgentIds: [agent.id],
-        text: input.text,
-        draftIds: input.attachmentDraftIds ?? [],
-        ...(input.voiceRecordingDraftId ? { voiceRecordingDraftId: input.voiceRecordingDraftId } : {}),
-        // A reply names a message of the thread that takes it: the agent's own chat, or the task's thread.
-        replyToMessageId: input.replyToMessageId ?? null,
-        ...(idempotencyKey ? { idempotencyKey } : {}),
-      })
-      .pipe(
-        Effect.mapError((failure) => new AgentLifecycleFailed({ operation: "enqueue message", cause: failure.cause })),
-      );
+    if (
+      hostDelivery &&
+      (hostDelivery.target.threadId !== (task?.threadId ?? agent.threadId) ||
+        !hostDelivery.authorize(hostDelivery.scope, hostDelivery.target))
+    )
+      return yield* new AgentLifecycleFailed({
+        operation: "authorize Host chat delivery",
+        cause: new HostChatRecoveryError({ code: "UNAUTHORIZED" }),
+      });
+    const enqueueInput = {
+      sender: { kind: "user" as const },
+      ...(sender ? { senderMember: sender } : {}),
+      ...(task ? { taskId: task.taskId } : {}),
+      recipientAgentIds: [agent.id],
+      text: input.text,
+      draftIds: input.attachmentDraftIds ?? [],
+      ...(input.voiceRecordingDraftId ? { voiceRecordingDraftId: input.voiceRecordingDraftId } : {}),
+      // A reply names a message of the thread that takes it: the agent's own chat, or the task's thread.
+      replyToMessageId: input.replyToMessageId ?? null,
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+    };
+    let receipt: QueuedMessageReceipt;
+    if (hostDelivery) {
+      const result = yield* this.#mailbox
+        .enqueueHostChat(enqueueInput, {
+          scopeKey: hostDelivery.scopeKey,
+          requestId: hostDelivery.requestId,
+          requestHash: hostDelivery.requestHash,
+        })
+        .pipe(
+          Effect.mapError(
+            (failure) => new AgentLifecycleFailed({ operation: "enqueue message", cause: failure.cause }),
+          ),
+        );
+      if (result.alreadyQueued) return result.receipt;
+      receipt = result.receipt;
+    } else {
+      receipt = yield* this.#mailbox
+        .enqueue(enqueueInput)
+        .pipe(
+          Effect.mapError(
+            (failure) => new AgentLifecycleFailed({ operation: "enqueue message", cause: failure.cause }),
+          ),
+        );
+    }
     const [queued] = receipt.deliveries;
     const delivery = queued ? this.#mailbox.getDelivery(queued.id) : null;
     if (!delivery)

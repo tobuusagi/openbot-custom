@@ -10,6 +10,7 @@ import type {
   ResetAgentSessionSettingInput,
   SetAgentSessionSettingInput,
 } from "./ipc-agent-session-settings";
+import type { ClientRecoveryChatInput, ClientRecoveryState } from "./ipc-client-recovery";
 import type { ServerAuditLog } from "./ipc-server-audit";
 // The one channel list. Each endpoint holds its wire value, the group it belongs to, and whether it
 // is a request the renderer invokes or an event the main process sends. That is what lets a
@@ -1453,6 +1454,11 @@ export const IPC_ENDPOINTS = {
     revokeCompanySignInScimToken: request<string, CompanySignInSettings>()("auth:company-sign-in:revoke-scim-token"),
     event: event<CentralAuthState>()("auth:event"),
   },
+  clientRecovery: {
+    getState: request<undefined, ClientRecoveryState>()("client-recovery:get-state"),
+    sendChat: request<ClientRecoveryChatInput, string>()("client-recovery:send-chat"),
+    recover: request<undefined, void>()("client-recovery:recover"),
+  },
   update: {
     getStatus: request<undefined, UpdateStatus>()("update:get-status"),
     check: request<undefined, UpdateStatus>()("update:check"),
@@ -2102,6 +2108,7 @@ export const IPC_GROUP_PATHS = {
   marketplaceAgents: "marketplaceAgents",
   agentTemplates: "agentTemplates",
   auth: "auth",
+  clientRecovery: null,
   update: "update",
   notifications: "notifications",
   agent: "agent",

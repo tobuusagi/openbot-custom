@@ -49,6 +49,7 @@ import { StoredStateFailure, storedIO, storedSync, toStoredStateFailure } from "
 export type { ExportedAttachmentFile, GeneratedAttachmentSource } from "./attachment-files";
 
 import { isEmptyStoredFile, parseStoredJson } from "./atomic-json-file";
+import { databaseRow, requiredStringColumn } from "./database/database-rows";
 import { mailboxReactionRowKey } from "./database/mailbox-projection";
 import { MailboxDeliveryGate } from "./mailbox-delivery-gate";
 import { OpenBotDatabase } from "./openbot-database";
@@ -202,6 +203,8 @@ interface EnqueueInput {
   voiceRecordingDraftId?: string;
   sourcePaths?: string[];
   idempotencyKey?: string;
+  hostChatLedger?: { scopeKey: string; requestId: string; requestHash: string };
+  onHostChatDuplicate?: () => void;
 }
 
 /** A file a chat message carries or an agent made, as the Storage view lists it. */
@@ -499,6 +502,22 @@ export class MailboxStore {
     input: EnqueueInput,
   ): Effect.fn.Return<QueuedMessageReceipt, StoredStateFailure> {
     try {
+      if (input.hostChatLedger) {
+        const existing = this.#database.connection
+          .prepare(
+            `SELECT request_hash AS requestHash, receipt_json AS receiptJson
+             FROM host_chat_delivery_ledger WHERE scope_key = ? AND request_id = ?`,
+          )
+          .get(input.hostChatLedger.scopeKey, input.hostChatLedger.requestId);
+        if (existing) {
+          const row = databaseRow(existing);
+          if (!row || requiredStringColumn(row, "requestHash") !== input.hostChatLedger.requestHash) {
+            throw new Error("Host chat request ID conflicts with a prior delivery.");
+          }
+          input.onHostChatDuplicate?.();
+          return decodeDurableReceipt(requiredStringColumn(row, "receiptJson"));
+        }
+      }
       if (input.idempotencyKey) {
         const existingMessageId = this.#state.idempotency[input.idempotencyKey];
         if (existingMessageId) return this.#receipt(existingMessageId);
@@ -611,8 +630,43 @@ export class MailboxStore {
         createdAt,
       }));
 
+      const database = this.#database.connection;
+      const priorChanges = input.hostChatLedger
+        ? {
+            messageIds: new Set(this.#changes.messageIds),
+            deliveryIds: new Set(this.#changes.deliveryIds),
+            draftIds: new Set(this.#changes.draftIds),
+            generatedAttachmentIds: new Set(this.#changes.generatedAttachmentIds),
+            reactionKeys: new Set(this.#changes.reactionKeys),
+          }
+        : null;
+      if (input.hostChatLedger) database.exec("BEGIN IMMEDIATE");
+
+      if (input.hostChatLedger) {
+        try {
+          const existing = database
+            .prepare(
+              `SELECT request_hash AS requestHash, receipt_json AS receiptJson
+               FROM host_chat_delivery_ledger WHERE scope_key = ? AND request_id = ?`,
+            )
+            .get(input.hostChatLedger.scopeKey, input.hostChatLedger.requestId);
+          if (existing) {
+            const row = databaseRow(existing);
+            if (!row || requiredStringColumn(row, "requestHash") !== input.hostChatLedger.requestHash)
+              throw new Error("Host chat request ID conflicts with a prior delivery.");
+            database.exec("COMMIT");
+            input.onHostChatDuplicate?.();
+            yield* removeTransfers.pipe(Effect.ignore);
+            return decodeDurableReceipt(requiredStringColumn(row, "receiptJson"));
+          }
+        } catch (error) {
+          if (database.isTransaction) database.exec("ROLLBACK");
+          yield* removeTransfers;
+          throw error;
+        }
+      }
+
       this.#state.messages.push(message);
-      recordRestartActivity();
       this.#state.deliveries.push(...deliveries);
       if (input.idempotencyKey) this.#state.idempotency[input.idempotencyKey] = messageId;
       const usedDrafts = voiceDraft ? [...drafts, voiceDraft] : drafts;
@@ -621,11 +675,51 @@ export class MailboxStore {
       for (const delivery of deliveries) this.#changes.deliveryIds.add(delivery.id);
       for (const draft of usedDrafts) this.#changes.draftIds.add(draft.id);
       try {
+        if (input.hostChatLedger) {
+          const [delivery] = deliveries;
+          if (!delivery) throw new Error("Host chat delivery has no recipient.");
+          const durableReceipt = this.#receipt(messageId);
+          database
+            .prepare(
+              `INSERT INTO host_chat_delivery_ledger
+                (scope_key, request_id, request_hash, message_id, delivery_id, queued_at, receipt_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            )
+            .run(
+              input.hostChatLedger.scopeKey,
+              input.hostChatLedger.requestId,
+              input.hostChatLedger.requestHash,
+              messageId,
+              delivery.id,
+              createdAt,
+              JSON.stringify(durableReceipt),
+            );
+        }
         this.#persist();
+        if (input.hostChatLedger) {
+          database.exec("COMMIT");
+          this.#clearChanges();
+        }
+        recordRestartActivity();
       } catch (error) {
+        if (input.hostChatLedger && database.isTransaction) database.exec("ROLLBACK");
         const deliveryIds = new Set(deliveries.map((delivery) => delivery.id));
         this.#state.messages = this.#state.messages.filter((candidate) => candidate.id !== messageId);
         this.#state.deliveries = this.#state.deliveries.filter((candidate) => !deliveryIds.has(candidate.id));
+        this.#changes.messageIds.delete(messageId);
+        for (const delivery of deliveries) this.#changes.deliveryIds.delete(delivery.id);
+        if (priorChanges) {
+          this.#changes.messageIds.clear();
+          for (const value of priorChanges.messageIds) this.#changes.messageIds.add(value);
+          this.#changes.deliveryIds.clear();
+          for (const value of priorChanges.deliveryIds) this.#changes.deliveryIds.add(value);
+          this.#changes.draftIds.clear();
+          for (const value of priorChanges.draftIds) this.#changes.draftIds.add(value);
+          this.#changes.generatedAttachmentIds.clear();
+          for (const value of priorChanges.generatedAttachmentIds) this.#changes.generatedAttachmentIds.add(value);
+          this.#changes.reactionKeys.clear();
+          for (const value of priorChanges.reactionKeys) this.#changes.reactionKeys.add(value);
+        }
         if (input.idempotencyKey && this.#state.idempotency[input.idempotencyKey] === messageId) {
           delete this.#state.idempotency[input.idempotencyKey];
         }
@@ -644,6 +738,43 @@ export class MailboxStore {
     } catch (cause) {
       return yield* new StoredStateFailure({ cause });
     }
+  }, Effect.uninterruptible).bind(this);
+
+  readHostChatReceipt(ledger: {
+    scopeKey: string;
+    requestId: string;
+    requestHash: string;
+  }): QueuedMessageReceipt | null {
+    const row = databaseRow(
+      this.#database.connection
+        .prepare(
+          `SELECT request_hash AS requestHash, receipt_json AS receiptJson
+           FROM host_chat_delivery_ledger WHERE scope_key = ? AND request_id = ?`,
+        )
+        .get(ledger.scopeKey, ledger.requestId),
+    );
+    if (!row) return null;
+    if (requiredStringColumn(row, "requestHash") !== ledger.requestHash)
+      throw new Error("Host chat request ID conflicts with a prior delivery.");
+    return decodeDurableReceipt(requiredStringColumn(row, "receiptJson"));
+  }
+
+  /** Enqueues one already-authorized Host request with a permanent receipt key and atomic ledger row. */
+  enqueueHostChat = Effect.fn("MailboxStore.enqueueHostChat")(function* (
+    this: MailboxStore,
+    input: Omit<EnqueueInput, "idempotencyKey" | "hostChatLedger" | "onHostChatDuplicate">,
+    ledger: { scopeKey: string; requestId: string; requestHash: string },
+  ): Effect.fn.Return<{ receipt: QueuedMessageReceipt; alreadyQueued: boolean }, StoredStateFailure> {
+    let alreadyQueued = false;
+    const receipt = yield* this.enqueue({
+      ...input,
+      idempotencyKey: `host-chat:${ledger.scopeKey}:${ledger.requestId}`,
+      hostChatLedger: ledger,
+      onHostChatDuplicate: () => {
+        alreadyQueued = true;
+      },
+    });
+    return { receipt, alreadyQueued };
   }, Effect.uninterruptible).bind(this);
 
   /**
@@ -3127,6 +3258,40 @@ export class MailboxStore {
       }
     }
   }, Effect.uninterruptible);
+}
+
+function decodeDurableReceipt(encoded: string): QueuedMessageReceipt {
+  const parsed = JSON.parse(encoded);
+  if (!isRecord(parsed) || typeof parsed.messageId !== "string" || !Array.isArray(parsed.deliveries))
+    throw new Error("Stored Host chat receipt is invalid.");
+  const deliveries = parsed.deliveries.map((value) => {
+    if (
+      !isRecord(value) ||
+      typeof value.id !== "string" ||
+      typeof value.recipientAgentId !== "string" ||
+      !isOneOf(
+        [
+        "queued",
+        "starting",
+        "running",
+        "completed",
+        "failed",
+        "interrupted",
+        "cancelled",
+        ] as const,
+        value.status,
+      ) ||
+      (value.position !== null && typeof value.position !== "number")
+    )
+      throw new Error("Stored Host chat receipt is invalid.");
+    return {
+      id: value.id,
+      recipientAgentId: value.recipientAgentId,
+      status: value.status,
+      position: value.position,
+    };
+  });
+  return { messageId: parsed.messageId, deliveries };
 }
 
 function normalizeStoredState(value: StoredState): StoredState {

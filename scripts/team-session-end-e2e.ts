@@ -84,6 +84,8 @@ async function send(method: string, path: string, dependencies: TeamRouteDepende
     member: OWNER,
     token: "token-a",
     agentLevel: () => "manage",
+    currentSession: () => ({ member: OWNER, sessionId: "session-a" }),
+    currentAgentLevel: () => "manage",
     sessionId: "session-a",
     sessionExpiresAt: "2026-10-18T00:00:00.000Z",
     json: (status) => {

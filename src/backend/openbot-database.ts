@@ -19,6 +19,19 @@ import { ConversationWriter } from "./database/conversation-writer";
 import { DatabaseCore, type OrchestrationEventInput } from "./database/database-core";
 import { deletedThreadMessageIds } from "./database/deleted-thread-messages";
 import {
+  type AcceptedHostChatRequest,
+  type DurableChatReceipt,
+  HostChatRecovery,
+  type HostChatRecoveryAuthorization,
+  type HostChatRecoveryCursor,
+  type HostChatRecoveryRead,
+  type HostChatRecoveryReadAuthorization,
+  type HostChatRecoveryScope,
+  type HostChatRecoverySnapshot,
+  type HostChatRecoverySnapshotAuthorization,
+  type RecordDurableChatRequestInput,
+} from "./database/host-chat-recovery";
+import {
   type ActiveHostedSiteConversationEvent,
   HostedSiteEventLog,
   type PendingHostedSiteTerminalEvent,
@@ -46,6 +59,20 @@ import { type StoredThreadSummary, ThreadSummaries } from "./database/thread-sum
 // reachable from here rather than only from the controller that owns it now. Structural `Pick<...>`
 // types over this class do not cover exported types.
 export type { OrchestrationEventInput } from "./database/database-core";
+export type {
+  DurableChatReceipt,
+  HostChatRecoveryAuthorization,
+  HostChatRecoveryCursor,
+  HostChatRecoveryEvent,
+  HostChatRecoveryRead,
+  HostChatRecoveryReadAuthorization,
+  HostChatRecoveryScope,
+  HostChatRecoverySnapshot,
+  HostChatRecoverySnapshotAuthorization,
+  HostChatRecoveryTarget,
+  RecordDurableChatRequestInput,
+} from "./database/host-chat-recovery";
+export { HostChatRecoveryError } from "./database/host-chat-recovery";
 export type {
   ActiveHostedSiteConversationEvent,
   PendingHostedSiteTerminalEvent,
@@ -80,6 +107,7 @@ export class OpenBotDatabase {
   readonly #sessions: ProviderSessions;
   readonly #agentHistory: AgentHistoryQueries;
   readonly #providerHistory: ProviderHistoryStore;
+  readonly #hostChatRecovery: HostChatRecovery;
   readonly #summaries: ThreadSummaries;
 
   constructor(readonly userDataPath: string) {
@@ -94,6 +122,7 @@ export class OpenBotDatabase {
     this.#agentHistory = new AgentHistoryQueries(this.#core);
     this.#sessions = new ProviderSessions({ core: this.#core });
     this.#providerHistory = new ProviderHistoryStore({ core: this.#core });
+    this.#hostChatRecovery = new HostChatRecovery({ core: this.#core });
     this.#summaries = new ThreadSummaries({ core: this.#core });
   }
 
@@ -111,6 +140,39 @@ export class OpenBotDatabase {
 
   get connection(): DatabaseSync {
     return this.#core.connection;
+  }
+
+  /** Persist one authorized chat inbox request and receipt atomically; this does not dispatch a Provider turn. */
+  recordDurableChatRequest(
+    input: RecordDurableChatRequestInput,
+    authorize: HostChatRecoveryAuthorization,
+  ): DurableChatReceipt {
+    return this.#hostChatRecovery.recordDurableChatRequest(input, authorize);
+  }
+
+  /** Read authorized inbox events from the cursor domain of the supplied Host scope. */
+  readDurableChatEvents(
+    scope: HostChatRecoveryScope,
+    after: HostChatRecoveryCursor | undefined,
+    authorize: HostChatRecoveryReadAuthorization,
+  ): HostChatRecoveryRead {
+    return this.#hostChatRecovery.readEvents(scope, after, authorize);
+  }
+
+  readAcceptedHostChatRequest(
+    scope: HostChatRecoveryScope,
+    requestId: string,
+    authorize: HostChatRecoveryReadAuthorization,
+  ): AcceptedHostChatRequest {
+    return this.#hostChatRecovery.readAcceptedRequest(scope, requestId, authorize);
+  }
+
+  /** Read a complete, bounded snapshot of authorized Host inbox acceptances from one SQLite read snapshot. */
+  readDurableChatSnapshot(
+    scope: HostChatRecoveryScope,
+    authorize: HostChatRecoverySnapshotAuthorization,
+  ): HostChatRecoverySnapshot {
+    return this.#hostChatRecovery.readSnapshot(scope, authorize);
   }
 
   dispatch<T>(

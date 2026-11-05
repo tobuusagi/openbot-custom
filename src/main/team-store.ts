@@ -79,6 +79,8 @@ export class TeamStoreError extends Schema.TaggedError<TeamStoreError>()("TeamSt
 
 interface StoredMember extends TeamMemberSummary {
   accountId?: string;
+  /** Monotonic generation for permission changes that keep a session alive. */
+  authorizationRevision?: number;
   passwordSalt?: string;
   passwordHash?: string;
 }
@@ -970,18 +972,24 @@ export class TeamStore {
             role: remote.role,
             disabled: remote.status !== "active",
             createdAt: new Date(remote.createdAt).toISOString(),
+            authorizationRevision: 0,
           });
           continue;
         }
+        const authorizationChanged = member.role !== remote.role || member.disabled !== (remote.status !== "active");
         member.username = yield* remoteDecode(() => normalizeEmail(remote.email));
         member.email = yield* remoteDecode(() => normalizeEmail(remote.email));
         member.name = yield* remoteDecode(() => normalizeName(remote.name));
         member.avatarUrl = yield* remoteDecode(() => normalizeAvatarUrl(remote.avatarUrl));
         member.role = remote.role;
         member.disabled = remote.status !== "active";
+        if (authorizationChanged) yield* remoteDecode(() => bumpMemberAuthorizationRevision(member));
       }
       for (const member of state.members) {
-        if (member.role !== "owner" && !remoteIds.has(member.id)) member.disabled = true;
+        if (member.role !== "owner" && !remoteIds.has(member.id) && !member.disabled) {
+          member.disabled = true;
+          yield* remoteDecode(() => bumpMemberAuthorizationRevision(member));
+        }
       }
       const activeRoles = new Map(
         remoteMembers
@@ -1045,6 +1053,12 @@ export class TeamStore {
   getMember(memberId: string): TeamMemberSummary | null {
     const member = this.#state?.members.find((candidate) => candidate.id === memberId);
     return member ? publicMember(member) : null;
+  }
+
+  /** Stable local generation for permission changes that do not revoke an active session. */
+  memberAuthorizationRevision(memberId: string): number {
+    const member = this.#state?.members.find((candidate) => candidate.id === memberId);
+    return member?.authorizationRevision ?? 0;
   }
 
   listInvites(): TeamInviteSummary[] {
@@ -1369,12 +1383,16 @@ export class TeamStore {
           cause: new TeamStoreError(sourceText("error.team.ownerCannotChange")),
         });
       if (patch.disabled === false && member.disabled) yield* remoteDecode(() => requireMemberSeat(state));
+      const authorizationChanged =
+        (patch.role !== undefined && patch.role !== member.role) ||
+        (patch.disabled !== undefined && patch.disabled !== member.disabled);
       if (patch.role !== undefined) {
         if (patch.role !== "admin" && patch.role !== "member")
           return yield* new RemoteWorkflowError({ cause: new TeamStoreError("Invalid role.") });
         member.role = patch.role;
       }
       if (patch.disabled !== undefined) member.disabled = patch.disabled;
+      if (authorizationChanged) yield* remoteDecode(() => bumpMemberAuthorizationRevision(member));
       if (member.disabled) {
         state.sessions = state.sessions.filter((session) => session.memberId !== member.id);
       }
@@ -1763,9 +1781,39 @@ function reconcileHost(baseline: StoredTeam, mine: StoredTeam, theirs: StoredTea
  */
 function reconcileMembers(baseline: StoredMember[], mine: StoredMember[], theirs: StoredMember[]): StoredMember[] {
   return reconcileEntries(baseline, mine, theirs).map((member) => {
+    const before = baseline.find((candidate) => candidate.id === member.id);
     const ours = mine.find((candidate) => candidate.id === member.id);
-    return ours?.accountId ? { ...member, accountId: ours.accountId } : member;
+    const other = theirs.find((candidate) => candidate.id === member.id);
+    const authorizationSafe = mergeTeamMemberAuthorizationRevision(member, before, ours, other);
+    return ours?.accountId ? { ...authorizationSafe, accountId: ours.accountId } : authorizationSafe;
   });
+}
+
+export interface TeamMemberAuthorizationRevisionRecord {
+  role: string;
+  disabled: boolean;
+  authorizationRevision?: number;
+}
+
+/** Keep permission generations monotonic when this host reconciles with an older team.json copy. */
+export function mergeTeamMemberAuthorizationRevision<Member extends TeamMemberAuthorizationRevisionRecord>(
+  merged: Member,
+  baseline: TeamMemberAuthorizationRevisionRecord | undefined,
+  mine: TeamMemberAuthorizationRevisionRecord | undefined,
+  theirs: TeamMemberAuthorizationRevisionRecord | undefined,
+): Member {
+  const revisions = [baseline, mine, theirs]
+    .map((member) => member?.authorizationRevision)
+    .filter((revision): revision is number => revision !== undefined);
+  if (revisions.some((revision) => !Number.isSafeInteger(revision) || revision < 0))
+    throw new TeamStoreError("Member authorization revision is invalid.");
+  const changed = mine !== undefined && (merged.role !== mine.role || merged.disabled !== mine.disabled);
+  const currentRevision = Math.max(0, ...revisions);
+  const authorizationRevision = changed ? currentRevision + 1 : currentRevision;
+  if (!Number.isSafeInteger(authorizationRevision))
+    throw new TeamStoreError("Member authorization revision is invalid.");
+  if (!changed && revisions.length === 0) return merged;
+  return { ...merged, authorizationRevision };
 }
 
 /** The side that moved, or this build's value when the other side stood still. */
@@ -1848,6 +1896,14 @@ function isStoredTeam(value: unknown): value is StoredTeam {
     isString(record.publicKey) &&
     isString(record.privateKey) &&
     Array.isArray(record.members) &&
+    record.members.every(
+      (member) =>
+        isDynamicRecord(member) &&
+        (member.authorizationRevision === undefined ||
+          (typeof member.authorizationRevision === "number" &&
+            Number.isSafeInteger(member.authorizationRevision) &&
+            member.authorizationRevision >= 0)),
+    ) &&
     Array.isArray(record.invites) &&
     Array.isArray(record.sessions) &&
     validLogo &&
@@ -1857,4 +1913,11 @@ function isStoredTeam(value: unknown): value is StoredTeam {
         isString(record.pendingKeyRotation.privateKey) &&
         isDynamicRecord(record.pendingKeyRotation.handover)))
   );
+}
+
+function bumpMemberAuthorizationRevision(member: StoredMember): void {
+  const current = member.authorizationRevision ?? 0;
+  if (!Number.isSafeInteger(current) || current < 0 || current >= Number.MAX_SAFE_INTEGER)
+    throw new TeamStoreError("Member authorization revision is invalid.");
+  member.authorizationRevision = current + 1;
 }

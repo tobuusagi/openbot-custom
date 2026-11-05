@@ -132,6 +132,8 @@ interface HostServiceOptions {
   /** Records who joined, left, or got another server role. */
   serverAudit?: Pick<ServerAuditStore, "read" | "record">;
   agentTasks?: ForwardedApiOptions["agentTasks"];
+  hostChatRecovery?: ForwardedApiOptions["hostChatRecovery"];
+  hostChatRecoveryAuthority?: ForwardedApiOptions["hostChatRecoveryAuthority"];
   browserProfiles?: ForwardedApiOptions["browserProfiles"];
   admin?: ForwardedApiOptions["admin"];
   focusUse?: ForwardedApiOptions["focusUse"];
@@ -464,6 +466,10 @@ export class HostService extends EventEmitter<HostEvents> {
       ...(options.agentAccess === undefined ? {} : { agentAccess: options.agentAccess }),
       ...(options.serverAudit === undefined ? {} : { serverAudit: options.serverAudit }),
       ...(options.agentTasks === undefined ? {} : { agentTasks: options.agentTasks }),
+      ...(options.hostChatRecovery === undefined ? {} : { hostChatRecovery: options.hostChatRecovery }),
+      ...(options.hostChatRecoveryAuthority === undefined
+        ? {}
+        : { hostChatRecoveryAuthority: options.hostChatRecoveryAuthority }),
       ...(options.browserProfiles === undefined ? {} : { browserProfiles: options.browserProfiles }),
       // The identity route changes this host's name and logo through `updateIdentity`, so a change
       // from a joined admin runs every step a local one does. The key route runs the steps of Server

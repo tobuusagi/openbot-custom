@@ -5,7 +5,14 @@ import { app, BrowserWindow, type BrowserWindowConstructorOptions, protocol, typ
 import { runCauseEffect } from "../backend/effect-boundary";
 import { type ClientAccountSecureStorage, createClientAccountService } from "./client-account-service";
 import { CLIENT_PRODUCT, CLIENT_RENDERER_URL } from "./client-product";
+import {
+  bindClientRecoveryAccountLifecycle,
+  type ClientAuthenticatedRecoveryConnection,
+  type ClientRecoveryService,
+  createClientRecoveryService,
+} from "./client-recovery-service";
 import { registerClientAccountIpc } from "./ipc/client-account-handlers";
+import { registerClientRecoveryIpc } from "./ipc/client-recovery-handlers";
 import { sendToRenderer } from "./renderer-ipc";
 
 export const CLIENT_CONTENT_SECURITY_POLICY = [
@@ -36,6 +43,11 @@ export interface ClientRuntimeOptions {
   rendererRoot: string;
   preloadPath: string;
   secureStorage: ClientAccountSecureStorage;
+  /** Main-only resolver for an authenticated Host session; it must never use the account API token. */
+  resolveAuthenticatedHostRecovery?: (
+    accountSubject: string,
+    signal: AbortSignal,
+  ) => Promise<ClientAuthenticatedRecoveryConnection | null>;
   fetch?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
   onStartupStage?: (stage: ClientRuntimeStartupStage) => void;
   onWindowCreated?: (window: BrowserWindow) => void;
@@ -68,7 +80,7 @@ export interface ClientNavigationPolicyBoundary {
   onFrameNavigation(handler: (event: ClientNavigationEvent, targetUrl: string, isMainFrame: boolean) => void): void;
 }
 
-/** Start the account-only client composition after Electron is ready. */
+/** Start the client composition after Electron is ready. */
 export async function startClientRuntime(options: ClientRuntimeOptions): Promise<void> {
   const rendererRoot = await resolveRendererRoot(options.rendererRoot);
   options.onStartupStage?.("renderer-root-ready");
@@ -78,42 +90,71 @@ export async function startClientRuntime(options: ClientRuntimeOptions): Promise
     secureStorage: options.secureStorage,
     ...(options.fetch ? { fetch: options.fetch } : {}),
   });
-  options.onStartupStage?.("account-service-ready");
+  let recovery: ClientRecoveryService | undefined;
+  let window: BrowserWindow | undefined;
+  let unsubscribe: (() => void) | undefined;
+  let unsubscribeRecovery: (() => void) | undefined;
+  let beforeQuitHandler: ((event: Electron.Event) => void) | undefined;
+  let windowAllClosedHandler: (() => void) | undefined;
+  try {
+    options.onStartupStage?.("account-service-ready");
+    recovery = await createClientRecoveryService({ profilePath: join(options.userDataPath, "client-profile") });
+    denyClientSessionPermissions(session.defaultSession);
+    session.defaultSession.protocol.handle("openbot-app", (request) => serveClientFile(request, rendererRoot));
+    options.onStartupStage?.("protocol-ready");
 
-  denyClientSessionPermissions(session.defaultSession);
-  session.defaultSession.protocol.handle("openbot-app", (request) => serveClientFile(request, rendererRoot));
-  options.onStartupStage?.("protocol-ready");
+    const clientWindow = new BrowserWindow(clientBrowserWindowOptions(options.preloadPath));
+    window = clientWindow;
+    options.onWindowCreated?.(clientWindow);
+    options.onStartupStage?.("window-created");
 
-  const window = new BrowserWindow(clientBrowserWindowOptions(options.preloadPath));
-  options.onWindowCreated?.(window);
-  options.onStartupStage?.("window-created");
+    clientWindow.setMenu(null);
+    enforceClientNavigation(clientWindow.webContents);
+    options.onStartupStage?.("window-policy-ready");
 
-  window.setMenu(null);
-  enforceClientNavigation(window.webContents);
-  options.onStartupStage?.("window-policy-ready");
+    registerClientAccountIpc({ account, window: clientWindow });
+    registerClientRecoveryIpc(recovery, clientWindow);
+    unsubscribe = account.onChanged((state) => sendToRenderer(clientWindow, IPC_ENDPOINTS.auth.event, state));
+    unsubscribeRecovery = bindClientRecoveryAccountLifecycle(
+      account,
+      recovery,
+      options.resolveAuthenticatedHostRecovery,
+    );
+    clientWindow.on("closed", () => {
+      unsubscribe?.();
+      unsubscribeRecovery?.();
+      void recovery?.dispose().catch(() => undefined);
+    });
+    windowAllClosedHandler = () => app.quit();
+    app.on("window-all-closed", windowAllClosedHandler);
+    options.onStartupStage?.("ipc-ready");
 
-  registerClientAccountIpc({ account, window });
-  const unsubscribe = account.onChanged((state) => sendToRenderer(window, IPC_ENDPOINTS.auth.event, state));
-  window.on("closed", unsubscribe);
-  app.on("window-all-closed", () => app.quit());
-  options.onStartupStage?.("ipc-ready");
+    let quitting = false;
+    beforeQuitHandler = (event) => {
+      if (quitting) return;
+      event.preventDefault();
+      quitting = true;
+      void Promise.all([runCauseEffect(account.dispose()), recovery?.dispose()])
+        .catch(() => undefined)
+        .finally(() => app.quit());
+    };
+    app.on("before-quit", beforeQuitHandler);
 
-  let quitting = false;
-  app.on("before-quit", (event) => {
-    if (quitting) return;
-    event.preventDefault();
-    quitting = true;
-    void runCauseEffect(account.dispose())
-      .catch(() => undefined)
-      .finally(() => app.quit());
-  });
-
-  void runCauseEffect(account.initialize()).catch(() => undefined);
-  options.onStartupStage?.("before-load-url");
-  await window.loadURL(CLIENT_RENDERER_URL);
-  options.onStartupStage?.("after-load-url");
-  window.show();
-  options.onStartupStage?.("window-shown");
+    void runCauseEffect(account.initialize()).catch(() => undefined);
+    options.onStartupStage?.("before-load-url");
+    await clientWindow.loadURL(CLIENT_RENDERER_URL);
+    options.onStartupStage?.("after-load-url");
+    clientWindow.show();
+    options.onStartupStage?.("window-shown");
+  } catch (error) {
+    unsubscribe?.();
+    unsubscribeRecovery?.();
+    if (beforeQuitHandler) app.removeListener("before-quit", beforeQuitHandler);
+    if (windowAllClosedHandler) app.removeListener("window-all-closed", windowAllClosedHandler);
+    if (window && !window.isDestroyed()) window.destroy();
+    await Promise.allSettled([runCauseEffect(account.dispose()), recovery?.dispose() ?? Promise.resolve()]);
+    throw error;
+  }
 }
 
 export function clientBrowserWindowOptions(preloadPath: string): BrowserWindowConstructorOptions {
