@@ -10,6 +10,7 @@ import { Effect } from "effect";
  * `createApplicationServices` has built anything. Every other dependency arrives as a value.
  */
 
+import { release } from "node:os";
 import { join } from "node:path";
 import {
   type AgentSummary,
@@ -664,12 +665,29 @@ export function createDynamicIslandWindow(bounds: Rectangle, _display: Display):
   return window;
 }
 
-/** The agent dock at the right edge of the screen: a transparent panel above the other apps. */
+/**
+ * Windows 11 22H2 (build 22621) and up draw the system backdrop (Mica) behind a window. Older
+ * Windows ignores the hint; there the dock stays a transparent panel like on macOS.
+ */
+function windowsSupportsBackgroundMaterial(): boolean {
+  if (process.platform !== "win32") return false;
+  const build = Number(release().split(".")[2]);
+  return Number.isInteger(build) && build >= 22621;
+}
+
+/**
+ * The agent dock at the right edge of the screen: a panel above the other apps. macOS uses a
+ * transparent panel; Windows 11 uses Mica behind it.
+ */
 export function createAgentDockWindow(bounds: Rectangle): BrowserWindow {
+  const windowsMica = windowsSupportsBackgroundMaterial();
   const window = new BrowserWindow({
     ...bounds,
     show: false,
-    transparent: true,
+    // A transparent window and the DWM backdrop are mutually exclusive: on a transparent window the
+    // backdrop call kills per-pixel alpha and the dock paints opaque white. So the Windows dock is
+    // opaque and lets Mica show through its transparent page instead.
+    transparent: !windowsMica,
     frame: false,
     alwaysOnTop: true,
     focusable: false,
@@ -681,8 +699,9 @@ export function createAgentDockWindow(bounds: Rectangle): BrowserWindow {
     fullscreenable: false,
     hasShadow: false,
     skipTaskbar: true,
-    type: "panel",
+    ...(process.platform === "darwin" ? { type: "panel" } : {}),
     backgroundColor: "#00000000",
+    ...(windowsMica ? { backgroundMaterial: "mica" } : {}),
     webPreferences: {
       preload: join(__dirname, "../preload/index.cjs"),
       contextIsolation: true,

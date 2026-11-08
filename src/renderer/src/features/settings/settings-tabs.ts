@@ -234,7 +234,8 @@ export function navItem(tab: SettingsTab): SettingsNavItem {
 
 /**
  * Whether the settings panel and its search show the tab. Hosted servers opens from its own entry, not
- * from this panel. The Dynamic Island and the agent dock are macOS features of the main window.
+ * from this panel. The Dynamic Island is a macOS feature of the main window; the agent dock runs on
+ * macOS and on Windows.
  */
 export function settingsTabShown(
   tab: SettingsTab,
@@ -242,7 +243,7 @@ export function settingsTabShown(
 ): boolean {
   if (tab === "hosted-servers") return false;
   if (tab === "dynamic-island") return dynamicIslandSettingsShown(window.platform, window.chatWindow);
-  if (tab === "agent-dock") return window.platform === "darwin" && !window.chatWindow;
+  if (tab === "agent-dock") return (window.platform === "darwin" || window.platform === "win32") && !window.chatWindow;
   return true;
 }
 

@@ -194,7 +194,9 @@ export function SettingsModal(props: SettingsModalProps) {
     },
   );
   const agentDockShown = () =>
-    props.appInfo?.platform === "darwin" && props.chatWindow !== true && props.agentDock !== undefined;
+    (props.appInfo?.platform === "darwin" || props.appInfo?.platform === "win32") &&
+    props.chatWindow !== true &&
+    props.agentDock !== undefined;
   const visibleNavItems = () =>
     navItems.filter(
       (item) =>

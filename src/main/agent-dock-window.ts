@@ -1,4 +1,4 @@
-// The agent dock windows: transparent panels at the left or right edge of a display, above the other
+// The agent dock windows: floating panels at the left or right edge of a display, above the other
 // apps. One display has the dock, or each display has one. The user drags a dock up or down its edge. The main renderer publishes what the docks show. The
 // dock windows send their actions here: main sends the messages typed in a dock and gives the other
 // actions to the main renderer.
@@ -296,7 +296,8 @@ export class AgentDockWindowController {
     return this.#reconciliation
       .withPermit(
         Effect.suspend(() => {
-          if (this.#destroyed || this.#options.platform !== "darwin") {
+          // The dock runs on macOS and on Windows. Any other platform destroys it.
+          if (this.#destroyed || (this.#options.platform !== "darwin" && this.#options.platform !== "win32")) {
             this.#destroyWindow();
             return Effect.void;
           }
