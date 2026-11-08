@@ -17,9 +17,12 @@ import {
   isAgentApproval,
   isBrowserTakeoverRequest,
 } from "./ipc-approvals";
-import { isIdentifier } from "./ipc-bounded-values";
+import { isBoundedString, isIdentifier } from "./ipc-bounded-values";
 import type { BrowserControlState, BrowserTab } from "./ipc-browser";
+import { type AgentChatColorEntry, isChatColors, type MemberChatColorEntry } from "./ipc-chat-colors";
 import { type AgentPromptQuestion, isAgentPromptQuestion, isConversationMessage } from "./ipc-conversation-messages";
+import { CONVERSATION_SUBAGENT_TITLE_LIMIT } from "./ipc-conversation-subagents";
+import { CONVERSATION_TRACE_TEXT_LIMIT } from "./ipc-conversation-trace";
 import {
   type ConversationPage,
   type ConversationSnapshot,
@@ -34,6 +37,29 @@ import type { ServerNotificationLevel } from "./ipc-team-host";
 import { isBoolean, isDynamicRecord, isNumber, isString } from "./runtime-values";
 
 export type AgentTurnOrigin = "user" | "routine" | "agent" | "unknown";
+
+/**
+ * What a tool step of a turn does, on its `turn-progress` event: `reviewing` when the step ended and
+ * the model reads its result. A client shows it on the agent's avatar. A host before this field
+ * leaves it out, and so does a step that is not a tool step. The event keeps it as text, so that a
+ * client still takes the progress of a later host that sends an activity it does not know.
+ */
+export const AGENT_STEP_ACTIVITIES = [
+  "searching",
+  "browsing",
+  "reading",
+  "running",
+  "editing",
+  "delegating",
+  "working",
+  "reviewing",
+] as const;
+export type AgentStepActivity = (typeof AGENT_STEP_ACTIVITIES)[number];
+
+/** The activity of a `turn-progress` event, or null when it has none or one that this client does not know. */
+export function agentStepActivity(value: string | undefined): AgentStepActivity | null {
+  return AGENT_STEP_ACTIVITIES.find((activity) => activity === value) ?? null;
+}
 
 function isAgentTurnOrigin(value: unknown): value is AgentTurnOrigin {
   return value === "user" || value === "routine" || value === "agent" || value === "unknown";
@@ -71,8 +97,12 @@ export type AgentEvent =
   | { type: "skills-changed"; agentId: string }
   /** The routine canvas of this agent changed, so the views showing it read it again. */
   | { type: "routine-flows-changed"; agentId: string }
-  /** A workflow of this server changed: its graph, its title, a run or a step. Views showing it read it again. */
-  | { type: "workflows-changed"; workflowId: string }
+  /**
+   * A workflow of this server changed: its graph, its title, a run or a step. Views showing it read it
+   * again. `agentId`: the agent whose tool call made or saved it, so an open canvas shows its build.
+   * Only this computer's event has it: `workflows-v1` sends the workflow id only.
+   */
+  | { type: "workflows-changed"; workflowId: string; agentId?: string }
   /** The Vault of this server changed. Server settings of a joined server read it again. */
   | { type: "vault-changed" }
   /** The named browser profiles of this server, or the profile of one of its agents, changed. */
@@ -85,6 +115,8 @@ export type AgentEvent =
   | { type: "hidden-agents-changed"; agents: HiddenAgent[] }
   /** The whole list of exact agent colours, in the `agent-colors-v1` wire shape. */
   | { type: "agent-colors-changed"; agents: AgentColorEntry[] }
+  /** The whole list of agent and member chat colours, in the `chat-colors-v1` wire shape. */
+  | { type: "chat-colors-changed"; agents: AgentChatColorEntry[]; members: MemberChatColorEntry[] }
   /**
    * The user's own notification levels on this server changed on one of their devices. Only the
    * connections of that member get it (`agent-notification-levels-v1`), with all of their levels.
@@ -133,7 +165,25 @@ export type AgentEvent =
       createdAt: string;
       revision: number;
     }
-  | { type: "turn-progress"; agentId: string; threadId: string; turnId: string; detail: string }
+  | {
+      type: "turn-progress";
+      agentId: string;
+      threadId: string;
+      turnId: string;
+      detail: string;
+      /**
+       * True while a tool step of the turn runs, such as a long command. The turn then works, it does not wait
+       * for its provider. A host before this field leaves it out, and the client counts silence as before.
+       */
+      running?: boolean;
+      /** An `AgentStepActivity`, read with `agentStepActivity`. */
+      activity?: string;
+      /**
+       * On the line of a failed tool step: its error text, with known secrets removed. A host before
+       * this field leaves it out, and the client shows the line with no error.
+       */
+      error?: string;
+    }
   | { type: "turn-started"; agentId: string; threadId: string; turnId: string; origin?: AgentTurnOrigin }
   | AgentTurnCompletedEvent
   /**
@@ -171,10 +221,19 @@ export type AgentEvent =
       tabs: { tabId: string; canGoBack: boolean; canGoForward: boolean }[];
     }
   /**
-   * `provider` and `model` name the run that failed, for the banner. Local only: the Team API event
-   * projection drops them.
+   * `provider` and `model` name the run that failed, for the banner. `link` is the Google page where
+   * the user fixes the account that failed the turn, which the banner opens. Local only: the Team API
+   * event projection drops them.
    */
-  | { type: "error"; agentId?: string; code: string; message: string; provider?: AgentProviderId; model?: string }
+  | {
+      type: "error";
+      agentId?: string;
+      code: string;
+      message: string;
+      provider?: AgentProviderId;
+      model?: string;
+      link?: string;
+    }
   /**
    * A provider plan refused a turn, once per limit. The queues of its agents wait for the reset.
    * Local only: the released Team API event adapters do not carry it. `resetsAt` is in epoch seconds.
@@ -185,6 +244,19 @@ export type AgentEvent =
       provider: AgentProviderId;
       resetsAt: number | null;
       agentCount: number;
+    }
+  /**
+   * A subagent of a turn failed, once per subagent. `title` is the task the card shows. Local only:
+   * the released Team API event adapters do not carry it, and a remote client reads the failure in the
+   * subagent list of the conversation (`subagents-v1`).
+   */
+  | {
+      type: "subagent-failed";
+      agentId: string;
+      threadId: string;
+      turnId: string;
+      subagentId: string;
+      title: string;
     };
 
 export function isAgentEvent(value: unknown): value is AgentEvent {
@@ -216,7 +288,7 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
     case "routine-flows-changed":
       return isIdentifier(value.agentId);
     case "workflows-changed":
-      return isIdentifier(value.workflowId);
+      return isIdentifier(value.workflowId) && (value.agentId === undefined || isIdentifier(value.agentId));
     case "vault-changed":
     case "browser-profiles-changed":
       return true;
@@ -229,6 +301,8 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
       return isHiddenAgentsSnapshot({ agents: value.agents });
     case "agent-colors-changed":
       return isAgentColors({ agents: value.agents });
+    case "chat-colors-changed":
+      return isChatColors({ agents: value.agents, members: value.members });
     case "agent-notification-levels-changed":
       return isAgentNotificationLevelsSnapshot({ server: value.server, agents: value.agents });
     case "sidebar-pins-changed":
@@ -299,7 +373,10 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
         isIdentifier(value.turnId) &&
         isString(value.detail) &&
         value.detail.length > 0 &&
-        value.detail.length <= INPUT_LIMITS.promptQuestion
+        value.detail.length <= INPUT_LIMITS.promptQuestion &&
+        (value.running === undefined || typeof value.running === "boolean") &&
+        (value.activity === undefined || isBoundedString(value.activity, INPUT_LIMITS.identifier)) &&
+        (value.error === undefined || isBoundedString(value.error, CONVERSATION_TRACE_TEXT_LIMIT))
       );
     case "routine-thread-turn-completed":
       return (
@@ -361,7 +438,16 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
         isString(value.code) &&
         isString(value.message) &&
         (value.provider === undefined || isAgentProvider(value.provider)) &&
-        (value.model === undefined || isString(value.model))
+        (value.model === undefined || isString(value.model)) &&
+        (value.link === undefined || isString(value.link))
+      );
+    case "subagent-failed":
+      return (
+        isIdentifier(value.agentId) &&
+        isIdentifier(value.threadId) &&
+        isIdentifier(value.turnId) &&
+        isIdentifier(value.subagentId) &&
+        isBoundedString(value.title, CONVERSATION_SUBAGENT_TITLE_LIMIT)
       );
     case "usage-limit-reached":
       return (

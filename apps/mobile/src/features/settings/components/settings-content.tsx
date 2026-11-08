@@ -1,14 +1,32 @@
 import { ListGroup, Typography } from "heroui-native";
 import ChevronRight from "lucide-react-native/icons/chevron-right";
 import { Children, type PropsWithChildren, type ReactNode, useState } from "react";
-import { type LayoutChangeEvent, useWindowDimensions, View } from "react-native";
+import {
+  type AccessibilityActionEvent,
+  type AccessibilityActionInfo,
+  type LayoutChangeEvent,
+  type ScrollViewProps,
+  useWindowDimensions,
+  View,
+} from "react-native";
 import { useCSSVariable } from "uniwind";
 import { SheetScrollView } from "@/shared/components/sheet-scroll-view";
 import { haptics } from "@/shared/lib/haptics";
+import { MIRROR_IN_RTL } from "@/shared/lib/text-direction";
 
-export function SettingsContent({ children }: PropsWithChildren) {
+/**
+ * `androidNativeHeader`: the page keeps the native Android header, for a `Stack.SearchBar`.
+ * `onScroll`: for a long list that adds its rows as the reader scrolls.
+ */
+export function SettingsContent({
+  children,
+  androidNativeHeader,
+  onScroll,
+}: PropsWithChildren<{ androidNativeHeader?: boolean; onScroll?: ScrollViewProps["onScroll"] }>) {
   return (
     <SheetScrollView
+      androidNativeHeader={androidNativeHeader}
+      onScroll={onScroll}
       scrollEdgeEffect={false}
       contentContainerClassName="gap-7 px-4 pb-safe-offset-5 pt-5"
       keyboardDismissMode="interactive"
@@ -81,7 +99,10 @@ export function SettingsRow({
   disclosure = true,
   accessibilityLabel,
   checked,
+  multiple = false,
   expanded,
+  accessibilityActions,
+  onAccessibilityAction,
 }: PropsWithChildren<{
   supportingText?: string;
   onPress?: () => void;
@@ -93,8 +114,16 @@ export function SettingsRow({
   accessibilityLabel?: string;
   /** Makes the row one choice of a list. True when it is the selected choice. */
   checked?: boolean;
+  /** With `checked`: the row is one choice of a list where more than one can be on. */
+  multiple?: boolean;
   /** For a row that shows or hides the rows below it. */
   expanded?: boolean;
+  /**
+   * For a control in `trailing` of a row with `onPress`: VoiceOver and TalkBack read the row as one
+   * element, so the control needs an action of the row too.
+   */
+  accessibilityActions?: AccessibilityActionInfo[];
+  onAccessibilityAction?: (event: AccessibilityActionEvent) => void;
 }>) {
   const muted = String(useCSSVariable("--openbot-text-grouped-secondary"));
   const { fontScale } = useWindowDimensions();
@@ -134,14 +163,19 @@ export function SettingsRow({
         ? null
         : measures
           ? measuredTrailing
-          : trailing || (onPress && disclosure ? <ChevronRight size={18} color={muted} strokeWidth={1.5} /> : null)}
+          : trailing ||
+            (onPress && disclosure ? (
+              <ChevronRight size={18} color={muted} strokeWidth={1.5} style={MIRROR_IN_RTL} />
+            ) : null)}
     </>
   );
   return onPress ? (
     <ListGroup.Item
-      accessibilityRole={checked === undefined ? "button" : "radio"}
+      accessibilityRole={checked === undefined ? "button" : multiple ? "checkbox" : "radio"}
       accessibilityLabel={accessibilityLabel}
       accessibilityState={{ disabled, checked, expanded }}
+      accessibilityActions={accessibilityActions}
+      onAccessibilityAction={onAccessibilityAction}
       disabled={disabled}
       onPress={() => {
         void haptics.impact("soft");

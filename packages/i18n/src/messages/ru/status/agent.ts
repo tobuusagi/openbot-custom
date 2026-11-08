@@ -17,6 +17,7 @@ export const messages = {
   "status.agent.channelRoutineCreated": "Агент {agent} создал регулярную задачу {routine}. Запрос: {person}.",
   "status.agent.channelRoutineUpdated": "Агент {agent} изменил регулярную задачу {routine}. Запрос: {person}.",
   "status.agent.channelRoutineDeleted": "Агент {agent} удалил регулярную задачу {routine}. Запрос: {person}.",
+  "status.agent.channelTaskCancelled": "Агент {agent} отменил задачу «{task}» и её подзадачи. Запрос: {person}.",
   "status.agent.screenCaptureScreen": "Сделать снимок главного экрана и отправить изображение модели агента.",
   "status.agent.screenCaptureChannel":
     "Изображение появится в канале {channel}, и его увидит каждый участник этого сервера, который читает канал.",
@@ -24,6 +25,8 @@ export const messages = {
   "status.agent.screenCaptureWindow": "Сделать снимок окна {name} и отправить изображение модели агента.",
   "status.agent.screenCaptureRegion":
     "Сделать снимок области экрана {x}, {y}, {width} × {height} точек и отправить изображение модели агента.",
+  "status.agent.workflowDelete":
+    "Удалить рабочий процесс {title} вместе с его запусками и версиями. Его открытые шаги остановятся.",
   "status.agent.screenCaptureProgress": "Запрос снимка экрана…",
   "status.agent.screenCaptureReviewing": "Просмотр снимка экрана…",
   "status.agent.browserOpening": "Открытие веб-страницы…",
@@ -54,7 +57,21 @@ export const messages = {
   "status.agent.changesReviewing": "Просмотр внесённых изменений…",
   "status.agent.agentCoordinating": "Согласование с другим агентом…",
   "status.agent.agentResponseReviewing": "Просмотр ответа другого агента…",
+  "status.agent.commandRunningUnnamed": "Выполнение команды…",
   "status.agent.toolStepWorking": "Обработка следующего шага с инструментом…",
+  "status.agent.webSearching": "Поиск в интернете: «{query}»…",
+  "status.agent.urlFetching": "Открытие {host}…",
+  "status.agent.fileReading": "Чтение {name}…",
+  "status.agent.filesReading": "Чтение файлов…",
+  "status.agent.filesListing": "Просмотр {path}…",
+  "status.agent.filesLooking": "Просмотр файлов…",
+  "status.agent.textSearching": "Поиск «{query}»…",
+  "status.agent.filesSearchingText": "Поиск по файлам…",
+  "status.agent.folderSizesMeasuring": "Измерение размеров папок…",
+  "status.agent.diskSpaceChecking": "Проверка свободного места на диске…",
+  "status.agent.processesChecking": "Проверка запущенных процессов…",
+  "status.agent.gitChecking": "Проверка репозитория Git…",
+  "status.agent.commandRunning": "Запуск {program}…",
   "status.agent.memoryChanges": "Память: сохранено {saved}, обновлено {updated}, забыто {forgotten}.",
   "status.agent.memoryChangesWithConflicts":
     "Память: сохранено {saved}, обновлено {updated}, забыто {forgotten}, не изменено {notChanged}, потому что другая ветка изменила их раньше.",

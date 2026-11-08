@@ -1,6 +1,7 @@
 import type {
   AccountSession,
   AppInfo,
+  AvatarColor,
   AvatarImageInput,
   BillingDesktopApi,
   CentralAuthUser,
@@ -42,10 +43,12 @@ import { createSettingsUpdatesStore } from "@openbot/ui/features/settings/stores
 import { createEffect, createSignal, Show, untrack } from "solid-js";
 import { useI18n } from "../../i18n-context";
 import { ComputerUseSetup } from "../computer-use/ComputerUseSetup";
+import type { CodexLiveAccess } from "../speech/codex-live-access";
 import { licenseContactUs, trackLicenseEvent } from "./license-analytics";
 import { createNotificationLevelsStore } from "./notification-levels-store";
 import { createProfileActivityStore } from "./profile-activity-store";
 import { renderProfileShareImage } from "./profile-share-image";
+import { type AgentDockSettingsModel, SettingsAgentDockTab } from "./SettingsAgentDockTab";
 import { createSettingsAgentsSection } from "./SettingsAgentsSection";
 import { SettingsDynamicIslandTab } from "./SettingsDynamicIslandTab";
 import { SettingsGeneralTab } from "./SettingsGeneralTab";
@@ -67,6 +70,8 @@ export interface SettingsModalProps {
   chatWindow?: boolean;
   /** The built-in display's notch, null when it has none, or undefined before main answers. */
   builtInDisplayGeometry?: DynamicIslandGeometry | undefined;
+  /** The agents of the active server for the Agent dock tab. Without it, the tab does not show. */
+  agentDock?: AgentDockSettingsModel | undefined;
   /** The servers that the Notifications and Dynamic Island tabs list. */
   servers?: readonly ServerSummary[];
   /** Writes the notification level of a server. Resolves after `servers` shows it. */
@@ -84,6 +89,8 @@ export interface SettingsModalProps {
   account: CentralAuthUser;
   onUpdateAccountName: (name: string) => Promise<void>;
   onUpdateAccountAvatar: (image: AvatarImageInput | null) => Promise<void>;
+  /** Saves the chat color of the account. Members of each server of the user see it. */
+  onSetChatColor: (color: AvatarColor | null) => Promise<void>;
   onCreateMobileConnect?: () => Promise<MobileConnectTicket>;
   onCancelMobileConnect?: () => Promise<void>;
   onGetMobileConnectLink?: () => Promise<MobileConnectLink | null>;
@@ -106,6 +113,10 @@ export interface SettingsModalProps {
   hostedServersApi?: HostedServersDesktopApi | undefined;
   /** Opens the add server dialog from the Hosted servers tab. */
   onAddHostedServer?: (() => void) | undefined;
+  /** Whether Codex on this computer can open live voice. Undefined while it is not known. */
+  codexLiveAccess?: CodexLiveAccess | undefined;
+  /** Opens the Providers section of this computer, where Codex signs in for live voice. */
+  onConnectCodex?: (() => void) | undefined;
   /** A hosted server that the server menu asked to delete. Each nonce opens its confirmation once. */
   hostedServerDeleteRequest?: { serverId: string; nonce: number } | null;
   onTestNotification?: () => void | Promise<void>;
@@ -182,7 +193,14 @@ export function SettingsModal(props: SettingsModalProps) {
       agents.showList();
     },
   );
-  const visibleNavItems = () => navItems.filter((item) => settingsTabShown(item.value, dynamicIslandShown()));
+  const agentDockShown = () =>
+    props.appInfo?.platform === "darwin" && props.chatWindow !== true && props.agentDock !== undefined;
+  const visibleNavItems = () =>
+    navItems.filter(
+      (item) =>
+        settingsTabShown(item.value, { platform: props.appInfo?.platform, chatWindow: props.chatWindow === true }) &&
+        (item.value !== "agent-dock" || agentDockShown()),
+    );
 
   const title = () => i18n.t(navItem(activeTab()).titleKey);
   const agentsCrumb = () => (activeTab() === "agents" ? agents.crumb() : null);
@@ -199,6 +217,7 @@ export function SettingsModal(props: SettingsModalProps) {
         value === "notifications" ||
         value === "voice" ||
         (value === "dynamic-island" && dynamicIslandShown()) ||
+        (value === "agent-dock" && agentDockShown()) ||
         value === "computer-use" ||
         value === "profile" ||
         value === "billing" ||
@@ -282,6 +301,8 @@ export function SettingsModal(props: SettingsModalProps) {
             onUpdateSetting={updateSetting}
             onUpdateSettings={updateSettings}
             selectMount={modalElement}
+            chatColor={props.account.chatColor ?? null}
+            onSetChatColor={props.onSetChatColor}
           />
         </Tabs.Content>
 
@@ -315,7 +336,12 @@ export function SettingsModal(props: SettingsModalProps) {
         </Tabs.Content>
 
         <Tabs.Content value="voice" class="settings-modal-tab-panel" data-tab="voice">
-          <SettingsVoiceTab store={voice} selectMount={modalElement} />
+          <SettingsVoiceTab
+            store={voice}
+            selectMount={modalElement}
+            codexLiveAccess={props.codexLiveAccess}
+            onConnectCodex={props.onConnectCodex}
+          />
         </Tabs.Content>
 
         <Show when={dynamicIslandShown()}>
@@ -330,6 +356,14 @@ export function SettingsModal(props: SettingsModalProps) {
               onUpdateSettings={updateSettings}
             />
           </Tabs.Content>
+        </Show>
+
+        <Show when={agentDockShown() && props.agentDock}>
+          {(model) => (
+            <Tabs.Content value="agent-dock" class="settings-modal-tab-panel" data-tab="agent-dock">
+              <SettingsAgentDockTab model={model()} selectMount={modalElement} />
+            </Tabs.Content>
+          )}
         </Show>
 
         <Tabs.Content value="computer-use" class="settings-modal-tab-panel" data-tab="computer-use">

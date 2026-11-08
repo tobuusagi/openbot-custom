@@ -5,9 +5,11 @@ import type {
   AgentInstructionsChange,
   AgentModelId,
   AgentReasoningEffort,
+  AgentTask,
   AttachmentSummary,
   AvatarColor,
   AvatarHue,
+  BrowserTab,
   ChannelRoutingConversationEvent,
   ClientAgentSummary,
   ConversationMemoryChange,
@@ -79,6 +81,8 @@ export interface AgentMessageMarkerModel {
   replyToMessageId: string | null;
   /** The sender asked for no answer, so the marker names it as information rather than a request. */
   expectsReply: boolean;
+  /** The sender's side thread that sent an incoming message. The sender link opens it. */
+  senderTaskId?: string;
   /** Set when the chat has the text of the message: whether the text shows under the marker. */
   expanded?: boolean;
 }
@@ -228,6 +232,8 @@ export interface AgentMessage {
   itemIds?: string[];
   /** When the host wrote each of `items`, to place them between a turn's progress lines. */
   itemCreatedAt?: string[];
+  /** Whether the host still writes each of `items`. */
+  itemStreaming?: boolean[];
   plan?: AgentMessagePlan | undefined;
   /** The subagents that the agent started in this turn, on a `subagents` message. */
   subagents?: ConversationSubagent[] | undefined;
@@ -291,6 +297,8 @@ export interface AgentProfile {
   avatarHue: AvatarHue | null;
   /** The exact colour, which wins over `avatarHue`. Absent on a host without `agent-colors-v1`. */
   avatarColor?: AvatarColor | null;
+  /** The tint of the agent's chat bubbles. Absent for no tint, and on a host without `chat-colors-v1`. */
+  chatColor?: AvatarColor | undefined;
   avatarUrl: string | null;
   marketplaceSource?: NonNullable<ClientAgentSummary["marketplaceSource"]>;
   updatedAt?: string | null;
@@ -315,3 +323,9 @@ export type ComposerMcpServer = Pick<
   McpServerConfig,
   "id" | "name" | "enabled" | "transport" | "command" | "args" | "url"
 >;
+
+/** A browser tab of the agent that the composer can tag. */
+export type ComposerBrowserTab = Pick<BrowserTab, "id" | "title" | "url">;
+
+/** A side thread of the agent that the composer can tag. Its id is the task id. */
+export type ComposerThread = Pick<AgentTask, "id" | "title" | "state" | "outcome" | "progress" | "error">;

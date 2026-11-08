@@ -39,7 +39,10 @@ export function AddAgentScreen() {
   const [finished, setFinished] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const valid = name.trim().length > 0 && !instructionsTooLong(description);
+  // The name error shows after the first Create, not while the person still fills in the form.
+  const [triedCreate, setTriedCreate] = useState(false);
+  const nameMissing = name.trim().length === 0;
+  const valid = !nameMissing && !instructionsTooLong(description);
 
   const dirty = Boolean(
     name.trim() ||
@@ -70,6 +73,11 @@ export function AddAgentScreen() {
   }, [finished]);
 
   async function submit(): Promise<void> {
+    if (nameMissing) {
+      setTriedCreate(true);
+      void haptics.notification("error");
+      return;
+    }
     if (!valid || pending.current || finished) return;
     pending.current = true;
     setSaving(true);
@@ -96,7 +104,6 @@ export function AddAgentScreen() {
 
   return (
     <SheetScrollView
-      clearHeader
       className="bg-sheet"
       contentContainerClassName="gap-5 px-5 pb-safe-offset-5 pt-5"
       contentInsetAdjustmentBehavior="automatic"
@@ -131,7 +138,8 @@ export function AddAgentScreen() {
       )}
       <SheetSaveAction
         dirty={dirty}
-        canSave={valid && !finished}
+        // Create stays on without a name, so that it can show why the agent needs one.
+        canSave={!instructionsTooLong(description) && !finished}
         pending={saving}
         label={t("mobile.agent.add.create")}
         pendingLabel={t("mobile.agent.add.creating")}
@@ -152,6 +160,7 @@ export function AddAgentScreen() {
             maxLength={INPUT_LIMITS.agentName}
             placeholder={t("mobile.agent.add.namePlaceholder")}
             value={name}
+            error={triedCreate && nameMissing ? t("mobile.agent.add.nameRequired") : undefined}
             onChangeText={setName}
           />
         }
@@ -178,11 +187,6 @@ export function AddAgentScreen() {
         onChange={(value) => setRuntime((current) => ({ ...current, ...value }))}
       />
 
-      {dirty && !name.trim() ? (
-        <Typography.Paragraph accessibilityRole="alert" className="text-danger-text">
-          {t("mobile.agent.add.nameRequired")}
-        </Typography.Paragraph>
-      ) : null}
       {error ? (
         <Typography.Paragraph accessibilityRole="alert" align="center" className="text-danger-text">
           {error}

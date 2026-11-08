@@ -198,7 +198,7 @@
     max-width: 132px;
   }
 
-  .web-app-frame[data-web-mobile-pane="conversation"] .conversation-panel:has(.settings-panel) .settings-panel {
+  .web-app-frame[data-web-mobile-pane="conversation"] .conversation-panel[data-settings-panel] .settings-panel {
     width: 100%;
   }
 
@@ -224,7 +224,7 @@
 
   .web-app-frame[data-web-mobile-pane="conversation"]
     .side-panel-docked
-    > :is(.conversation-scroll, .composer-wrap, .unread-messages-banner, .chat-search) {
+    > :is(.conversation-scroll, .composer-wrap, .unread-messages-banner, .chat-search, .subagents-dock) {
     visibility: hidden;
   }
 

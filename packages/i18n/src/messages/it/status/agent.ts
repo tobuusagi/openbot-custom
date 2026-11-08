@@ -17,6 +17,8 @@ export const messages = {
   "status.agent.channelRoutineCreated": "{agent} ha creato la routine {routine}. Lo ha chiesto {person}.",
   "status.agent.channelRoutineUpdated": "{agent} ha modificato la routine {routine}. Lo ha chiesto {person}.",
   "status.agent.channelRoutineDeleted": "{agent} ha eliminato la routine {routine}. Lo ha chiesto {person}.",
+  "status.agent.channelTaskCancelled":
+    "{agent} ha annullato l’attività «{task}» e le sue sottoattività. Lo ha chiesto {person}.",
   "status.agent.screenCaptureScreen":
     "Acquisizione dello schermo principale e invio dell'immagine al modello dell'agente.",
   "status.agent.screenCaptureChannel":
@@ -27,6 +29,8 @@ export const messages = {
     "Acquisizione della finestra {name} e invio dell'immagine al modello dell'agente.",
   "status.agent.screenCaptureRegion":
     "Acquisizione dell'area dello schermo a {x}, {y}, {width} × {height} punti e invio dell'immagine al modello dell'agente.",
+  "status.agent.workflowDelete":
+    "Elimina il flusso di lavoro {title} con le sue esecuzioni e versioni. I suoi passaggi aperti si fermano.",
   "status.agent.screenCaptureProgress": "Richiesta di acquisizione dello schermo…",
   "status.agent.screenCaptureReviewing": "Analisi dell'acquisizione dello schermo…",
   "status.agent.browserOpening": "Apertura di una pagina web…",
@@ -56,7 +60,21 @@ export const messages = {
   "status.agent.changesReviewing": "Analisi delle modifiche effettuate…",
   "status.agent.agentCoordinating": "Coordinamento con un altro agente…",
   "status.agent.agentResponseReviewing": "Analisi della risposta dell’altro agente…",
+  "status.agent.commandRunningUnnamed": "Esecuzione di un comando…",
   "status.agent.toolStepWorking": "Elaborazione del prossimo passaggio assistito dallo strumento…",
+  "status.agent.webSearching": "Ricerca sul web di «{query}»…",
+  "status.agent.urlFetching": "Apertura di {host}…",
+  "status.agent.fileReading": "Lettura di {name}…",
+  "status.agent.filesReading": "Lettura dei file…",
+  "status.agent.filesListing": "Esame di {path}…",
+  "status.agent.filesLooking": "Esame dei file…",
+  "status.agent.textSearching": "Ricerca di «{query}»…",
+  "status.agent.filesSearchingText": "Ricerca nei file…",
+  "status.agent.folderSizesMeasuring": "Misurazione delle dimensioni delle cartelle…",
+  "status.agent.diskSpaceChecking": "Controllo dello spazio libero su disco…",
+  "status.agent.processesChecking": "Controllo dei processi in esecuzione…",
+  "status.agent.gitChecking": "Controllo del repository Git…",
+  "status.agent.commandRunning": "Esecuzione di {program}…",
   "status.agent.memoryChanges": "Memorie: {saved} salvate, {updated} aggiornate, {forgotten} dimenticate.",
   "status.agent.memoryChangesWithConflicts":
     "Memorie: {saved} salvate, {updated} aggiornate, {forgotten} dimenticate, {notChanged} non modificate perché un altro thread le ha modificate prima.",

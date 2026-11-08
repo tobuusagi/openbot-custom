@@ -1,13 +1,16 @@
+import { isKnownAgentProvider } from "@openbot/contracts/agent-providers";
 import type {
   AgentProviderId,
   AgentStatus,
   ExternalDestination,
+  HostDefaultProvider,
   ProviderAdminDesktopApi,
   ServerSummary,
 } from "@openbot/contracts/ipc";
 import { decodeRegistryEntries, decodeRegistryInstallResult, decodeRegistryOperations } from "@openbot/contracts/ipc";
 import { ACP_REGISTRY_ROUTES } from "@openbot/contracts/team-protocol/acp-registry-v1";
 import { CLAUDE_API_KEY_CAPABILITY } from "@openbot/contracts/team-protocol/claude-api-key-v1";
+import { CODEX_API_KEY_CAPABILITY } from "@openbot/contracts/team-protocol/codex-api-key-v1";
 import {
   CUSTOM_PROVIDER_HARNESS_CAPABILITY,
   CUSTOM_PROVIDER_HARNESS_ROUTES,
@@ -42,8 +45,10 @@ import {
   clearProviderApiKey,
   deleteCustomProvider,
   downloadProviderRuntime,
+  getHostProviderDefault,
   getProviderApiKeyState,
   getProviderRuntimes,
+  type HostProviderDefault,
   listCustomProviders,
   listProviderAccounts,
   type ProviderCodeLoginRoutes,
@@ -56,6 +61,7 @@ import {
   renameProviderAccount,
   resetProviderUsage,
   saveCustomProvider,
+  setHostProviderDefault,
   setProviderApiKey,
   signOutProvider,
   startProviderAccountSignIn,
@@ -105,6 +111,13 @@ export function openWebDestination(destination: ExternalDestination): Promise<vo
   if (!url) return Promise.reject(new Error(currentText().t("webClient.error.linkDesktopOnly")));
   window.open(url, "_blank", "noopener");
   return Promise.resolve();
+}
+
+/** A provider that this build does not know reads as none, as main reads it on the desktop. */
+function knownHostDefault({ provider, model }: HostProviderDefault): HostDefaultProvider {
+  return provider !== null && isKnownAgentProvider(provider)
+    ? { preferredProvider: provider, preferredModel: model }
+    : { preferredProvider: null, preferredModel: null };
 }
 
 /**
@@ -214,6 +227,18 @@ function webProviderAdmin(
       runTeamEffect(renameProviderAccount(request(serverId), input).pipe(Effect.mapError((error) => error.cause))),
     removeAccount: async (input, serverId) =>
       runTeamEffect(removeProviderAccount(request(serverId), input).pipe(Effect.mapError((error) => error.cause))),
+    hostDefaultProvider: async (serverId) =>
+      knownHostDefault(
+        await runTeamEffect(getHostProviderDefault(request(serverId)).pipe(Effect.mapError((error) => error.cause))),
+      ),
+    setHostDefaultProvider: async ({ preferredProvider, preferredModel }, serverId) =>
+      knownHostDefault(
+        await runTeamEffect(
+          setHostProviderDefault(request(serverId), preferredProvider, preferredModel).pipe(
+            Effect.mapError((error) => error.cause),
+          ),
+        ),
+      ),
     usageResets: async (provider, serverId) =>
       runTeamEffect(providerUsageResets(request(serverId), provider).pipe(Effect.mapError((error) => error.cause))),
     resetUsage: async (input, serverId) =>
@@ -305,12 +330,14 @@ export function createWebProviderSettings(options: WebProviderSettingsOptions) {
   });
   // A boolean, so that a server-list update that keeps the capability does not rebuild the keys.
   const readsClaudeKey = createMemo(() => serverSupportsCapability(options.server(), CLAUDE_API_KEY_CAPABILITY));
+  const readsCodexKey = createMemo(() => serverSupportsCapability(options.server(), CODEX_API_KEY_CAPABILITY));
   const providerKeys = createMemo(() => {
     const id = serverId();
     return id
       ? {
           ...hostProviderKeyApi(() => admin, id, openWebDestination),
           readsClaudeKey: readsClaudeKey(),
+          readsCodexKey: readsCodexKey(),
         }
       : undefined;
   });
@@ -523,6 +550,8 @@ export function createWebProviderSettings(options: WebProviderSettingsOptions) {
   };
   return {
     settings: (): HostProviderSettings | undefined => (serverId() ? settings : undefined),
+    /** The host's Default provider, which the Providers section reads beside `settings`. */
+    hostDefaultProviderCalls: admin,
     /** The status with the host's accounts, for the model picker and the dock. */
     status,
     hostAccounts,

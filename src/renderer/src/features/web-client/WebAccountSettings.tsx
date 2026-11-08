@@ -1,6 +1,6 @@
 import { type AppAppearance, isAppAppearance } from "@openbot/contracts/app-appearance";
 import type { AppLanguage } from "@openbot/contracts/app-language";
-import type { CentralAuthUser } from "@openbot/contracts/ipc";
+import type { AvatarColor, CentralAuthUser } from "@openbot/contracts/ipc";
 import type { AppTextKey } from "@openbot/i18n";
 import {
   Button,
@@ -15,10 +15,12 @@ import {
   SlidersHorizontal,
   SwitchField,
   Tabs,
+  toast,
   UserRound,
 } from "@openbot/ui";
 import { AppearanceSelect } from "@openbot/ui/features/settings/AppearanceSelect";
 import { ACTION_SOUND_CHOICES, TASK_SOUND_CHOICES } from "@openbot/ui/features/settings/app-settings";
+import { OwnChatColorTrigger } from "@openbot/ui/features/settings/ChatColorSetting";
 import { LanguageSelect } from "@openbot/ui/features/settings/LanguageSelect";
 import { NotificationMatrix, NotificationScopeTitle } from "@openbot/ui/features/settings/NotificationMatrix";
 import { SendShortcutSelect } from "@openbot/ui/features/settings/SendShortcutSelect";
@@ -30,6 +32,7 @@ import { useText } from "@openbot/ui/text";
 import { createEffect, createSignal, onCleanup } from "solid-js";
 import { readActionSoundChoice, setActionSoundChoice } from "../../action-sounds";
 import { setShowAgentSteps, useShowAgentSteps } from "../../agent-steps-preference";
+import { setCompactMessageActions, useCompactMessageActions } from "../../compact-message-actions-preference";
 import { playSoundChoice, readTaskSound, setTaskSound } from "../../completion-sound";
 import { webReportsEnabled } from "../../error-reports";
 import { currentDevicePlatform, setSendShortcutMode, useSendShortcutMode } from "../../send-shortcut-preference";
@@ -83,11 +86,16 @@ export interface WebAccountSettingsProps {
  */
 export default function WebAccountSettings(props: WebAccountSettingsProps) {
   const [reportsEnabled, setReportsEnabled] = createSignal(webReportsEnabled());
-  const { t } = useText();
+  const { t, errorMessage } = useText();
+  const saveChatColor = (color: AvatarColor | null) =>
+    void props.calls
+      .setChatColor(color)
+      .catch((error: unknown) => toast.error(errorMessage(error, t("settings.preferences.saveFailed")), { error }));
   const [activeTab, setActiveTab] = createSignal<WebAccountSettingsTab>("profile");
   const [taskSound, setTaskSoundChoice] = createSignal(readTaskSound());
   const sendShortcutMode = useSendShortcutMode();
   const showAgentSteps = useShowAgentSteps();
+  const compactMessageActions = useCompactMessageActions();
   // Playback reads the stored value on each event, so the menus follow a change from another tab.
   const [soundChoice, setSoundChoice] = createSignal(readActionSoundChoice());
   const readSoundSettings = () => {
@@ -209,6 +217,12 @@ export default function WebAccountSettings(props: WebAccountSettingsProps) {
                 label={t("settings.showAgentSteps.title")}
                 description={t("settings.showAgentSteps.description")}
               />
+              <SwitchField
+                checked={compactMessageActions()}
+                onChange={(checked) => setCompactMessageActions(checked)}
+                label={t("settings.compactMessageActions.title")}
+                description={t("settings.compactMessageActions.description")}
+              />
               <Item class="settings-modal-row">
                 <ItemContent>
                   <ItemTitle>{t("settings.language.title")}</ItemTitle>
@@ -236,6 +250,15 @@ export default function WebAccountSettings(props: WebAccountSettingsProps) {
                     }}
                     {...(modalElement ? { mount: modalElement } : {})}
                   />
+                </ItemActions>
+              </Item>
+              <Item class="settings-modal-row">
+                <ItemContent>
+                  <ItemTitle>{t("settings.chatColor.title")}</ItemTitle>
+                  <ItemDescription>{t("settings.chatColor.description")}</ItemDescription>
+                </ItemContent>
+                <ItemActions>
+                  <OwnChatColorTrigger value={props.account.chatColor ?? null} onChange={saveChatColor} />
                 </ItemActions>
               </Item>
             </ItemGroup>

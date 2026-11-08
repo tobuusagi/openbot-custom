@@ -15,7 +15,10 @@ import {
   type HostStatus,
   type InvitePreview,
   type InviteSummary,
+  isAvatarColor,
+  isRemoteControlAccess,
   REMOTE_DESKTOP_ERROR_CODES,
+  type RemoteControlPolicy,
   type RemoteDesktopConnectResult,
   type RemoteDesktopDisplay,
   type RemoteDesktopSession,
@@ -110,6 +113,12 @@ export function decodeHostStatus(value: unknown): HostStatus {
     remoteDesktopMaxSessions: requiredNumber(status, "remoteDesktopMaxSessions"),
     message: nullableString(status, "message"),
   };
+}
+
+export function decodeRemoteControlPolicy(value: unknown): RemoteControlPolicy {
+  const policy = decodeRecord(value, "remote control policy");
+  if (!isRemoteControlAccess(policy.access)) throw new Error("Invalid remote control access.");
+  return { access: policy.access, askOnHost: requiredBoolean(policy, "askOnHost") };
 }
 
 export function decodeTeamMember(value: unknown): TeamMemberSummary {
@@ -379,10 +388,11 @@ function optionalReadState(conversation: DynamicRecord): { readState?: DirectCon
 }
 
 function teamMember(member: DynamicRecord): TeamMemberSummary {
-  const { avatarUrl } = member;
+  const { avatarUrl, chatColor } = member;
   if (avatarUrl !== undefined && avatarUrl !== null && !isString(avatarUrl)) {
     throw new Error("Invalid avatarUrl.");
   }
+  if (chatColor !== undefined && !isAvatarColor(chatColor)) throw new Error("Invalid chatColor.");
   return {
     id: requiredString(member, "id"),
     username: requiredString(member, "username"),
@@ -392,6 +402,7 @@ function teamMember(member: DynamicRecord): TeamMemberSummary {
     role: teamRole(member.role),
     createdAt: requiredString(member, "createdAt"),
     disabled: requiredBoolean(member, "disabled"),
+    ...(chatColor === undefined ? {} : { chatColor }),
   };
 }
 

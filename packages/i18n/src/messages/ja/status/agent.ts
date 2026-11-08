@@ -17,6 +17,8 @@ export const messages = {
   "status.agent.channelRoutineCreated": "{agent} がルーティン {routine} を作成しました。{person} の依頼です。",
   "status.agent.channelRoutineUpdated": "{agent} がルーティン {routine} を変更しました。{person} の依頼です。",
   "status.agent.channelRoutineDeleted": "{agent} がルーティン {routine} を削除しました。{person} の依頼です。",
+  "status.agent.channelTaskCancelled":
+    "{agent} がタスク「{task}」とそのサブタスクをキャンセルしました。{person} の依頼です。",
   "status.agent.screenCaptureScreen": "メイン画面をキャプチャし、その画像をエージェントのモデルに送信します。",
   "status.agent.screenCaptureChannel":
     "画像はチャンネル {channel} に表示され、このサーバーでチャンネルを読むメンバー全員が見ることができます。",
@@ -25,6 +27,8 @@ export const messages = {
   "status.agent.screenCaptureWindow": "ウィンドウ {name} をキャプチャし、その画像をエージェントのモデルに送信します。",
   "status.agent.screenCaptureRegion":
     "画面の {x}, {y}, {width} × {height} ポイントの領域をキャプチャし、その画像をエージェントのモデルに送信します。",
+  "status.agent.workflowDelete":
+    "ワークフロー {title} を実行履歴とバージョンごと削除します。実行中のステップは停止します。",
   "status.agent.screenCaptureProgress": "画面のキャプチャを要求しています…",
   "status.agent.screenCaptureReviewing": "画面のキャプチャを確認しています…",
   "status.agent.browserOpening": "Web ページを開いています…",
@@ -50,7 +54,21 @@ export const messages = {
   "status.agent.changesReviewing": "行った変更を確認しています…",
   "status.agent.agentCoordinating": "別のエージェントと調整しています…",
   "status.agent.agentResponseReviewing": "別のエージェントの応答を確認しています…",
+  "status.agent.commandRunningUnnamed": "コマンドを実行しています…",
   "status.agent.toolStepWorking": "次のツールステップを処理しています…",
+  "status.agent.webSearching": "Web で「{query}」を検索しています…",
+  "status.agent.urlFetching": "{host} を開いています…",
+  "status.agent.fileReading": "{name} を読んでいます…",
+  "status.agent.filesReading": "ファイルを読んでいます…",
+  "status.agent.filesListing": "{path} を確認しています…",
+  "status.agent.filesLooking": "ファイルを確認しています…",
+  "status.agent.textSearching": "「{query}」を検索しています…",
+  "status.agent.filesSearchingText": "ファイル内を検索しています…",
+  "status.agent.folderSizesMeasuring": "フォルダーのサイズを測っています…",
+  "status.agent.diskSpaceChecking": "ディスクの空き容量を確認しています…",
+  "status.agent.processesChecking": "実行中のプロセスを確認しています…",
+  "status.agent.gitChecking": "Git リポジトリを確認しています…",
+  "status.agent.commandRunning": "{program} を実行しています…",
   "status.agent.memoryChanges": "メモリー: {saved} 件保存、{updated} 件更新、{forgotten} 件忘却。",
   "status.agent.memoryChangesWithConflicts":
     "メモリー: {saved} 件保存、{updated} 件更新、{forgotten} 件忘却、{notChanged} 件は別のスレッドが先に変更したため未変更。",

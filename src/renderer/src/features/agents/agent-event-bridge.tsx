@@ -8,7 +8,7 @@ import { currentText } from "@openbot/ui/text";
 import { classifyUserError } from "@openbot/user-errors";
 import { flush, onSettled } from "solid-js";
 import { withoutAgent } from "../../app-message-projection";
-import { playCompletionSoundForAgentEvent } from "../../completion-sound";
+import { playCompletionSoundForAgentEvent, prepareCompletionSound } from "../../completion-sound";
 import { usePlatform } from "../../platform";
 import { useProviders } from "../../providers";
 import { queueAfterTurnCompleted } from "../../queue-reconciliation";
@@ -22,7 +22,10 @@ import { useConversation } from "../conversation/conversation-context";
 import { useConversationController } from "../conversation/conversation-controller-context";
 import { agentConversationKey, composerDraftKey, promptRequestKey } from "../conversation/conversation-keys";
 import { latestIncomingConversationMessage } from "../conversation/conversation-read-state";
+import { noteSocialFollowReplyCompleted } from "../conversation/social-follow-prompt";
 import { appendTurnStepLine } from "../conversation/turn-step-lines";
+import { serverCanManageMcp } from "../servers/server-capabilities";
+import { useServerSettings } from "../servers/server-settings";
 import { useServers } from "../servers/servers-context";
 import { useSidebar } from "../sidebar/sidebar-context";
 import { readDictatedReplies } from "../speech/speech-replies";
@@ -57,6 +60,7 @@ export function AgentEventBridge() {
   const channels = useChannels();
   const platform = usePlatform();
   const { activeServer, activeServerId } = useServers();
+  const { openServerSettings } = useServerSettings();
   const { applyAccountUsage } = useAuth();
   const { applyAgentStatus, refreshAgentProviders } = useProviders();
   const { agentList, setModelOptions, explicitlyOpenedAgentChatId, applyStoredAgents, applyUserHiddenAgents } =
@@ -71,8 +75,10 @@ export function AgentEventBridge() {
     agentChatsToRetryRead,
     scheduleConversation,
     isAgentChatReadable,
+    isAgentChatOpen,
     autoMarkAgentMessageRead,
     applyConversationDelta,
+    flushConversationDeltas,
     applyConversationPage,
     markReplyCompleted,
     clearRecentReply,
@@ -83,6 +89,7 @@ export function AgentEventBridge() {
     setTurnStepLines,
     setFailedTurns,
     setUsageLimits,
+    setSubagentTurns,
     setUsageLimitedModels,
     setWaitedUsageLimits,
     setContextStates,
@@ -116,6 +123,15 @@ export function AgentEventBridge() {
   let modelRefresh = 0;
 
   function handleAgentEvent(event: AgentEvent) {
+    // Streamed text waits for the next frame. Other events apply it first, so each one sees the text
+    // that came before it. Progress and side-thread text do not read the conversations.
+    if (
+      event.type !== "conversation-delta" &&
+      event.type !== "turn-progress" &&
+      event.type !== "agent-task-conversation-delta"
+    ) {
+      flushConversationDeltas();
+    }
     switch (event.type) {
       case "status":
         applyAgentStatus(event.status);
@@ -184,9 +200,16 @@ export function AgentEventBridge() {
       case "turn-progress":
         setTurnProgress((current) => ({
           ...current,
-          [event.agentId]: { turnId: event.turnId, detail: cleanAgentMessageText(event.detail) },
+          [event.agentId]: {
+            turnId: event.turnId,
+            detail: cleanAgentMessageText(event.detail),
+            ...(event.running ? { running: true } : {}),
+            ...(event.activity ? { activity: event.activity } : {}),
+          },
         }));
-        setTurnStepLines((current) => appendTurnStepLine(current, event.turnId, cleanAgentMessageText(event.detail)));
+        setTurnStepLines((current) =>
+          appendTurnStepLine(current, event.turnId, cleanAgentMessageText(event.detail), event.error),
+        );
         return;
       case "queue-changed":
         queueSnapshotRequests.set(event.snapshot.agentId, (queueSnapshotRequests.get(event.snapshot.agentId) ?? 0) + 1);
@@ -224,6 +247,7 @@ export function AgentEventBridge() {
           ...current,
           [event.agentId]: event.turnId,
         }));
+        if (soundLevel() === "all" && !platform.chatWindow) prepareCompletionSound();
         return;
       case "turn-completed":
         completedTurnByAgent.set(event.agentId, event.turnId);
@@ -270,6 +294,8 @@ export function AgentEventBridge() {
         if (event.status === "completed") {
           markReplyCompleted(event.agentId);
           if (soundLevel() === "all" && !platform.chatWindow) playCompletionSoundForAgentEvent(event, agentList());
+          // A finished reply is a good moment to ask for a post. A chat window has no toasts.
+          if (!platform.chatWindow && !event.quiet && !event.continues) noteSocialFollowReplyCompleted();
         }
         return;
       case "routine-thread-turn-completed":
@@ -315,6 +341,21 @@ export function AgentEventBridge() {
           event.approval,
         ]);
         return;
+      case "subagent-failed": {
+        // The chat shows the failure in the subagent card. The toast tells the user who looks at
+        // another chat; the desktop notification tells the user who is not in the app. A failure does
+        // not need the user, so it shows only at the "all" level, as the completion sound does.
+        const agent = agentList().find((candidate) => candidate.id === event.agentId);
+        if (!agent?.notifications || soundLevel() !== "all" || platform.chatWindow) return;
+        if (!platform.appFocused() || isAgentChatOpen(event.agentId)) return;
+        const { t } = currentText();
+        toast.error(agent.name, {
+          description: event.title
+            ? t("notification.subagentFailedFor", { task: event.title })
+            : t("notification.subagentFailed"),
+        });
+        return;
+      }
       case "runtime-snapshot":
         void channels.refresh();
         applyAgentRuntimeSnapshot(event.snapshot);
@@ -358,8 +399,10 @@ export function AgentEventBridge() {
           const provider = event.provider ? providerDisplayName(event.provider) : null;
           const run =
             provider && event.model ? currentText().t("agent.error.run", { provider, model: event.model }) : provider;
+          // Google asks the user to verify the account in a browser before Gemini answers (#2419).
+          const link = event.link;
           setConversationErrorRuns((current) => {
-            if (run) return { ...current, [key]: { message, run } };
+            if (run || link) return { ...current, [key]: { message, run, ...(link ? { link } : {}) } };
             if (!(key in current)) return current;
             const { [key]: _replaced, ...next } = current;
             return next;
@@ -370,13 +413,22 @@ export function AgentEventBridge() {
         // one stays global. The message is already redacted in the main process.
         const toastKey = readableAgentError(event.message);
         if (claimErrorToast(toastKey)) {
-          // An MCP server left out at hand-off is not the provider failing, and calling it a
-          // provider error sends the user to the wrong settings page.
+          // An MCP server that a provider was not given or could not use is not the provider failing,
+          // and calling it a provider error sends the user to the wrong settings page. The button
+          // shows only to a user who can see the server's MCP settings.
           const { t } = currentText();
-          const title =
-            event.code === "mcp_server_not_started" ? t("agent.error.mcpNotStarted") : providerErrorTitle(event.code);
-          toast.error(title, {
+          const mcp = event.code === "mcp_server_not_started";
+          const serverId = activeServerId();
+          toast.error(mcp ? t("agent.error.mcpNotStarted") : providerErrorTitle(event.code), {
             ...{ description: toastKey },
+            ...(mcp && serverCanManageMcp(activeServer())
+              ? {
+                  action: {
+                    label: t("agent.error.openMcpSettings"),
+                    onClick: () => openServerSettings(serverId, null, "mcp"),
+                  },
+                }
+              : {}),
             report: { operation: "provider", source: "provider", cause_code: classifyFailure(event.message) },
           });
         }
@@ -406,6 +458,7 @@ export function AgentEventBridge() {
       Object.fromEntries(Object.entries(current).filter(([agentId]) => agentId in usageLimits)),
     );
     setUsageLimitedModels(snapshot.usageLimitedModels ?? []);
+    setSubagentTurns(Object.fromEntries((snapshot.subagentTurns ?? []).map((turn) => [turn.agentId, turn.turnId])));
     setQueues((current) => reconcileQueuesWithRuntimeWork(current, snapshot.work, runtimeTurns));
     setPendingPrompts((current) => reconcileAttentionPrompts(current, snapshot, submittedPromptRequests()));
     setApprovals((current) => reconcileAttentionApprovals(current, snapshot));
@@ -413,6 +466,7 @@ export function AgentEventBridge() {
   }
 
   onSettled(() => {
+    if (soundLevel() === "all" && !platform.chatWindow) prepareCompletionSound();
     const unsubscribe = agentsPort().agent.onEvent((event) => {
       if (event.type === "channels-changed") {
         void channels.refresh();

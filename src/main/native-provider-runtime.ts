@@ -9,7 +9,9 @@ import type { ProviderRuntimeDescriptor, ProviderStageContext } from "./provider
 import { ProviderRuntimeFailure, runtimeIO } from "./provider-runtime-effects";
 
 /** Native provider archives share staging and verification, not their wire protocols. */
-export function nativeProviderRuntime(runtime: "pi" | "muse" | "devin"): ProviderRuntimeDescriptor {
+export function nativeProviderRuntime(
+  runtime: "pi" | "muse" | "devin" | "copilot" | "mistral",
+): ProviderRuntimeDescriptor {
   return {
     runtime,
     spec: (target, lock) => {
@@ -33,6 +35,31 @@ export function nativeProviderRuntime(runtime: "pi" | "muse" | "devin"): Provide
       if (runtime === "muse") {
         yield* runtimeIO(() => mkdir(join(staging, "bin"), { recursive: true }));
         yield* runtimeIO(() => copyFile(downloadedPath, join(staging, "bin", spec.executableName)));
+      } else if (runtime === "copilot") {
+        // GitHub Copilot CLI 1.0.105 archives hold only the program, `copilot` or `copilot.exe`.
+        const bin = join(staging, "bin");
+        yield* runtimeIO(() => mkdir(bin, { recursive: true }));
+        if (spec.target === "win32-x64") {
+          yield* extractZipTree(downloadedPath, bin, [spec.executableName], message);
+        } else {
+          yield* assertSafeArchive(downloadedPath, [spec.executableName], message);
+          yield* extractArchive(downloadedPath, bin);
+          yield* rejectNonRegularFiles(bin);
+        }
+      } else if (runtime === "mistral") {
+        // Mistral Vibe 3.1.0 archives are a PyInstaller folder build: `vibe-acp` and the `_internal`
+        // folder that it loads Python from, so both go to `bin/`. The macOS Python framework keeps its
+        // links, as Kimi's does: copies of the files would break its code signature.
+        const bin = join(staging, "bin");
+        yield* runtimeIO(() => mkdir(bin, { recursive: true }));
+        const roots = [spec.executableName, "_internal"];
+        if (spec.target === "win32-x64") {
+          yield* extractZipTree(downloadedPath, bin, roots, message);
+        } else {
+          yield* assertSafeArchive(downloadedPath, roots, message, { links: true });
+          yield* extractArchive(downloadedPath, bin);
+          yield* rejectNonRegularFiles(bin, { links: true });
+        }
       } else if (runtime === "devin") {
         // Devin's archives hold only `bin/` and `share/`. Devin CLI 3000.11.234 has a skill that reads
         // its documentation in `share/devin/docs`, so staging keeps both folders.

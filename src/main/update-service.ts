@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { appendFile, mkdir, readdir, readFile, rename, rm, stat } from "node:fs/promises";
+import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import type {
   IdleRestart,
@@ -73,6 +74,33 @@ export function createDisabledUpdateAdapter(): UpdateAdapter {
     on: () => undefined,
     quitAndInstall: () => undefined,
   };
+}
+
+/** electron-updater's updater, or `null` when the module does not load. */
+export async function loadElectronUpdater(): Promise<UpdateAdapter | null> {
+  try {
+    const updaterModule = await import("electron-updater");
+    const adapter = updaterModule.autoUpdater ?? updaterModule.default?.autoUpdater ?? updaterModule.default;
+    if (adapter) return adapter;
+    logger.warn("OpenBot updates are disabled: electron-updater did not export autoUpdater");
+  } catch {
+    logger.warn("OpenBot updates are disabled: electron-updater failed to load");
+  }
+  return null;
+}
+
+/**
+ * electron-updater's cache directory, named by `updaterCacheDirName` in `app-update.yml`. The base is
+ * the cache path of electron-updater 6.8.9 (`getAppCacheDir`), which differs from Electron's.
+ */
+export function electronUpdaterCacheDirectory(): string {
+  const root =
+    process.platform === "win32"
+      ? process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local")
+      : process.platform === "darwin"
+        ? join(homedir(), "Library", "Caches")
+        : process.env.XDG_CACHE_HOME || join(homedir(), ".cache");
+  return join(root, "openbot-updater");
 }
 
 export function isValidSemver(version: string): boolean {
@@ -197,6 +225,8 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
   #checkTimer: ReturnType<typeof setTimeout> | null = null;
   #phaseTimer: ReturnType<typeof setTimeout> | null = null;
   #started = false;
+  /** False for a start that checks only on request, such as the newer-database recovery. */
+  #checksScheduled = false;
   #installStarted = false;
   #pendingInstallRequests = 0;
   #installHandedOver = false;
@@ -303,9 +333,19 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
       this.#fork(pruneInstalledUpdate(this.#options.updaterCacheDirectory, this.#options.currentVersion));
     }
 
+    this.#checksScheduled = scheduleChecks;
     if (scheduleChecks && this.#options.enabled) {
       this.#scheduleCheck(this.#options.initialCheckDelayMs);
     }
+  }
+
+  /** Schedules the checks that `stop` cleared, for an app that keeps running after it, such as after a Windows session end that another app cancels. */
+  resume(): void {
+    if (!this.#started) return;
+    // `stop` cleared the deadline of a busy phase, and a download keeps running after it.
+    if (!this.#phaseTimer) this.#armPhaseTimer();
+    if (!this.#checksScheduled || !this.#options.enabled || this.#checkTimer) return;
+    this.#scheduleCheck(this.#options.initialCheckDelayMs);
   }
 
   getStatus(): UpdateStatus {

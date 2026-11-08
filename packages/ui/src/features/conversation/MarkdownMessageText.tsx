@@ -133,18 +133,42 @@ function headingLevel(depth: number): 1 | 2 | 3 | 4 | 5 | 6 {
 // virtualization re-renders settled messages often). Cap the size so a long
 // session cannot grow this without bound.
 const LEXER_CACHE_LIMIT = 200;
-const lexerCache = new Map<string, TokensList>();
-const inlineLexerCache = new Map<string, Token[]>();
+/**
+ * Tokens hold copies of the text, so 200 large bodies, such as pasted logs, would keep many megabytes
+ * after their messages are gone. The cache also keeps at most this many characters, and a body that
+ * is longer is lexed again on each render.
+ */
+const LEXER_CACHE_CHARACTERS = 2 * 1024 * 1024;
+
+/** Keeps the newest entries, within a count and a character budget. */
+class LexerCache<T> {
+  readonly #entries = new Map<string, T>();
+  #characters = 0;
+
+  get(body: string): T | undefined {
+    return this.#entries.get(body);
+  }
+
+  set(body: string, tokens: T): void {
+    if (body.length > LEXER_CACHE_CHARACTERS || this.#entries.has(body)) return;
+    this.#entries.set(body, tokens);
+    this.#characters += body.length;
+    for (const oldest of this.#entries.keys()) {
+      if (this.#entries.size <= LEXER_CACHE_LIMIT && this.#characters <= LEXER_CACHE_CHARACTERS) break;
+      this.#entries.delete(oldest);
+      this.#characters -= oldest.length;
+    }
+  }
+}
+
+const lexerCache = new LexerCache<TokensList>();
+const inlineLexerCache = new LexerCache<Token[]>();
 
 function lexBlockTokens(body: string, cache: boolean): TokensList {
   if (!cache) return markdown.lexer(body);
   const cached = lexerCache.get(body);
   if (cached) return cached;
   const tokens = markdown.lexer(body);
-  if (lexerCache.size >= LEXER_CACHE_LIMIT) {
-    const oldest = lexerCache.keys().next();
-    if (!oldest.done) lexerCache.delete(oldest.value);
-  }
   lexerCache.set(body, tokens);
   return tokens;
 }
@@ -191,10 +215,6 @@ function lexInlineTokens(body: string): Token[] {
   const cached = inlineLexerCache.get(body);
   if (cached) return cached;
   const tokens = markdown.Lexer.lexInline(body, markdown.defaults);
-  if (inlineLexerCache.size >= LEXER_CACHE_LIMIT) {
-    const oldest = inlineLexerCache.keys().next();
-    if (!oldest.done) inlineLexerCache.delete(oldest.value);
-  }
   inlineLexerCache.set(body, tokens);
   return tokens;
 }
@@ -241,6 +261,7 @@ export function MarkdownMessageText(props: MarkdownMessageTextProps) {
       onOpenSharedFile: props.onOpenSharedFile,
       onOpenWorkspaceFile: props.onOpenWorkspaceFile,
       onOpenQuote: props.onOpenQuote,
+      onOpenTag: props.onOpenTag,
       linkFavicons: props.linkFavicons,
       fileDirectory: fileDirectory(),
     }),
@@ -279,6 +300,7 @@ export function MarkdownInlineText(
     onOpenSharedFile: props.onOpenSharedFile,
     onOpenWorkspaceFile: props.onOpenWorkspaceFile,
     onOpenQuote: props.onOpenQuote,
+    onOpenTag: props.onOpenTag,
     linkFavicons: props.linkFavicons,
     fileDirectory: messageFileDirectory(props.body),
   });
@@ -653,19 +675,21 @@ function MarkdownInline(props: {
           case "codespan": {
             if (!tokenIs(token, "codespan")) return token.raw;
             const file = mentionedFileTarget(token.text, props.content.fileDirectory);
-            return file && file.kind === "shared" && props.content.onOpenSharedFile ? (
+            const openShared = props.content.onOpenSharedFile;
+            const openWorkspace = props.content.onOpenWorkspaceFile;
+            return file && file.kind === "shared" && openShared ? (
               <LocalFileLink
                 path={file.path}
                 label={token.text}
                 kind="shared"
-                onOpen={props.content.onOpenSharedFile}
+                onOpen={(path) => openShared(path, file.asWritten)}
               />
-            ) : file && file.kind === "workspace" && props.content.onOpenWorkspaceFile ? (
+            ) : file && file.kind === "workspace" && openWorkspace ? (
               <LocalFileLink
                 path={file.path}
                 label={token.text}
                 kind="workspace"
-                onOpen={props.content.onOpenWorkspaceFile}
+                onOpen={(path) => openWorkspace(path, file.asWritten)}
               />
             ) : (
               <code dir="ltr">{token.text}</code>
@@ -841,7 +865,7 @@ function textTokenEndsWithTagMarker(token: Token | undefined): boolean {
 
 function semanticChatTag(token: Token | undefined): string | null {
   if (!token || !tokenIs(token, "link")) return null;
-  const target = /^(agent|skill|quote)(?:\+uri)?:([^\r\n]+)$/u.exec(token.href);
+  const target = /^(agent|skill|quote|tab|thread)(?:\+uri)?:([^\r\n]+)$/u.exec(token.href);
   return target?.[2] ? `@${token.raw}` : null;
 }
 
@@ -1225,7 +1249,11 @@ function messageFileDirectory(body: string): FileDirectoryContext | null {
   return contexts.size === 1 ? (contexts.values().next().value ?? null) : null;
 }
 
-function mentionedFileTarget(value: string, directory: FileDirectoryContext | null): FileDirectoryContext | null {
+/** The file that a code span names. `asWritten` is the span text when the path joins it to `directory`. */
+function mentionedFileTarget(
+  value: string,
+  directory: FileDirectoryContext | null,
+): (FileDirectoryContext & { asWritten?: string }) | null {
   const path = value.trim();
   if (!isFileReference(path)) return null;
   const shared = sharedFileTarget(path);
@@ -1239,6 +1267,7 @@ function mentionedFileTarget(value: string, directory: FileDirectoryContext | nu
   return {
     path: `${directory.path.replace(/[/\\]+$/u, "")}${separator}${path}`,
     kind: directory.kind,
+    asWritten: path,
   };
 }
 
@@ -1263,7 +1292,8 @@ export function messageImageFiles(blocks: readonly string[]): MessageImageFile[]
         : tokenIs(token, "link")
           ? linkFileTarget(token.href)
           : null;
-      if (file && IMAGE_FILE_PATTERN.test(fileReferenceName(file.path))) files.set(`${file.kind}:${file.path}`, file);
+      if (file && IMAGE_FILE_PATTERN.test(fileReferenceName(file.path)))
+        files.set(`${file.kind}:${file.path}`, { path: file.path, kind: file.kind });
     });
   }
   return [...files.values()].slice(0, IMAGE_FILE_LIMIT);

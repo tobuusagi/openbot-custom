@@ -119,6 +119,7 @@ export const messages = {
   "marketplace.app.telegramTagline": "Telegram'da gruplar ve doğrudan sohbetler",
   "marketplace.app.whatsappTagline": "WhatsApp'ta kendi sohbetiniz ve izin verdiğiniz kişiler",
   "marketplace.app.bitwardenTagline": "Paylaşılan bir klasördeki oturum bilgileriyle sitelerde oturum açın",
+  "marketplace.app.protonPassTagline": "Paylaşılan bir kasadaki oturum bilgileriyle sitelerde oturum açın",
   // The category row in the 1Password page's information.
   "marketplace.app.onePasswordCategory": "Oturum açma ve kimlik bilgisi yönetimi",
   "marketplace.app.yourApps": "Uygulamalarınız",
@@ -234,6 +235,23 @@ export const messages = {
     "Bu depodaki stilleri kullan ve Paper'da bir ayarlar sayfası tasarla.",
   "marketplace.plugin.paper.prompt.tokens":
     "Açık Paper dosyasındaki tasarım token'larını listele ve temamızla karşılaştır.",
+  "marketplace.plugin.higgsfield.tagline": "Yapay zekâ ile görsel, video ve ses",
+  "marketplace.plugin.higgsfield.description":
+    "Higgsfield, ajanların Seedance, Kling, Veo ve MiniMax Hailuo gibi Higgsfield modelleriyle görsel, video, karakter ve ses üretmesini, kredi bakiyesini kontrol etmesini ve Asset Library'ye göz atmasını sağlar. Sonuçlar kullanıcının Higgsfield Assets alanına kaydedilir. Her kullanıcı tarayıcıda kendi Higgsfield hesabına giriş yapar. Her üretim, sınırsız planda da o hesabın kredilerini standart ücretle kullanır.",
+  "marketplace.plugin.higgsfield.app":
+    "Higgsfield MCP sunucusu üzerinden, tarayıcıda girişle görsel, video ve ses üretimi, karakterler, krediler ve varlıklar.",
+  "marketplace.plugin.higgsfield.prompt.credits": "Kaç Higgsfield kredim var?",
+  "marketplace.plugin.higgsfield.prompt.productShot":
+    "Higgsfield ile ahşap masa üzerinde seramik bir kupanın ürün fotoğrafını yap.",
+  "marketplace.plugin.higgsfield.prompt.clip": "Higgsfield ile gün batımında dalgaların 5 saniyelik bir videosunu yap.",
+  "marketplace.plugin.elevenlabs.tagline": "Konuşma, sesler ve sesli ajanlar",
+  "marketplace.plugin.elevenlabs.description":
+    "ElevenLabs, ajanların metni konuşmaya çevirmesini, seslerle çalışmasını ve ElevenLabs sesli ajanlarını ve konuşmalarını oluşturmasını, test etmesini ve incelemesini sağlar. Üretilen ses kısa ömürlü bir indirme bağlantısı olarak gelir. Her kullanıcı tarayıcıda kendi ElevenLabs hesabına giriş yapar ve her üretim o hesabın kredilerini kullanır.",
+  "marketplace.plugin.elevenlabs.app":
+    "Metinden konuşmaya, sesler ve sesli ajan yönetimi, tarayıcıda giriş ile ElevenLabs'in MCP sunucusu üzerinden.",
+  "marketplace.plugin.elevenlabs.prompt.speech": "Bu paragrafı sakin bir ElevenLabs sesiyle oku ve sesi bana ver.",
+  "marketplace.plugin.elevenlabs.prompt.agents": "ElevenLabs sesli ajanlarımı ve her birinin kullandığı sesi listele.",
+  "marketplace.plugin.elevenlabs.prompt.conversations": "Destek sesli ajanımın son on konuşmasını özetle.",
   "marketplace.plugin.appleApps.tagline": "Mac'inizde Mail, Takvim ve daha fazlası",
   "marketplace.plugin.appleApps.description":
     "Apple apps, ajanların bu Mac'te Mail, Takvim, Kişiler, Anımsatıcılar, Notlar, Mesajlar ve Safari'yi kullanmasını sağlar. Yalnızca macOS'te çalışır. OpenBot, Apple veya OpenBot tarafından yapılmamış bir topluluk sunucusu olan mcp-icloud'u başlatır. Sunucu uygulamaları bu bilgisayarda AppleScript ile kontrol eder ve hesap ya da anahtar gerektirmez. Yükleme sırasında OpenBot, macOS'ten bu uygulamaların tümüne tek seferde erişim isteyebilir; her uygulama için bir istem gösterilir. İstemezseniz, bir ajan bir uygulamayı ilk kez kullandığında macOS sorar. Bunu daha sonra değiştirmek için Sistem Ayarları › Gizlilik ve Güvenlik › Otomasyon'u açın. Ajanlar e-posta ve iMessage gönderebilir, etkinlikleri, kişileri ve anımsatıcıları değiştirebilir veya silebilir; bu yüzden her yazma işlemini onaylamadan önce gözden geçirin. Araçların okuduğu içerik, örneğin e-posta metni, ajanın model sağlayıcısına gider.",
@@ -251,6 +269,15 @@ export const messages = {
   "marketplace.plugin.sentry.prompt.newErrors": "Dünkü dağıtımdan bu yana hangi yeni hatalar çıktı?",
   "marketplace.plugin.sentry.prompt.topCrash": "Mobil projedeki en sık çökmeyi ve olası nedenini açıkla.",
   "marketplace.plugin.sentry.prompt.releaseHealth": "Güncel sürüm bir öncekine göre ne kadar sağlıklı?",
+  "marketplace.plugin.gitlab.tagline": "Sorunlar, birleştirme istekleri ve işlem hatları",
+  "marketplace.plugin.gitlab.description":
+    "GitLab, ajanların GitLab.com'da projeleri aramasına, sorunları okuyup oluşturmasına, birleştirme isteklerini incelemesine ve güncellemesine, depo dosyalarını ve commit'leri okumasına, CI işlem hatlarını ve işlerini kontrol etmesine olanak tanır. Her kullanıcı tarayıcı üzerinden kendi GitLab hesabında oturum açar. Ajanlar kullanıcıyla aynı izinlere sahiptir: commit gönderebilir, sorunları ve birleştirme isteklerini değiştirebilir ve bunları birleştirebilir. Kendi sunucunuzdaki GitLab için MCP sunucuları ayarlarında GitLab adresinizin sonuna /api/v4/mcp eklenmiş bir sunucu ekleyin ve orada oturum açın.",
+  "marketplace.plugin.gitlab.app":
+    "Projeler, sorunlar, birleştirme istekleri, depolar ve CI işlem hatları, tarayıcıda oturum açmayla GitLab'in MCP sunucusu üzerinden.",
+  "marketplace.plugin.gitlab.prompt.reviewQueue": "Hangi birleştirme istekleri incelememi bekliyor?",
+  "marketplace.plugin.gitlab.prompt.failedPipeline": "Varsayılan daldaki son işlem hattı neden başarısız oldu?",
+  "marketplace.plugin.gitlab.prompt.newIssue":
+    "Eşitleme kuyruğundaki çökme için yeniden oluşturma adımlarıyla bir sorun kaydı aç.",
   "marketplace.plugin.vercel.tagline": "Dağıtımlar, derleme günlükleri ve projeler",
   "marketplace.plugin.vercel.description":
     "Vercel, ajanların projeleri ve son dağıtımları listelemesine, derleme ve çalışma zamanı günlüklerini okumasına ve bir derlemenin neden başarısız olduğunu bulmasına olanak tanır. Her kullanıcı tarayıcı üzerinden kendi Vercel hesabında oturum açar ve ajanların kullanabileceği ekipleri seçer. Bu ekiplerde ajanlar, kullanıcının hesabıyla aynı yetkilere sahiptir. Ortam değişkenlerini, alan adlarını, DNS kayıtlarını ve dağıtımları da değiştirebilir, alan adı da satın alabilirler.",
@@ -291,6 +318,17 @@ export const messages = {
   "marketplace.plugin.stripe.prompt.payment": "Bu ödemeyi bul ve neden başarısız olduğunu açıkla.",
   "marketplace.plugin.stripe.prompt.customer": "Bu müşterinin faturalarını ve ödenmemiş bakiyesini özetle.",
   "marketplace.plugin.stripe.prompt.link": "Pro planı için aylık 49 tutarında bir ödeme bağlantısı taslağı hazırla.",
+  "marketplace.plugin.revenuecat.tagline": "Abonelikler, ürünler ve paywall'lar",
+  "marketplace.plugin.revenuecat.description":
+    "RevenueCat, ajanların uygulama içi aboneliklerinizin ayarlarını okumasını ve değiştirmesini sağlar: uygulamalar, ürünler, entitlement'lar, offering'ler, paketler, paywall'lar ve deneyler. Ajanlar müşterileri ve satın alımlarını da arayabilir, grafikleri ve metrikleri okuyabilir. Gizli bir RevenueCat API anahtarı tek bir Authorization başlığına girer. Anahtar bir projeye erişir. Salt okunur bir anahtarla ajanlar yalnızca okuyabilir. Yazma anahtarıyla ajanlar ürünleri App Store incelemesine gönderebilir, müşterilere entitlement verebilir ve paketleri, hedefleme kurallarını ve webhook'ları silebilir.",
+  "marketplace.plugin.revenuecat.app":
+    "Gizli bir API anahtarıyla RevenueCat'in MCP sunucusu üzerinden ürünler, entitlement'lar, offering'ler, paywall'lar ve metrikler.",
+  "marketplace.plugin.revenuecat.prompt.offerings": "RevenueCat projemde hangi offering'ler ve paketler var?",
+  "marketplace.plugin.revenuecat.prompt.revenue": "Bu ay RevenueCat gelirim ve aktif aboneliklerim nasıl değişti?",
+  "marketplace.plugin.revenuecat.prompt.customer":
+    "Bu RevenueCat müşterisinin hangi entitlement'ları var ve ne zaman sona eriyorlar?",
+  "marketplace.plugin.revenuecat.hint.apiKey":
+    "RevenueCat panelinde projenizin API keys sayfasını açın ve gizli bir API anahtarı oluşturun. Verileri görmek için salt okunur bir anahtar yeterlidir.",
   "marketplace.plugin.posthog.tagline": "Ürün analitiği ve bayraklar",
   "marketplace.plugin.posthog.description":
     "PostHog, ajanların olayları ve hunileri sorgulamasına, özellik bayraklarını incelemesine ve bir sürümden sonra neyin değiştiğini özetlemesine olanak tanır. Proje ayarlarındaki kişisel API anahtarı tek bir Authorization başlığına girer.",
@@ -341,6 +379,15 @@ export const messages = {
   "marketplace.plugin.resend.prompt.send": "Lansman duyurusu taslağını beta listesine gönder.",
   "marketplace.plugin.resend.prompt.status": "Fatura e-postası müşteriye ulaştı mı?",
   "marketplace.plugin.resend.prompt.template": "Yeni akış için bir parola sıfırlama e-postası taslağı hazırla.",
+  "marketplace.plugin.omnisend.tagline": "E-posta ve SMS pazarlaması",
+  "marketplace.plugin.omnisend.description":
+    "Omnisend, ajanların kampanya ve form raporlarını okumasını, kişileri ve segmentleri bulmasını, kampanyalar, otomasyonlar, e-posta şablonları, formlar ve ürünler oluşturup düzenlemesini sağlar. Her kullanıcı tarayıcıda kendi Omnisend hesabına giriş yapar ve onay ekranında erişim düzeyini seçer. Yazma erişimiyle ajanlar kampanya da gönderebilir ve veri silebilir. Ajanlar yalnızca rapora ihtiyaç duyuyorsa salt okunur erişimi seç.",
+  "marketplace.plugin.omnisend.app":
+    "Kampanyalar, otomasyonlar, kişiler, segmentler, formlar ve raporlar; tarayıcıda giriş ile Omnisend'in MCP sunucusu üzerinden.",
+  "marketplace.plugin.omnisend.prompt.lastCampaign":
+    "Geçen haftanın kampanyaları bir önceki haftaya göre nasıl performans gösterdi?",
+  "marketplace.plugin.omnisend.prompt.segment": "VIP segmentinde kaç kişi var ve bu ay nasıl değişti?",
+  "marketplace.plugin.omnisend.prompt.draftCampaign": "Yeni koleksiyon için bir kampanya taslağı hazırla ama gönderme.",
   "marketplace.plugin.composio.tagline": "Kendi Composio bağlantınız üzerinden birçok uygulama",
   "marketplace.plugin.composio.description":
     "Composio, ajanları tek bir MCP sunucusu üzerinden Gmail, Slack, GitHub ve yüzlerce başka uygulamaya bağlar. İstediğiniz uygulamaları Composio hesabınızda bağlayın, ardından MCP URL'sini ve API anahtarını buraya yapıştırın.",
@@ -411,6 +458,14 @@ export const messages = {
   "marketplace.plugin.todoist.prompt.today": "Bugün hangi Todoist görevlerinin süresi doluyor?",
   "marketplace.plugin.todoist.prompt.capture": "Bu yapılacak maddeleri Todoist Gelen Kutuma ekle.",
   "marketplace.plugin.todoist.prompt.overdue": "Geciken Todoist görevlerimi yarına taşı.",
+  "marketplace.plugin.ticktick.tagline": "Görevler, listeler, alışkanlıklar ve odak",
+  "marketplace.plugin.ticktick.description":
+    "TickTick, ajanların görevleri aramasını ve filtrelemesini, görev ekleyip değiştirmesini ve listeleri, bölümleri, klasörleri, etiketleri ve yorumları yönetmesini sağlar. Ajanlar alışkanlıkları ve odak kayıtlarını da okuyup değiştirebilir ve TickTick'e bağlı takvimlerdeki etkinlikleri okuyabilir. Her kullanıcı tarayıcıda kendi TickTick hesabına giriş yapar. Ajanlar okuma ve yazma erişimi alır: görevleri tamamlayabilir, taşıyabilir ve silebilir, etiketleri ve odak kayıtlarını silebilir.",
+  "marketplace.plugin.ticktick.app":
+    "Görevler, listeler, alışkanlıklar ve odak kayıtları, tarayıcıda girişle TickTick'in MCP sunucusu üzerinden.",
+  "marketplace.plugin.ticktick.prompt.today": "Bugün hangi TickTick görevlerinin süresi doluyor?",
+  "marketplace.plugin.ticktick.prompt.capture": "Bu eylem maddelerini TickTick Gelen Kutuma ekle.",
+  "marketplace.plugin.ticktick.prompt.week": "Geçen hafta hangi TickTick görevlerini tamamladım?",
   "marketplace.plugin.trello.tagline": "Panolar, listeler ve kartlar",
   "marketplace.plugin.trello.description":
     "Trello ile ajanlar panoları, listeleri, kartları, kontrol listelerini ve yorumları arayıp okur, pano ve kart oluşturur, listeleri ve kartları taşır, kartları tamamlandı olarak işaretler ve kontrol listesi, yorum ve etiket ekler. Ajanlar ayrıca kullanıcının Trello Gelen Kutusu'ndaki kartları okuyup kart ekleyebilir ve bağlı bir Google veya Outlook takviminden gelebilen Planner etkinliklerini okuyabilir. Her kullanıcı tarayıcıda kendi Trello hesabına giriş yapar ve bir onay ekranında çalışma alanlarını seçer. Ajanlar bu çalışma alanlarında kullanıcıyla aynı izinlere sahiptir. Kartları ve listeleri arşivleyebilirler, ancak sunucu hiçbir şeyi kalıcı olarak silemez.",
@@ -428,6 +483,24 @@ export const messages = {
   "marketplace.plugin.clickup.prompt.createTask": "Bu yapılacak maddelerden bir ClickUp görevi oluştur ve bana ata.",
   "marketplace.plugin.clickup.prompt.summarizeDoc":
     "ClickUp'taki en son proje güncellemesini bul ve açık soruları özetle.",
+  "marketplace.plugin.coinbase.tagline": "Kripto fiyatları, portföyler ve alım satım",
+  "marketplace.plugin.coinbase.description":
+    "Coinbase, ajanların Coinbase Advanced Trade'deki fiyatları, bakiyeleri, portföyleri, emirleri ve ücretleri okumasını, emirleri önizleyip vermesini, varlıklar arasında dönüşüm yapmasını ve portföyler arasında fon taşımasını sağlar. Her kullanıcı tarayıcıda kendi Coinbase hesabına giriş yapar. Ajanlar kullanıcıyla aynı izinlere sahiptir. Emirler ve dönüşümler gerçek fon kullanır ve ajanlar x402 isteklerinin ücretini USDC bakiyesinden ödeyebilir.",
+  "marketplace.plugin.coinbase.app":
+    "Fiyatlar, bakiyeler, portföyler, emirler ve dönüşümler; Coinbase'in MCP sunucusu ve tarayıcıda giriş ile.",
+  "marketplace.plugin.coinbase.prompt.balances": "Coinbase'de her portföydeki bakiyelerim nedir?",
+  "marketplace.plugin.coinbase.prompt.price": "Coinbase'de BTC-USD fiyatını ve bu hafta nasıl hareket ettiğini göster.",
+  "marketplace.plugin.coinbase.prompt.previewOrder":
+    "Coinbase'de 50 USD'lik piyasa fiyatından ETH alımını önizle. Emri verme.",
+  "marketplace.plugin.robinhood.tagline": "Aracı kurum hesapları ve ajanlarla alım satım",
+  "marketplace.plugin.robinhood.description":
+    "Robinhood, ajanların bir Robinhood müşterisinin hesaplarını, pozisyonlarını, bakiyelerini, işlem geçmişini ve izleme listelerini ve piyasa verilerini okumasını, hisse senedi, opsiyon ve kripto emirleri vermesini sağlar. Her kullanıcı tarayıcıda kendi Robinhood hesabına giriş yapar. İlk girişte Robinhood, kullanıcıdan ayrı bir Agentic hesabı açmasını ister. Ajanlar yalnızca o hesapta işlem yapabilir ve varsayılan olarak her emir için kullanıcı onayı istemeden emir verir.",
+  "marketplace.plugin.robinhood.app":
+    "Hesaplar, pozisyonlar, piyasa verileri ve işlemler; Robinhood'un MCP sunucusu ve tarayıcıda giriş ile.",
+  "marketplace.plugin.robinhood.prompt.positions":
+    "Robinhood pozisyonlarımı ve bugün nasıl hareket ettiklerini özetle.",
+  "marketplace.plugin.robinhood.prompt.watchlist": "Robinhood izleme listemdeki her hisse bu hafta nasıl hareket etti?",
+  "marketplace.plugin.robinhood.prompt.agenticCash": "Robinhood Agentic hesabımda ne kadar nakit var?",
   "marketplace.plugin.huggingface.tagline": "Hub'daki modeller, veri kümeleri ve makaleler",
   "marketplace.plugin.huggingface.description":
     "Hugging Face, ajanların Hugging Face Hub'da modelleri, veri kümelerini, Spaces'i, koleksiyonları ve makaleleri aramasına, model kartlarını ve depo dosyalarını okumasına, veri kümelerini önizlemesine ve Hugging Face belgelerinde arama yapmasına olanak tanır. Herkese açık Hub verilerini kullanır ve hesap ya da anahtar gerektirmez. Araçlar yalnızca okur: ajanlar depo oluşturamaz ve iş (job) çalıştıramaz.",

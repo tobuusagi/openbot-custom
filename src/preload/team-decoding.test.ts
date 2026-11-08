@@ -7,6 +7,7 @@ import type {
   HostStatus,
   InvitePreview,
   InviteSummary,
+  RemoteControlPolicy,
   RemoteDesktopConnectResult,
   RemoteDesktopSession,
   ScopedDirectMessageEvent,
@@ -30,6 +31,7 @@ import {
   decodeInviteSummary,
   decodeInviteUrl,
   decodePendingInvite,
+  decodeRemoteControlPolicy,
   decodeRemoteDesktopConnectResult,
   decodeRemoteDesktopSessions,
   decodeScopedDirectMessage,
@@ -72,6 +74,8 @@ const member = {
 } satisfies TeamMemberSummary;
 
 const memberWithAvatar = { ...member, avatarUrl: "https://example.test/ada.png" } satisfies TeamMemberSummary;
+
+const memberWithChatColor = { ...member, chatColor: "#3a7bd5" } satisfies TeamMemberSummary;
 
 const presence = {
   serverId: null,
@@ -209,6 +213,12 @@ describe("team decoders", () => {
     ["team member with an avatar", decodeTeamMember, memberWithAvatar],
     ["team member list", decodeTeamMembers, [member, memberWithAvatar]],
     ["team presence", decodeTeamPresenceSnapshot, presence],
+    ["team member with a chat colour", decodeTeamMember, memberWithChatColor],
+    [
+      "team presence with a chat colour",
+      decodeTeamPresenceSnapshot,
+      { ...presence, members: [{ ...memberWithChatColor, online: true, typingAgentId: null }] },
+    ],
     ["team session list", decodeTeamSessions, [session]],
     ["team invite list", decodeTeamInvites, [teamInvite]],
     ["created invite", decodeInviteSummary, invite],
@@ -270,6 +280,11 @@ describe("team decoders", () => {
     ["direct read state", decodeDirectReadState, readState],
     ["direct message event", decodeScopedDirectMessage, directEvent],
     ["direct typing event", decodeScopedDirectTyping, typingEvent],
+    [
+      "remote control policy",
+      decodeRemoteControlPolicy,
+      { access: "admins", askOnHost: true } satisfies RemoteControlPolicy,
+    ],
   ] as const)("keeps a valid %s", (_name, decode: (value: unknown) => unknown, value) => {
     expect(decode(value)).toEqual(value);
   });
@@ -278,6 +293,8 @@ describe("team decoders", () => {
     ["host status with an unknown phase", decodeHostStatus, { ...hostStatus, phase: "sleeping" }],
     ["team member with an unknown role", decodeTeamMember, { ...member, role: "guest" }],
     ["team member with a numeric avatar", decodeTeamMember, { ...member, avatarUrl: 1 }],
+    ["team member with an upper-case chat colour", decodeTeamMember, { ...member, chatColor: "#3A7BD5" }],
+    ["team member with a chat colour that is not hex", decodeTeamMember, { ...member, chatColor: "blue" }],
     ["team member list that is not an array", decodeTeamMembers, member],
     ["team presence without typing state", decodeTeamPresenceSnapshot, { ...presence, members: [member] }],
     ["team session without a member", decodeTeamSessions, [{ ...session, memberId: null }]],
@@ -294,6 +311,8 @@ describe("team decoders", () => {
       { status: "refused", errorCode: "busy", message: "No." },
     ],
     ["remote desktop connection with an unknown status", decodeRemoteDesktopConnectResult, { status: "pending" }],
+    ["remote control policy with an unknown access", decodeRemoteControlPolicy, { access: "guests", askOnHost: false }],
+    ["remote control policy without a question choice", decodeRemoteControlPolicy, { access: "owner" }],
     ["server with an unknown state", decodeServers, [{ ...localServer, state: "asleep" }]],
     ["server without a role", decodeServer, { ...localServer, role: undefined }],
     [

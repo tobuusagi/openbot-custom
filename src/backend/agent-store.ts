@@ -431,9 +431,15 @@ export class AgentStore {
       if (source.busyMessageMode) record.busyMessageMode = source.busyMessageMode;
       if (source.taskLimit !== undefined) record.taskLimit = source.taskLimit;
       if (source.backupModels) record.backupModels = structuredClone(source.backupModels);
+      // A named profile carries over; "Only this agent" would give the copy a new, empty session.
+      if (source.browserProfileId !== undefined) {
+        record.browserProfileId = source.browserProfileId;
+        record.ownBrowserSession = true;
+      }
       record.avatarSeed = source.avatarSeed;
       record.avatarHue = source.avatarHue;
       if (source.avatarColor) record.avatarColor = source.avatarColor;
+      if (source.chatColor) record.chatColor = source.chatColor;
 
       const stagedWorkspace = `${record.workspacePath}.openbot-stage`;
       const avatarDirectory = join(this.#avatarsRoot, record.id);
@@ -823,6 +829,11 @@ export class AgentStore {
         const hue = input.avatarHue === undefined ? next.avatarHue : input.avatarHue;
         applyAvatarColor(next, hue, input.avatarColor, hue !== next.avatarHue);
       }
+      if (input.chatColor === null) delete next.chatColor;
+      else if (input.chatColor !== undefined) {
+        if (!isAvatarColor(input.chatColor)) throw new Error("Invalid chat color.");
+        next.chatColor = input.chatColor;
+      }
       // A model the user picks ends the way back from a usage limit.
       if (
         input.usageLimitReturn === null ||
@@ -875,6 +886,7 @@ export class AgentStore {
       if (next.allowNewChat === undefined) delete agent.allowNewChat;
       if (next.quickAcknowledgement === undefined) delete agent.quickAcknowledgement;
       if (next.avatarColor === undefined) delete agent.avatarColor;
+      if (next.chatColor === undefined) delete agent.chatColor;
       try {
         this.#persist(modelChange ? "agent.model-changed" : "agent.updated", modelChange);
       } catch (error) {
@@ -892,6 +904,7 @@ export class AgentStore {
         if (previous.allowNewChat === undefined) delete agent.allowNewChat;
         if (previous.quickAcknowledgement === undefined) delete agent.quickAcknowledgement;
         if (previous.avatarColor === undefined) delete agent.avatarColor;
+        if (previous.chatColor === undefined) delete agent.chatColor;
         throw error;
       }
       return { ...agent };
@@ -1560,6 +1573,22 @@ export class AgentStore {
     }
   }, Effect.uninterruptible).bind(this);
 
+  /**
+   * After "Delete history": the row shows the localized "no messages" text, and the agent keeps its
+   * place in the list.
+   */
+  clearPreview = Effect.fn("AgentStore.clearPreview")(function* (
+    this: AgentStore,
+    id: string,
+  ): Effect.fn.Return<void, StoredStateFailure> {
+    try {
+      this.#requireAgent(id).preview = "";
+      this.#persist("agent.preview-updated");
+    } catch (cause) {
+      return yield* new StoredStateFailure({ cause });
+    }
+  }, Effect.uninterruptible).bind(this);
+
   #readStateEffect = Effect.fn("AgentStore.readState")(function* (
     this: AgentStore,
   ): Effect.fn.Return<StoredState, StoredStateFailure> {
@@ -1912,6 +1941,7 @@ function isStoredAgent(value: unknown): value is PersistedStoredAgent {
     isAvatarSeed(record.avatarSeed) &&
     (record.avatarHue === null || isAvatarHue(record.avatarHue)) &&
     (record.avatarColor === undefined || isAvatarColor(record.avatarColor)) &&
+    (record.chatColor === undefined || isAvatarColor(record.chatColor)) &&
     isMarketplaceSource(record.marketplaceSource)
   );
 }
@@ -2034,6 +2064,8 @@ function readStoredAgent(value: unknown): ReadStoredAgent | UnreadableStoredAgen
     value.avatarColor === undefined || isAvatarColor(value.avatarColor)
       ? value.avatarColor
       : reset("avatarColor", undefined);
+  const chatColor =
+    value.chatColor === undefined || isAvatarColor(value.chatColor) ? value.chatColor : reset("chatColor", undefined);
   let marketplaceSource: StoredAgent["marketplaceSource"];
   if (value.marketplaceSource !== undefined) {
     if (isMarketplaceSource(value.marketplaceSource)) {
@@ -2072,6 +2104,8 @@ function readStoredAgent(value: unknown): ReadStoredAgent | UnreadableStoredAgen
     // A released build reads only the fields it knows, so its next write removes the colour. A stored
     // colour is thus always the newest choice, and it stays even if the nearest hue changes later.
     ...(avatarColor === undefined ? {} : { avatarColor }),
+    // Only a build with chat colours keeps it. It is separate from the avatar colour.
+    ...(chatColor === undefined ? {} : { chatColor }),
     avatarUrl: isString(value.avatarUrl) ? value.avatarUrl : null,
     ...(provider === undefined ? {} : { provider }),
     ...(access === undefined ? {} : { access }),

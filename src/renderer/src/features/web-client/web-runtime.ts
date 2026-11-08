@@ -1,8 +1,7 @@
 import {
   assertSupportedAttachmentName,
-  attachmentFileExtension,
+  isSupportedAttachmentNameFor,
   rasterImageMimeType,
-  supportedAttachmentExtensions,
 } from "@openbot/contracts/attachment-files";
 import { isAvatarMimeType } from "@openbot/contracts/avatar-images";
 import type {
@@ -19,6 +18,7 @@ import type {
   BrowserPreview,
   BrowserTab,
   CancelQueuedMessageInput,
+  ChatColors,
   ClientAgentModelOption,
   ClientAgentSummary,
   ConversationPage,
@@ -98,6 +98,7 @@ import {
   TEAM_BROWSER_VIEW_CLIPBOARD_CAPABILITY,
   TEAM_BROWSER_VIEW_FRAME_POINT_CAPABILITY,
 } from "@openbot/contracts/team-protocol/browser-view-v1";
+import { CHAT_COLORS_CAPABILITY } from "@openbot/contracts/team-protocol/chat-colors-v1";
 import { TEAM_BROWSER_NAVIGATION_CAPABILITY } from "@openbot/contracts/team-protocol/current";
 import { FOCUS_USE_ROUTES } from "@openbot/contracts/team-protocol/focus-use-v1";
 import { MESSAGE_DELETE_CAPABILITY, MESSAGE_DELETE_ROUTES } from "@openbot/contracts/team-protocol/message-delete-v1";
@@ -112,7 +113,7 @@ import {
   SIDEBAR_FOLDERS_ROUTES,
 } from "@openbot/contracts/team-protocol/sidebar-folders-v1";
 import { type TeamProtocolSupportV1, teamProtocolUpdateDirection } from "@openbot/contracts/team-protocol/v1";
-import type { TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
+import { TEAM_PROTOCOL_V2_MAX_FILE_BYTES, type TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
 import { TEAM_PROTOCOL_V3 } from "@openbot/contracts/team-protocol/v3";
 import { decodeTeamProtocolSupportV9 } from "@openbot/contracts/team-protocol/v9";
 import {
@@ -132,8 +133,8 @@ import {
 } from "@openbot/team-client/remote-directory";
 import {
   createRemoteTeamPeer,
-  MOBILE_ATTACHMENT_BYTES,
   type RemoteFileUpload,
+  type RemoteLargeDownload,
   type RemoteTeamCommandResult,
   type RemoteTeamConnectionUpdate,
   type RemoteTeamPeerActions,
@@ -143,8 +144,10 @@ import {
   listAgentNotificationLevels,
   listHiddenAgents,
   readAgentColors,
+  readChatColors,
   readSidebarPins,
   seedSidebarPins,
+  setAgentChatColor,
   setAgentColor,
   setAgentHidden,
   setAgentNotificationLevel,
@@ -316,6 +319,8 @@ export interface WebWorkspaceRuntime {
   setAgentHidden?: (input: SetAgentHiddenInput) => Promise<HiddenAgentsSnapshot>;
   /** The exact colours of the agents on the host. A host without `agent-colors-v1` has none. */
   listAgentColors?: () => Promise<AgentColors>;
+  /** The chat colours of the agents and members on the host. A host without `chat-colors-v1` has none. */
+  listChatColors?: () => Promise<ChatColors>;
   /** The user's own pinned chats on the open host, for all of their devices. Needs `sidebar-pins-v1`. */
   sidebarPins?: {
     read: () => Promise<SidebarPinsSnapshot>;
@@ -650,7 +655,13 @@ export function createWebWorkspaceRuntime(
     if (!isSidebarLayoutSnapshot(value)) throw new Error(currentText().t("error.remote.invalidData"));
     return value;
   }
-  async function request(method: string, path: string, body: TeamProtocolV2Json = {}, upload?: RemoteFileUpload) {
+  async function request(
+    method: string,
+    path: string,
+    body: TeamProtocolV2Json = {},
+    upload?: RemoteFileUpload,
+    largeDownload?: RemoteLargeDownload,
+  ) {
     if (disposed) throw new Error(currentText().t("webClient.error.connectionClosed"));
     const current = generation;
     const requestHostId = lockedHostId;
@@ -664,6 +675,7 @@ export function createWebWorkspaceRuntime(
       body,
       ...(upload === undefined ? {} : { upload }),
       ...(timeoutMs === undefined ? {} : { timeoutMs }),
+      ...(largeDownload === undefined ? {} : { largeDownload }),
     });
     if (disposed || generation !== current) throw new Error(currentText().t("webClient.error.hostChanged"));
     const membershipRead = method === "GET" && path === TEAM_API_ROUTES.me;
@@ -702,8 +714,22 @@ export function createWebWorkspaceRuntime(
     if (!connectedHost) throw new Error(currentText().t("webClient.error.hostNotConnected"));
     return connectedHost;
   }
+  async function listChatColors(): Promise<ChatColors> {
+    if (!capabilities.includes(CHAT_COLORS_CAPABILITY)) return { agents: [], members: [] };
+    return runTeamEffect(readChatColors(teamApi).pipe(Effect.mapError((error) => error.cause)));
+  }
   async function listMembers(): Promise<TeamMemberSummary[]> {
-    return (await runTeamEffect(directory.listMembers(requireHost().hostId))).map(toTeamMember);
+    // The account service has no chat colours. A failed read from the host gives the members without them.
+    const [members, colors] = await Promise.all([
+      runTeamEffect(directory.listMembers(requireHost().hostId)),
+      listChatColors().catch(() => undefined),
+    ]);
+    const chatColors = new Map(colors?.members.map((entry) => [entry.memberId, entry.color]));
+    return members.map((member) => {
+      const summary = toTeamMember(member);
+      const chatColor = chatColors.get(summary.id);
+      return chatColor ? { ...summary, chatColor } : summary;
+    });
   }
   const admin: WebAdminRuntime = {
     request: teamApi,
@@ -1209,25 +1235,29 @@ export function createWebWorkspaceRuntime(
     async upload(file) {
       const uploadHostGeneration = generation;
       const currentUpload = ++uploadGeneration;
-      assertSupportedAttachmentName(file.name);
-      const extension = attachmentFileExtension(file.name);
-      const supported = supportedAttachmentExtensions({
+      const support = {
         eml: capabilities.includes("eml-attachments"),
         media: capabilities.includes("media-attachments"),
         zip: capabilities.includes("zip-attachments"),
         mp4: capabilities.includes("mp4-attachments"),
         svg: capabilities.includes("svg-attachments"),
-      });
-      if (extension && !supported.includes(extension)) throw new Error(currentText().t("webClient.error.fileType"));
-      if (file.size > MOBILE_ATTACHMENT_BYTES) throw new Error(currentText().t("error.remote.attachmentTooLarge"));
+        anyFile: capabilities.includes("any-file-attachments"),
+      };
+      if (!support.anyFile) assertSupportedAttachmentName(file.name);
+      if (!isSupportedAttachmentNameFor(file.name, support))
+        throw new Error(currentText().t("webClient.error.fileType"));
+      if (file.size > WEB_FILE_BYTES) throw new Error(currentText().t("error.remote.fileTooLarge"));
       const bytes = new Uint8Array(await file.arrayBuffer());
       if (currentUpload !== uploadGeneration || uploadHostGeneration !== generation)
         throw new Error(currentText().t("webClient.error.uploadCancelled"));
       const mimeType = file.type || "application/octet-stream";
       const value = await Effect.runPromise(
-        uploadAttachmentDraft(teamApi, { name: file.name, mimeType, base64: bytesToBase64(bytes) }).pipe(
-          Effect.mapError((error) => error.cause),
-        ),
+        uploadAttachmentDraft(teamApi, {
+          name: file.name,
+          mimeType,
+          base64: bytesToBase64(bytes),
+          maxBytes: WEB_FILE_BYTES,
+        }).pipe(Effect.mapError((error) => error.cause)),
       );
       if (currentUpload !== uploadGeneration) {
         if (uploadHostGeneration === generation)
@@ -1252,16 +1282,20 @@ export function createWebWorkspaceRuntime(
       revokeLocalDraftPreviews([id]);
     },
     async download(id) {
-      return decodeWebFile(await request("GET", TEAM_API_ROUTES.attachment(id)));
+      return decodeWebFile(await request("GET", TEAM_API_ROUTES.attachment(id), {}, undefined, WEB_FILE_DOWNLOAD));
     },
     async sharedFile(path) {
       const query = new URLSearchParams({ path });
-      return decodeWebFile(await request("GET", `${TEAM_API_ROUTES.sharedFiles}?${query}`));
+      return decodeWebFile(
+        await request("GET", `${TEAM_API_ROUTES.sharedFiles}?${query}`, {}, undefined, WEB_FILE_DOWNLOAD),
+      );
     },
     async workspaceFile(agentId, path) {
       // The released URL spells the agent `botId`.
       const query = new URLSearchParams({ botId: agentId, path });
-      return decodeWebFile(await request("GET", `${TEAM_API_ROUTES.workspaceFiles}?${query}`));
+      return decodeWebFile(
+        await request("GET", `${TEAM_API_ROUTES.workspaceFiles}?${query}`, {}, undefined, WEB_FILE_DOWNLOAD),
+      );
     },
     async workspaceDirectory(agentId, path) {
       if (!capabilities.includes(WORKSPACE_DIRECTORY_CAPABILITY))
@@ -1278,6 +1312,7 @@ export function createWebWorkspaceRuntime(
       if (!capabilities.includes(AGENT_COLORS_CAPABILITY)) return { agents: [] };
       return runTeamEffect(readAgentColors(teamApi).pipe(Effect.mapError((error) => error.cause)));
     },
+    listChatColors,
     sidebarPins: {
       read: () => runTeamEffect(readSidebarPins(teamApi).pipe(Effect.mapError((error) => error.cause))),
       set: (items) => runTeamEffect(setSidebarPins(teamApi, items).pipe(Effect.mapError((error) => error.cause))),
@@ -1396,10 +1431,27 @@ export function createWebWorkspaceRuntime(
         backupModels: _backupModels,
         leaveUsageLimit: _leaveUsageLimit,
         avatarColor,
+        chatColor,
         ...fields
       } = input;
       if (providerAccountId !== undefined && !capabilities.includes(PROVIDER_ACCOUNTS_CAPABILITY))
         throw new Error(currentText().t("error.team.providersUnsupported"));
+      // The released agent route does not carry the chat colour, so it goes on `chat-colors-v1` first.
+      // Without the capability, a change of only the chat colour fails. With other fields, they change
+      // and the chat colour stays.
+      const chatColors = capabilities.includes(CHAT_COLORS_CAPABILITY);
+      if (
+        chatColor !== undefined &&
+        !chatColors &&
+        Object.entries(input).every(([key, value]) => key === "agentId" || key === "chatColor" || value === undefined)
+      )
+        throw new Error(currentText().t("error.team.chatColorsUnsupported"));
+      if (chatColors && chatColor !== undefined)
+        await runTeamEffect(
+          setAgentChatColor(teamApi, { agentId: input.agentId, color: chatColor }).pipe(
+            Effect.mapError((error) => error.cause),
+          ),
+        );
       // The released agent route does not carry the exact colour. With `agent-colors-v1` it goes on its
       // own route first. That route also sets the nearest hue, so the profile change then leaves the hue
       // out: on the released route a hue removes the colour. A removed colour keeps the hue, which then
@@ -1415,7 +1467,11 @@ export function createWebWorkspaceRuntime(
             Effect.mapError((error) => error.cause),
           ),
         );
-      await request("PATCH", TEAM_API_ROUTES.agent.one(input.agentId), { ...profile });
+      // The released agent route refuses a change without a profile field. When a colour went on its
+      // own route above and nothing else changed, there is nothing to send (#5708).
+      const colourRouted = (chatColors && chatColor !== undefined) || (colors && avatarColor !== undefined);
+      if (!colourRouted || Object.entries(profile).some(([key, value]) => key !== "agentId" && value !== undefined))
+        await request("PATCH", TEAM_API_ROUTES.agent.one(input.agentId), { ...profile });
       if (providerAccountId === undefined) return;
       await runTeamEffect(
         setAgentProviderAccount(teamApi, { agentId: input.agentId, accountId: providerAccountId }).pipe(
@@ -1472,13 +1528,19 @@ export function createWebWorkspaceRuntime(
   };
 }
 
+/**
+ * The largest file that the browser sends or reads through the host connection: the host's limit, as
+ * on desktop. The phone keeps its smaller limit, because its native bridge copies each file.
+ */
+const WEB_FILE_BYTES = TEAM_PROTOCOL_V2_MAX_FILE_BYTES;
+/** A file read asks for the larger limit. Without it, the connection refuses a file above the phone's limit. */
+const WEB_FILE_DOWNLOAD: RemoteLargeDownload = { maxBytes: WEB_FILE_BYTES };
+
 function decodeWebFile(value: unknown): WebFile {
   if (!isDynamicRecord(value)) throw new Error(currentText().t("error.remote.invalidData"));
   const base64 = requiredString(value, "base64");
-  if (base64.length > Math.ceil(MOBILE_ATTACHMENT_BYTES / 3) * 4)
-    throw new Error(currentText().t("error.remote.attachmentTooLarge"));
-  if (atob(base64).length > MOBILE_ATTACHMENT_BYTES)
-    throw new Error(currentText().t("error.remote.attachmentTooLarge"));
+  const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
+  if ((base64.length / 4) * 3 - padding > WEB_FILE_BYTES) throw new Error(currentText().t("error.remote.fileTooLarge"));
   return {
     name: requiredString(value, "name"),
     mimeType: requiredString(value, "mimeType"),

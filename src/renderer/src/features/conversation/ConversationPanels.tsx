@@ -1,4 +1,4 @@
-import type { ServerSummary } from "@openbot/contracts/ipc";
+import { LOCAL_SERVER_ID, type ServerSummary } from "@openbot/contracts/ipc";
 import { AGENT_NOTIFICATION_LEVELS_CAPABILITY } from "@openbot/contracts/team-protocol/agent-notification-levels-v1";
 import { BROWSER_PROFILES_CAPABILITY } from "@openbot/contracts/team-protocol/browser-profiles-v1";
 import { classifyFailure } from "@openbot/telemetry";
@@ -11,20 +11,26 @@ import { VoicePanel } from "@openbot/ui/features/conversation/VoicePanel";
 import { McpSignInRelayDialog } from "@openbot/ui/features/settings/McpSignInPage";
 import { useText } from "@openbot/ui/text";
 import { actionToast } from "../../action-toast";
+import { deviceQuoteShortcut } from "../../send-shortcut-preference";
 import { type AgentTemplatePublishCalls, agentTemplatesPort } from "../agent-templates/agent-templates-port";
 import { createPublishAgent } from "../agent-templates/PublishAgent";
 import { desktopBrowserProfileCalls } from "../browser/browser-profiles-port";
 import type { AgentFilesOptions } from "../files/AgentFilesSettings";
 import { canManageStorage, serverHasStorage } from "../files/storage-usage";
 import { serverCanAdminister, serverSupportsCapability } from "../servers/server-capabilities";
+import { codexLiveAccess } from "../speech/codex-live-access";
+import { speechPort } from "../speech/speech-port";
 import { cycleSpeechSpeed, speechSpeed } from "../speech/speech-speed";
 import { ConversationSideThread } from "./ConversationSideThread";
+import { isChatVisualAppShortcut } from "./chat-visual-shortcuts";
 import { htmlAttachmentPageHtml, htmlAttachmentPageUrl } from "./chat-visual-url";
 import { useConversationController } from "./conversation-controller-context";
 import { type AgentNotificationLevelCalls, conversationRuntime } from "./conversation-runtime";
 import { useConversationViewScope } from "./conversation-scope";
 import { agentSkillsMode } from "./installed-skills-source";
 import { desktopChatEventRoutinesApi } from "./routine-webhooks-api";
+import { createCodexLiveConversation } from "./stores/codex-live-conversation-store";
+import type { VoiceConversationKind } from "./stores/voice-session-store";
 
 const BROWSER_PANEL_DEFAULT_RATIO = 0.5;
 const BROWSER_PANEL_MIN = 220;
@@ -44,12 +50,53 @@ import {
 } from "./agent-folders-port";
 import { conversationPort } from "./conversation-port";
 
-/** The voice conversation with the agent that is open when the pane opens. */
+/**
+ * The voice conversation with the agent that is open when the pane opens. An agent on this computer,
+ * or on a joined server with `live-voice-v1`, uses Codex live voice when the user turned it on in
+ * Settings → Voice, whatever the agent's provider: the voice sends each request to the agent. A failed read of that setting keeps the conversation that
+ * transcribes on this computer. A conversation that still runs from an earlier visit to the pane shows again.
+ */
 function VoiceConversationPane() {
+  const controller = useConversationController();
+  const { props } = useConversationViewScope();
+  const running = untrack(() => (props.agent ? controller.voiceSessions.running(props.agent.id) : null));
+  // Live voice runs in the Codex App Server of the agent's server. An older joined server cannot start
+  // it, so its agents transcribe. Without a ChatGPT sign-in of that server's Codex, the voice transcribes.
+  const codex = untrack(
+    () =>
+      (props.server?.kind !== "remote" || serverSupportsCapability(props.server, "live-voice-v1")) &&
+      codexLiveAccess(props.agentStatus.providers) !== "signIn",
+  );
+  const [kind, setKind] = createSignal<VoiceConversationKind | null>(running ?? (codex ? null : "transcribed"));
+  if (!running && codex)
+    void speechPort()
+      .voice.getSpeechSettings()
+      .then(
+        (settings) => setKind(settings.codexLive ? "codex-live" : "transcribed"),
+        () => setKind("transcribed"),
+      );
+  return (
+    <Show when={kind()} keyed>
+      {(next) => <VoiceConversation kind={next} />}
+    </Show>
+  );
+}
+
+function VoiceConversation(paneProps: { kind: VoiceConversationKind }) {
+  const controller = useConversationController();
   const { props, startVoiceConversation, closeSidePanelPane } = useConversationViewScope();
   const agentId = untrack(() => props.agent?.id);
   if (!agentId) return null;
-  const conversation = startVoiceConversation(agentId);
+  const serverId = untrack(() => props.server?.id ?? LOCAL_SERVER_ID);
+  const kind = untrack(() => paneProps.kind);
+  // The conversation outlives this pane: another tab or chat keeps it, and closing the Voice tab ends it.
+  const conversation = controller.voiceSessions.open(agentId, kind, () =>
+    kind === "codex-live" ? createCodexLiveConversation({ agentId, serverId }) : startVoiceConversation(agentId),
+  );
+  // Codex live voice speaks at the speed of the realtime model, so it has no speed button.
+  const transcribed = kind === "transcribed";
+  const replySpeed = () => (transcribed ? speechSpeed() : undefined);
+  const cycleSpeed = transcribed ? cycleSpeechSpeed : undefined;
   return (
     <Show when={props.agent}>
       {(agent) => (
@@ -64,8 +111,8 @@ function VoiceConversationPane() {
           onToggleMute={conversation.toggleMute}
           onInterrupt={conversation.interrupt}
           onEnd={() => closeSidePanelPane("voice")}
-          speed={speechSpeed()}
-          onCycleSpeed={cycleSpeechSpeed}
+          speed={replySpeed()}
+          onCycleSpeed={cycleSpeed}
         />
       )}
     </Show>
@@ -82,7 +129,6 @@ export function ConversationPanels(panelProps: { onOpenUsage?: ((trigger: HTMLBu
     agentActivity,
     browserSidebarOpen,
     browserExpandedOpen,
-    hideBrowserPanel,
     browserTabs,
     closeShownSidePanelFile,
     closeBrowserTab,
@@ -102,6 +148,9 @@ export function ConversationPanels(panelProps: { onOpenUsage?: ((trigger: HTMLBu
     previewQuoteId,
     previewFileKey,
     previewWorkspaceAgentId,
+    quoteSelection,
+    addPageText,
+    setPageContext,
     sidebarFileBack,
     openSidebarFileBack,
     props,
@@ -118,6 +167,8 @@ export function ConversationPanels(panelProps: { onOpenUsage?: ((trigger: HTMLBu
     settingsProvider,
     settingsReasoning,
     updateRuntimeSettings,
+    fastMode,
+    fastModeChange,
     messageLinkRelay,
     openMessageLinkRelay,
     pasteMessageLinkRelay,
@@ -306,7 +357,7 @@ export function ConversationPanels(panelProps: { onOpenUsage?: ((trigger: HTMLBu
                 )
           : undefined,
       onPreviewFile: (file) => void previewAttachment(file),
-      onShowMessage: (messageId) => openRoutineRunMessage(messageId),
+      onShowMessage: (messageId) => void openRoutineRunMessage(messageId),
       // The agent's chat is behind the settings, so closing them opens it.
       onOpenConversation: () => setActiveRightPanel("none"),
     };
@@ -334,6 +385,10 @@ export function ConversationPanels(panelProps: { onOpenUsage?: ((trigger: HTMLBu
   const selectedPane = () => (activeRightPanel() === "side-panel" ? null : sidePanel().selected);
   /** The side thread that shows, and whose tab is selected. */
   const shownThread = () => (activeRightPanel() === "thread" ? shownPanelThreadId() : null);
+  /** The browser tabs that an agent acts in now. Their previews show the page more often. */
+  const busyBrowserTabIds = createMemo(
+    () => new Set(props.browserControlState.sessions.flatMap((session) => (session.tabId ? [session.tabId] : []))),
+  );
   /** With no side thread to show, the side panel lists the panes. */
   const launcherShown = () =>
     activeRightPanel() === "side-panel" || (activeRightPanel() === "thread" && shownPanelThreadId() === null);
@@ -376,6 +431,11 @@ export function ConversationPanels(panelProps: { onOpenUsage?: ((trigger: HTMLBu
           }}
           onToggleMaximized={() => setSidePanelMaximized(!sidePanel().maximized)}
           onCollapse={toggleSidePanel}
+          onNewBrowserTab={() => {
+            // The new tab shows in the Browser pane, so the pane comes to the front first.
+            openSidePanelPane("browser");
+            void openBrowserAddress(BROWSER_NEW_TAB_URL, true);
+          }}
         />
       </Show>
 
@@ -426,6 +486,20 @@ export function ConversationPanels(panelProps: { onOpenUsage?: ((trigger: HTMLBu
                 pageHtml={props.runtime?.visualPage ? htmlAttachmentPageHtml(attached(), file().preview) : undefined}
                 fileKey={previewFileKey()}
                 selectionQuoteId={previewQuoteId()}
+                // A page quotes as a passage of its file, so the quote opens the page again.
+                onPageQuote={(text) => {
+                  const quoteId = previewQuoteId();
+                  if (quoteId) quoteSelection(quoteId, text);
+                }}
+                // The page state goes with the message that holds the page, as in the chat.
+                onPageContext={(text) => {
+                  const id = attached()?.id;
+                  const message = id && props.messages.find((item) => item.attachments?.some((file) => file.id === id));
+                  if (message) setPageContext(message, text);
+                }}
+                onPageMessage={addPageText}
+                isPageAppShortcut={isChatVisualAppShortcut}
+                quoteShortcut={deviceQuoteShortcut(props.platform)}
                 onOpenExternally={openSidebarFileExternally}
                 onDownload={downloadSidebarFile}
                 /* A browser cannot show a file in the file manager. */
@@ -478,7 +552,7 @@ export function ConversationPanels(panelProps: { onOpenUsage?: ((trigger: HTMLBu
         )}
       </Show>
 
-      {/* Keyed, so another agent or server gets its own conversation; closing the pane ends it. */}
+      {/* Keyed, so another agent or server gets its own conversation; closing the Voice tab ends it. */}
       <Show
         when={
           activeRightPanel() === "voice" &&
@@ -507,6 +581,7 @@ export function ConversationPanels(panelProps: { onOpenUsage?: ((trigger: HTMLBu
       <Show when={browserSidebarOpen() || browserExpandedOpen()}>
         <BrowserPreviewSidebar
           tabs={browserTabs()}
+          busyTabIds={busyBrowserTabIds()}
           hidden={browserExpandedOpen()}
           suspended={props.browserVisibilitySuspended || props.globalOverlayOpen || props.remoteDesktopVisible}
           contextKey={`${props.server?.id ?? "local"}:${props.agent?.id ?? ""}`}
@@ -529,7 +604,6 @@ export function ConversationPanels(panelProps: { onOpenUsage?: ((trigger: HTMLBu
           }}
           onCloseTab={(tabId) => void closeBrowserTab(tabId)}
           onNewTab={() => void openBrowserAddress(BROWSER_NEW_TAB_URL, true)}
-          onCollapse={hideBrowserPanel}
         />
       </Show>
 
@@ -555,6 +629,9 @@ export function ConversationPanels(panelProps: { onOpenUsage?: ((trigger: HTMLBu
             <AgentSettingsPanel
               remoteClient={Boolean(props.runtime)}
               localHost={props.server?.kind === "local"}
+              routineRunPlace={
+                props.server?.kind === "remote" && serverSupportsCapability(props.server, "routine-run-place-v1")
+              }
               folders={folderCalls()}
               instructionsFile={instructionsCalls()}
               sessionSettingsEditable={serverCanAdminister(props.server, "agent-session-settings-v1")}
@@ -584,6 +661,9 @@ export function ConversationPanels(panelProps: { onOpenUsage?: ((trigger: HTMLBu
               busyMessageDefaultIsHost={props.server?.kind === "remote"}
               newChatEditable={props.server?.kind === "local" || props.remoteNewChatLoaded === true}
               quickAcknowledgementEditable={props.server?.kind === "local" || props.remotePlanCardLoaded === true}
+              // The same Fast state and switch as the model picker of the chat header.
+              fastMode={fastMode()}
+              onFastModeChange={fastModeChange()}
               taskLimitEditable={props.server?.kind === "local" || props.remoteTaskLimitLoaded === true}
               backupModelsEditable={props.server?.kind === "local" || props.remoteBackupModelsLoaded === true}
               usageLimited={props.usageLimited}
@@ -592,6 +672,7 @@ export function ConversationPanels(panelProps: { onOpenUsage?: ((trigger: HTMLBu
               memoryLimit={props.server?.kind === "local" ? props.agentMemoryLimit : undefined}
               agents={props.agents}
               onStartNewChat={props.onClearAgentContext}
+              onDeleteHistory={props.onDeleteAgentHistory}
               onCreateSkill={
                 serverCanAdminister(props.server, "skills-admin-v1") &&
                 agentReady() &&

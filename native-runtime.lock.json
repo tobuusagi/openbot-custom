@@ -313,7 +313,7 @@
       "licenseSha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
       "patch": {
         "path": "vendor/remote-desktop/patches/sunshine-v2026.516.143833-openbot.patch",
-        "sha256": "9528d0c45829e33c509ec150da98d3165bba157ea44c3fb7765b275694a8c212"
+        "sha256": "276f66e66b4599d89f514071855f49aa4c0b48c8fd8b68fd6f0496d7765b4cb4"
       },
       "overrides": [],
       "submodules": {
@@ -369,27 +369,27 @@
     "releaseArtifacts": {
       "darwin-arm64": {
         "asset": "remote-desktop-runtime-darwin-arm64.tar.gz",
-        "sha256": "6bb12e809946b14242f3554826ceb29906de4e4dc5df2f860f5440f566d09466"
+        "sha256": "3c426c035c4562f8427968ff1630458a47f77487fc16adbb4f2cb97563c31a43"
       },
       "darwin-x64": {
         "asset": "remote-desktop-runtime-darwin-x64.tar.gz",
-        "sha256": "d68b12a10f230ffcade41a235a9e04650f906d3a06b4fc905dd77f1ac261ca32"
+        "sha256": "16f09e003fc12dc0e9066b5a98ebfe7eb61f66c78c18e2d6796b441472489806"
       },
       "win32-x64": {
         "asset": "remote-desktop-runtime-win32-x64.tar.gz",
-        "sha256": "8009b33abdb7f97cc7f9f05ae1f943e131f567666d74bc1e34b639dbe648dbd6"
+        "sha256": "ec1c3a9741025cf63bc10ae89248584bf0d82b9024bb5c11ef9fc25609532dad"
       },
       "linux-x64": {
         "asset": "remote-desktop-runtime-linux-x64.tar.gz",
-        "sha256": "ea2f9a5f1c8bea1a5917989dfdf23260ba461a94c648d029e25043a0ae0e7010"
+        "sha256": "e149dbc3bbbdf5d86c279e7743125aa7027f5fd0e9e144ae3458073e5bf1ab8a"
       }
     },
     "artifactRelease": {
       "repository": "nightly-labs/openbot",
-      "tag": "remote-desktop-runtime-ec62decaa9803abc6e1bd5fd9fddebae0aa5cac4540348d0d62229d1a37b3bb0",
-      "inputDigest": "ec62decaa9803abc6e1bd5fd9fddebae0aa5cac4540348d0d62229d1a37b3bb0",
+      "tag": "remote-desktop-runtime-fbe06961a9b2fa374c077a56c3354f1f7ab6a18dd672b9d4586cf1b5636f6d7b",
+      "inputDigest": "fbe06961a9b2fa374c077a56c3354f1f7ab6a18dd672b9d4586cf1b5636f6d7b",
       "manifestAsset": "remote-desktop-runtime-manifest.json",
-      "manifestSha256": "c6225c056cc3956e5ef192361bf866eb7d558ee9229db95cd0a473c19e9d5b4f"
+      "manifestSha256": "03c143862a2027a325011ea73407f2535778ae48f667d6d2a848213147b387da"
     }
   },
   "bun": {
@@ -1951,6 +1951,135 @@
         "executable": "devin.exe",
         "files": {
           "bin/devin.exe": "7b05e174855313e31a4f48fc97b71f383821bb34eb563d5769515092ecef3b8e"
+        }
+      }
+    }
+  },
+  "copilot": {
+    "version": "1.0.105",
+    "license": "GitHub Copilot CLI License",
+    "licenseUrl": "https://github.com/github/copilot-cli/blob/main/LICENSE.md",
+    "artifacts": {
+      "darwin-arm64": {
+        "url": "https://github.com/github/copilot-cli/releases/download/v1.0.105/copilot-darwin-arm64.tar.gz",
+        "assetSha256": "34aacd03fb478d47e4b3cfc5ca045c37278c5d8d86239466521a16ea54ac84aa",
+        "downloadBytes": 119263282,
+        "installedBytes": 181873376,
+        "executable": "copilot",
+        "files": {
+          "bin/copilot": "5fd7d15ff02deb08a58593b1b488015bb52c1686014b80b5509e28263cb3ad70"
+        }
+      },
+      "darwin-x64": {
+        "url": "https://github.com/github/copilot-cli/releases/download/v1.0.105/copilot-darwin-x64.tar.gz",
+        "assetSha256": "de5684eeb118ad1e54f9a01f4535cf74e121b8226d26473550b01a7565ce54f5",
+        "downloadBytes": 126087256,
+        "installedBytes": 190321008,
+        "executable": "copilot",
+        "files": {
+          "bin/copilot": "83e8dfacc3e79e55e4ab723edaf5b9a38d83aec85e9e115a131b973c98265801"
+        }
+      },
+      "linux-x64": {
+        "url": "https://github.com/github/copilot-cli/releases/download/v1.0.105/copilot-linux-x64.tar.gz",
+        "assetSha256": "aba1f06f27bc0447656647f76e0a4cf58b4b2a341c75ff04a750982b6aeb6bd2",
+        "downloadBytes": 129108148,
+        "installedBytes": 198511424,
+        "executable": "copilot",
+        "files": {
+          "bin/copilot": "3bd8bdc75670d7b4ec445725f6a5b9af66ee7ec49e6194646e4a40a0bc09091c"
+        }
+      },
+      "linux-arm64": {
+        "url": "https://github.com/github/copilot-cli/releases/download/v1.0.105/copilot-linux-arm64.tar.gz",
+        "assetSha256": "e7b488cc04ac3e2ed800e1bf0aace33ada42dcf167529b3d2f48a61e1535a847",
+        "downloadBytes": 130063152,
+        "installedBytes": 194644736,
+        "executable": "copilot",
+        "files": {
+          "bin/copilot": "0e0bde8da81405c2e2bf76d072160c6ec74121721e0be5bbd08784af494d9a22"
+        }
+      },
+      "win32-x64": {
+        "url": "https://github.com/github/copilot-cli/releases/download/v1.0.105/copilot-win32-x64.zip",
+        "assetSha256": "34e16e9cf47de0e1534920171d6f39fa246638bddbb6ece820870b382bcc061a",
+        "downloadBytes": 112637935,
+        "installedBytes": 172637984,
+        "executable": "copilot.exe",
+        "files": {
+          "bin/copilot.exe": "ab6d710d551c137c766a6c8ef6ee2e7779c106870c96b9a91a91fa17b9748624"
+        }
+      }
+    }
+  },
+  "mistral": {
+    "version": "3.1.0",
+    "license": "Apache-2.0",
+    "licenseUrl": "https://github.com/mistralai/mistral-vibe/blob/v3.1.0/LICENSE",
+    "artifacts": {
+      "darwin-arm64": {
+        "url": "https://github.com/mistralai/mistral-vibe/releases/download/v3.1.0/vibe-acp-darwin-aarch64-3.1.0.tar.gz",
+        "assetSha256": "c56ec63bd6bcd60591bee441cf31f3fe555da493275a1756b2f5152039f65ec4",
+        "downloadBytes": 69104346,
+        "installedBytes": 185000000,
+        "executable": "vibe-acp",
+        "files": {
+          "bin/vibe-acp": "b4082a8de6cf0a6a1248a5a1978896e9f7c18d4b2e36c664e72258ad706c857a",
+          "bin/_internal/base_library.zip": "591eb6a30c681cff56440bfe4f42272fabd8d928b9098f6d1b982a612650d49c",
+          "bin/_internal/Python.framework/Versions/3.12/Python": "523e4fc99e08c08c37bc536925db01bc2fff54a5205d62c0b2e75155526d6364",
+          "bin/_internal/mistral_vibe-3.1.0.dist-info/licenses/LICENSE": "3375b98d59c50073c1ea6667fda7df54d122f4e8c67d1ae2fb7afdfe311abf27"
+        }
+      },
+      "darwin-x64": {
+        "url": "https://github.com/mistralai/mistral-vibe/releases/download/v3.1.0/vibe-acp-darwin-x86_64-3.1.0.tar.gz",
+        "assetSha256": "6a7e3399f344e43ad38851b56cbff522cde5af714fca1139c5d04d778ba2dea9",
+        "downloadBytes": 70891457,
+        "installedBytes": 186000000,
+        "executable": "vibe-acp",
+        "files": {
+          "bin/vibe-acp": "a8535061d647b723ade952b424f7ed8c38d938f15f5277acdbbce2d220de2a5b",
+          "bin/_internal/base_library.zip": "be457ea991aab90c005bff004e7c2ed0d4c2625cb35b6ad3d370e99b516bdba7",
+          "bin/_internal/Python.framework/Versions/3.12/Python": "3ef9e1a1c7650daafc87bdc1d0ecd1e961be5aab1be387f40f0679be9d22d42c",
+          "bin/_internal/mistral_vibe-3.1.0.dist-info/licenses/LICENSE": "3375b98d59c50073c1ea6667fda7df54d122f4e8c67d1ae2fb7afdfe311abf27"
+        }
+      },
+      "linux-x64": {
+        "url": "https://github.com/mistralai/mistral-vibe/releases/download/v3.1.0/vibe-acp-linux-x86_64-3.1.0.tar.gz",
+        "assetSha256": "31e03174516ddc1b8dc2a229a3085ba59a50f4b380753a510ebb204730da4def",
+        "downloadBytes": 117539856,
+        "installedBytes": 376000000,
+        "executable": "vibe-acp",
+        "files": {
+          "bin/vibe-acp": "1f8df17f65ef0683efba39a9a2cd3b0c9e1d9a72582707e568994d5a5c41da05",
+          "bin/_internal/base_library.zip": "8bc684394d36c2aed21e7f71ed4a9149e2541ca1bbe2aa414f7f79a56b1749ce",
+          "bin/_internal/libpython3.12.so.1.0": "03a0af33071a152cb92274e07310c2988b4cd0ae548a416a490dfefa5661fbd6",
+          "bin/_internal/mistral_vibe-3.1.0.dist-info/licenses/LICENSE": "3375b98d59c50073c1ea6667fda7df54d122f4e8c67d1ae2fb7afdfe311abf27"
+        }
+      },
+      "linux-arm64": {
+        "url": "https://github.com/mistralai/mistral-vibe/releases/download/v3.1.0/vibe-acp-linux-aarch64-3.1.0.tar.gz",
+        "assetSha256": "96276b6d7cc49473e48a79f95c397a05dc7f8b1d5c459893562e0dd533112074",
+        "downloadBytes": 111005824,
+        "installedBytes": 365000000,
+        "executable": "vibe-acp",
+        "files": {
+          "bin/vibe-acp": "63147aa865b30cd1fd4b0a38594d6b1fa4d5071cf9c1a9176912a28a6b906444",
+          "bin/_internal/base_library.zip": "ae7f738fb3034de2148fdd37c905f24c4c7e0942d19de5e0071cf20128e3349c",
+          "bin/_internal/libpython3.12.so.1.0": "557081cd2f74a3c820be3983d5d1ee1e1e317046886a5467af975ef5876fb4bf",
+          "bin/_internal/mistral_vibe-3.1.0.dist-info/licenses/LICENSE": "3375b98d59c50073c1ea6667fda7df54d122f4e8c67d1ae2fb7afdfe311abf27"
+        }
+      },
+      "win32-x64": {
+        "url": "https://github.com/mistralai/mistral-vibe/releases/download/v3.1.0/vibe-acp-windows-x86_64-3.1.0.zip",
+        "assetSha256": "2b65e70d0dc5cc0a5edba0ae836b225edf2068b6aebd321f047ccfae32275416",
+        "downloadBytes": 68844142,
+        "installedBytes": 165000000,
+        "executable": "vibe-acp.exe",
+        "files": {
+          "bin/vibe-acp.exe": "5f49f055a27f6338fb04e2177ddd11e758bbe5bb927f2758c2bc862f4c4c189a",
+          "bin/_internal/base_library.zip": "a8b0a9e18c7094a85b8fa49e396c230f1e827163e9ebf3838b297ec7620a197f",
+          "bin/_internal/python312.dll": "9a0e3435aaa680d868150f87ab3e388ad2eebc22f87e036155c7b4eda8cd2120",
+          "bin/_internal/mistral_vibe-3.1.0.dist-info/licenses/LICENSE": "815ad2f988bc0e55678643ccd41ce6b17f879c7a5a78857e546af1bc26d0d401"
         }
       }
     }

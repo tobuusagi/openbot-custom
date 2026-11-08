@@ -1,5 +1,8 @@
 import {
   agentProviderName,
+  type DownloadableProviderId,
+  INSTALLER_PROVIDERS,
+  isDownloadableProvider,
   isKeyOnlyProvider,
   isManagedRuntimeProvider,
   MANAGED_RUNTIME_PROVIDERS,
@@ -49,7 +52,7 @@ import { AgentLifecycleFailed } from "../../backend/agent-service";
 import { runCauseEffect } from "../../backend/effect-boundary";
 import { parseProviderId } from "../ipc/app-inputs";
 import { parseDeleteCustomProvider, parseSaveCustomProvider } from "../ipc/custom-provider-inputs";
-import { parseProviderApiKeyInput } from "../ipc/provider-handlers";
+import { parseProviderApiKeyInput, signInCodexWithApiKey } from "../ipc/provider-handlers";
 import { isObject } from "../ipc/validation";
 import type { TeamApiAdmin } from "./dependencies";
 import { HttpError } from "./http-error";
@@ -137,9 +140,9 @@ export async function routeProviders(
       case PROVIDERS_V8_ROUTES.runtimesStatus:
         return json(200, wireSnapshotV8(runtimes.getStatus()));
       case PROVIDERS_V8_ROUTES.runtimesDownload:
-        return json(200, wireSnapshotV8(await runCauseEffect(runtimes.download(parsed(managedProviderV8, body)))));
+        return json(200, wireSnapshotV8(await runCauseEffect(runtimes.download(parsed(downloadableProviderV8, body)))));
       case PROVIDERS_V8_ROUTES.runtimesCancel:
-        return json(200, wireSnapshotV8(await runCauseEffect(runtimes.cancel(parsed(managedProviderV8, body)))));
+        return json(200, wireSnapshotV8(await runCauseEffect(runtimes.cancel(parsed(downloadableProviderV8, body)))));
       case PROVIDERS_V8_ROUTES.runtimesCheck:
         return json(200, wireSnapshotV8(await runCauseEffect(runtimes.checkForUpdates())));
       case PROVIDERS_V5_ROUTES.codeLoginStart:
@@ -174,15 +177,18 @@ export async function routeProviders(
         return json(200, wireSnapshotV4(await runCauseEffect(runtimes.checkForUpdates())));
       case PROVIDERS_V8_ROUTES.apiKeyState:
       case PROVIDERS_V5_ROUTES.apiKeyState:
-      case PROVIDERS_ADMIN_ROUTES.apiKeyState:
-        return json(200, {
-          status: credentials.status(
-            parsed(
-              V8_ROUTES.has(url.pathname) ? keyProviderV8 : V5_ROUTES.has(url.pathname) ? managedProviderV5 : provider,
-              body,
-            ),
-          ),
-        });
+      case PROVIDERS_ADMIN_ROUTES.apiKeyState: {
+        const id = parsed(
+          V8_ROUTES.has(url.pathname) ? keyProviderV8 : V5_ROUTES.has(url.pathname) ? managedProviderV5 : provider,
+          body,
+        );
+        // `codex-api-key-v1`: the key is in Codex's own login, which the agent status reads.
+        if (id === "codex") {
+          const codex = service.getStatus().providers?.find((candidate) => candidate.id === "codex");
+          return json(200, { status: codex?.apiKeyInUse ? "saved" : "missing" });
+        }
+        return json(200, { status: credentials.status(id) });
+      }
       case PROVIDERS_V8_ROUTES.apiKeySet:
       case PROVIDERS_V5_ROUTES.apiKeySet:
       case PROVIDERS_ADMIN_ROUTES.apiKeySet: {
@@ -194,6 +200,11 @@ export async function routeProviders(
               : wireApiKeyInput,
           body,
         );
+        // `codex-api-key-v1`: Codex keeps the key in its own login, as on this computer, not in the key store.
+        if (input.provider === "codex") {
+          await signInCodexWithApiKey(service, input.key);
+          return json(200, {});
+        }
         const save = () =>
           credentials
             .set(input.provider, input.key)
@@ -317,7 +328,13 @@ function releasedSaveBody({ harness: _harness, ...body }: DynamicRecord): Dynami
     ...body,
     models: body.models.map((model: unknown) => {
       if (!isObject(model)) return model;
-      const { contextWindow: _contextWindow, maxOutput: _maxOutput, ...released } = model;
+      const {
+        contextWindow: _contextWindow,
+        maxOutput: _maxOutput,
+        reasoningEfforts: _reasoningEfforts,
+        inputs: _inputs,
+        ...released
+      } = model;
       return released;
     }),
   };
@@ -519,17 +536,34 @@ function managedProviderV8(body: DynamicRecord): ManagedProviderId {
   return id;
 }
 
+/** A `providers-v8` provider with a Download: a managed runtime, or Hermes, which its own installer installs. */
+function downloadableProviderV8(body: DynamicRecord): DownloadableProviderId {
+  const id = hostProvider(body);
+  if (!isDownloadableProvider(id)) throw new Error(sourceText("error.team.providerNotManaged"));
+  return id;
+}
+
 /** A `providers-v8` provider whose key this host keeps: a managed runtime, or a key-only provider on Pi. */
 function keyProviderV8(body: DynamicRecord) {
   const id = hostProvider(body);
   return isKeyOnlyProvider(id) ? id : managedProviderV8(body);
 }
 
-/** The `providers-v8` runtime snapshot: one row for each managed runtime, keyed by `id`. */
+/**
+ * The `providers-v8` runtime snapshot: one row for each managed runtime, keyed by `id`, and one for
+ * each installer provider that has a status. A client before the Hermes installer drops that row.
+ */
 function wireSnapshotV8(snapshot: ProviderRuntimeSnapshot) {
+  const installers = INSTALLER_PROVIDERS.flatMap((id) => {
+    const status = snapshot.providers[id];
+    return status ? [{ id, ...wireStatus(status) }] : [];
+  });
   return {
     revision: snapshot.revision,
-    providers: MANAGED_RUNTIME_PROVIDERS.map((id) => ({ id, ...wireStatus(snapshot.providers[id]) })),
+    providers: [
+      ...MANAGED_RUNTIME_PROVIDERS.map((id) => ({ id, ...wireStatus(snapshot.providers[id]) })),
+      ...installers,
+    ],
     toolRuntimes: MANAGED_TOOL_RUNTIMES.map((id) => ({ id, ...wireStatus(snapshot.toolRuntimes[id]) })),
   };
 }

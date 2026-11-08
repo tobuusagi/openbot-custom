@@ -6,6 +6,7 @@
 
 import {
   type AgentTask,
+  type AgentTaskPage,
   type AgentTaskReadState,
   type AgentTasksSnapshot,
   type AgentWaitsSnapshot,
@@ -21,6 +22,7 @@ import {
   type DraftAttachment,
   type FilePreview,
   isAgentTask,
+  isAgentTaskPage,
   isAgentTaskReadState,
   isAgentTasksSnapshot,
   isAgentWaitsSnapshot,
@@ -206,6 +208,13 @@ export function decodeAgentTaskReadState(value: unknown): AgentTaskReadState {
   return value;
 }
 
+export function decodeAgentTaskReadStates(value: unknown): AgentTaskReadState[] {
+  if (!Array.isArray(value) || !value.every(isAgentTaskReadState)) {
+    throw new Error("Invalid thread read states.");
+  }
+  return value;
+}
+
 export function decodeAgentTasks(value: unknown): AgentTasksSnapshot {
   if (!isAgentTasksSnapshot(value)) {
     throw new Error("Invalid task list response.");
@@ -223,6 +232,13 @@ export function decodeAgentTask(value: unknown): AgentTask {
 export function decodeTaskConversation(value: unknown): ConversationSnapshot {
   if (!isConversationSnapshot(value)) {
     throw new Error("Invalid task conversation response.");
+  }
+  return value;
+}
+
+export function decodeTaskPage(value: unknown): AgentTaskPage {
+  if (!isAgentTaskPage(value)) {
+    throw new Error("Invalid task page response.");
   }
   return value;
 }

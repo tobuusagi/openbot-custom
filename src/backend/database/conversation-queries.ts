@@ -8,6 +8,7 @@ import type {
   ConversationPageAnchor,
   ConversationSearchPage,
   ConversationSnapshot,
+  SentMessageStats,
 } from "@openbot/contracts/ipc";
 import {
   HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX,
@@ -153,6 +154,26 @@ export class ConversationQueries {
       turns.set(threadId, [...(turns.get(threadId) ?? []), requiredStringColumn(row, "turn_id")]);
     }
     return turns;
+  }
+
+  /**
+   * The first time and the number of the messages that a person wrote to an agent on this computer.
+   * A routine run is also a `user` message, with the `routine` item type; it does not count.
+   * One scan of the table: the columns come before the message JSON, so it reads no overflow page.
+   */
+  readSentMessageStats(): SentMessageStats {
+    const row = databaseRow(
+      this.#core.connection
+        .prepare(
+          "SELECT MIN(created_at) AS first_sent_at, COUNT(*) AS sent_count FROM projection_thread_messages WHERE author = 'user' AND item_type IS NOT 'routine'",
+        )
+        .get(),
+    );
+    if (!row) return { firstSentAt: null, sentCount: 0 };
+    return {
+      firstSentAt: optionalStringColumn(row, "first_sent_at"),
+      sentCount: requiredNumberColumn(row, "sent_count"),
+    };
   }
 
   readConversationRevision(agentId: string, threadId: string | null): number {
@@ -326,6 +347,29 @@ export class ConversationQueries {
         ...(older.oldestAt ? { oldestAt: older.oldestAt } : {}),
       },
     };
+  }
+
+  /** The cursor of the page before a message of the thread, or null when the thread does not hold it. */
+  conversationCursorAt(threadId: string, messageId: string): string | null {
+    const row = this.#messageOrderRow(threadId, messageId);
+    return row ? encodePageCursor(conversationRowCursor(row)) : null;
+  }
+
+  /** How many messages the reader can see before a message of the thread. 0 when the thread does not hold it. */
+  conversationCountBefore(threadId: string, messageId: string, options: ConversationMarkerExclusions = {}): number {
+    const row = this.#messageOrderRow(threadId, messageId);
+    return row ? this.#conversationRowsBefore(threadId, conversationRowCursor(row), options).count : 0;
+  }
+
+  #messageOrderRow(threadId: string, messageId: string): DynamicRecord | null {
+    return databaseRow(
+      this.#core.connection
+        .prepare(
+          `${ORDERED_THREAD_MESSAGES}
+           SELECT ${ORDER_KEY_COLUMNS} FROM ordered WHERE message_id = ?`,
+        )
+        .get(threadId, messageId),
+    );
   }
 
   supportedConversationCursor(

@@ -40,6 +40,7 @@ import type {
   SendDirectMessageInput,
   ServerNotificationLevel,
   ServerSummary,
+  SetAgentChatColorInput,
   SetAgentColorInput,
   SetAgentNotificationLevelInput,
   SetTeamTypingInput,
@@ -52,6 +53,8 @@ import type {
 } from "@openbot/contracts/ipc";
 import {
   type AgentNotificationLevelsSnapshot,
+  type BrowserComputerSharing,
+  decodeBrowserProxyComputer,
   decodeRemoteAgentImportPreview,
   decodeRemoteInstanceTransferPreview,
   EMPTY_AGENT_NOTIFICATION_LEVELS,
@@ -67,7 +70,10 @@ import {
   AGENT_NOTIFICATION_LEVELS_CAPABILITY,
   AGENT_NOTIFICATION_LEVELS_ROUTES,
 } from "@openbot/contracts/team-protocol/agent-notification-levels-v1";
+import { BROWSER_EGRESS_CAPABILITY } from "@openbot/contracts/team-protocol/browser-egress-v1";
+import { BROWSER_PROXIES_ROUTES } from "@openbot/contracts/team-protocol/browser-proxies-v1";
 import { decodeBrowserViewSessionResponse } from "@openbot/contracts/team-protocol/browser-view-v1";
+import { CHAT_COLORS_CAPABILITY, CHAT_COLORS_ROUTES } from "@openbot/contracts/team-protocol/chat-colors-v1";
 import {
   COMPUTER_ACTIVITY_CAPABILITY,
   COMPUTER_ACTIVITY_ROUTES,
@@ -76,6 +82,7 @@ import { TEAM_MEMBER_LEAVE_CAPABILITY, type TeamCurrentCapability } from "@openb
 import { FOCUS_USE_CAPABILITY, FOCUS_USE_ROUTES } from "@openbot/contracts/team-protocol/focus-use-v1";
 import type { HostRestartEvent } from "@openbot/contracts/team-protocol/host-update-v1";
 import { INSTANCE_TRANSFER_ROUTES } from "@openbot/contracts/team-protocol/instance-transfer-v1";
+import type { LiveVoiceEvent } from "@openbot/contracts/team-protocol/live-voice-v1";
 import type { MachineAlertEvent } from "@openbot/contracts/team-protocol/machine-resources-v1";
 import { decodeTeamProtocolV1CurrentHttpResponse } from "@openbot/contracts/team-protocol/v1-adapter";
 import { sourceText } from "@openbot/i18n/source";
@@ -100,6 +107,7 @@ import {
   decodeDraftAttachment,
   decodeDuplicateAgentResultFromHost,
   decodeRemoteAgentColors,
+  decodeRemoteChatColors,
 } from "./remote-agent-decoding";
 import { AttachmentDownloadStopped, type RemoteAttachment, RemoteAttachmentCache } from "./remote-attachment-cache";
 import type { RemoteConnectTrace } from "./remote-connect-trace";
@@ -174,6 +182,7 @@ interface RemoteServerEvents {
   directMessage: [serverId: string, event: DirectMessageRealtimeEvent];
   directTyping: [serverId: string, event: DirectTypingRealtimeEvent];
   machineAlert: [serverId: string, event: MachineAlertEvent];
+  liveVoice: [serverId: string, event: LiveVoiceEvent];
   attachmentDownload: [progress: AttachmentDownloadProgress];
   attachmentImportProgress: [progress: AttachmentImportProgress];
 }
@@ -261,6 +270,8 @@ export interface DevelopmentRemoteServerConnection {
 }
 
 const REMOTE_DUPLICATION_TIMEOUT_MS = TEAM_WEBRTC_REMOTE_REQUEST_TIMEOUT_MILLISECONDS;
+// The 30 seconds that a host can ask its user, and the time that it needs to start the runtime.
+const REMOTE_DESKTOP_SESSION_HTTP_TIMEOUT_MS = 60_000;
 /** An export of up to 100 MB goes up and is read in one request, and apply creates many agents. */
 export const AGENT_IMPORT_UPLOAD_TIMEOUT_MS = TEAM_WEBRTC_REMOTE_REQUEST_TIMEOUT_MILLISECONDS;
 // How long a host that restarts into an update keeps the fast retry after Signal first misses it. A
@@ -305,6 +316,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   #keyChangedAt = new Map<string, number>();
   /** The local servers that this app runs as its child processes. See `local-servers/`. */
   #thisComputerServers: ReadonlySet<string> = new Set();
+  /** The servers on this computer that are registered for the signed-in account. */
+  #registeredThisComputerServers: ReadonlySet<string> = new Set();
+  /** Gives a server on this computer its new members after a change here. */
+  #thisComputerMembersChanged: (serverId: string) => void = () => undefined;
   readonly #hostedServers: HostedServerWakeHooks | null;
   /** When each hosted server that starts after a wake request started. */
   readonly #hostedStartAt = new Map<string, number>();
@@ -407,6 +422,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#refresh = new RemoteEventRefresh({
       request: (serverId, path, decoder, init) => this.#client.request(serverId, path, decoder, init),
       hasServer: (serverId) => this.#store.has(serverId),
+      onMemberChatColors: (serverId) => {
+        if (this.#presence.has(serverId)) this.emit("presence", serverId, this.getPresence(serverId));
+      },
       emit: (serverId, event, bufferedLive) => {
         // Another device of the user changed their levels: the server list shows the new server level.
         if (event.type === "agent-notification-levels-changed")
@@ -417,12 +435,15 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     });
     this.#presence = new RemotePresenceCache({
       fetchSnapshot: (serverId) => this.request(serverId, TEAM_API_ROUTES.team.presence, decodeTeamPresenceSnapshot),
-      onSnapshot: (serverId, snapshot) => this.emit("presence", serverId, snapshot),
+      onSnapshot: (serverId, snapshot) =>
+        this.emit("presence", serverId, this.#withMemberChatColors(serverId, snapshot)),
     });
     this.#team = new RemoteTeamDirectory({
       servers: this.#store,
       request: (serverId, path, decoder, init) => this.#client.request(serverId, path, decoder, init),
       transport: this.#webrtcTransport,
+      isRegisteredThisComputer: (serverId) => this.#registeredThisComputerServers.has(serverId),
+      allowLocalDevelopmentApiUrl: this.#allowLocalDevelopmentInvites,
       sendInviteEmail: (input) => {
         if (!this.#centralAccount.sendTeamInviteEmail)
           throw new Error(sourceText("error.remote.emailDeliveryUnavailable"));
@@ -444,6 +465,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       onDirectTyping: (serverId, event) => this.emit("directTyping", serverId, event),
       onHostRestart: (serverId, event) => this.#applyHostRestart(serverId, event),
       onMachineAlert: (serverId, event) => this.emit("machineAlert", serverId, event),
+      onLiveVoice: (serverId, event) => this.emit("liveVoice", serverId, event),
       onOffline: (serverId) => this.#presence.markOffline(serverId),
       onChanged: () => this.#emitChanged(),
     });
@@ -455,7 +477,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       : null;
     this.#webrtcTransport?.on("connected", (serverId) => {
       this.#events.clearReconnectBackoff(serverId);
+      this.#events.markSeenOnline(serverId);
       this.#hostRestartAway.delete(serverId);
+      const hostedStartAt = this.#hostedStartAt.get(serverId);
+      if (hostedStartAt !== undefined)
+        this.#connectTrace?.hostedStart(serverId, Math.max(0, Date.now() - hostedStartAt));
       this.#clearHostedStart(serverId);
       this.#hostedStartExpired.delete(serverId);
       this.#connections.markConnected(serverId);
@@ -495,6 +521,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     });
     this.#webrtcTransport?.on("disconnected", (serverId) => {
       const wasOnline = this.#connections.statusFor(serverId).state === "online";
+      if (wasOnline) this.#events.markSeenOnline(serverId);
       // A host the app has stopped reconnecting to is not merely offline. The recorded failure is
       // the reason it will not come back, and this disconnect is that failure's own tail -- the one
       // `#suspendServer` asked for. Writing "offline" over an "incompatible" would leave the issue
@@ -504,6 +531,13 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       this.#emitChanged();
       this.#events.scheduleReconnect(serverId);
       if (wasOnline) this.emit("directoryInvalidated");
+    });
+    // A failed attempt can end with no error event, such as a timeout. The server then stayed offline
+    // with no issue, and the full-window loading screen waits for an issue to end (#5273).
+    this.#webrtcTransport?.on("connectFailed", (serverId) => {
+      if (!this.#store.has(serverId) || this.#connections.hasIssue(serverId)) return;
+      this.#connections.reportUnreachable(serverId, "transport/connect_failed");
+      this.#emitChanged();
     });
     this.#webrtcTransport?.on("event", (serverId, event) => this.#handleWebRtcEvent(serverId, event));
     this.#webrtcTransport?.on("error", (serverId, code, message) => {
@@ -731,12 +765,15 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     return snapshot;
   }).bind(this);
 
-  /** The agents with the last colours of the server. A server without `agent-colors-v1` has none. */
+  /**
+   * The agents with the last colours and chat colours of the server. A server without `agent-colors-v1`
+   * or `chat-colors-v1` has none.
+   */
   withAgentColors(serverId: string, agents: ClientAgentSummary[]): ClientAgentSummary[] {
     return this.#refresh.withAgentColors(serverId, agents);
   }
 
-  /** One agent with the last colour of the server. */
+  /** One agent with the last colour and chat colour of the server. */
   agentWithColor(serverId: string, agent: ClientAgentSummary): ClientAgentSummary {
     return this.#refresh.agentWithColor(serverId, agent);
   }
@@ -765,6 +802,32 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       body: { agentId: input.agentId, color: input.color },
     });
     this.#refresh.rememberAgentColors(serverId, colors);
+  }).bind(this);
+
+  /** Reads the chat colours of a server with `chat-colors-v1`. A server without it has none to read. */
+  readonly readChatColors = Effect.fn("RemoteManager.readChatColors")(function* (
+    this: RemoteServerManager,
+    serverId: string,
+  ) {
+    if (!this.supportsCapability(serverId, CHAT_COLORS_CAPABILITY)) return;
+    const colors = yield* this.request(serverId, CHAT_COLORS_ROUTES.read, decodeRemoteChatColors, {
+      method: "POST",
+      body: {},
+    });
+    this.#refresh.rememberChatColors(serverId, colors);
+  }).bind(this);
+
+  /** Sets or removes the chat colour of one agent. The caller checks `chat-colors-v1` first. */
+  readonly setAgentChatColor = Effect.fn("RemoteManager.setAgentChatColor")(function* (
+    this: RemoteServerManager,
+    serverId: string,
+    input: SetAgentChatColorInput,
+  ) {
+    const colors = yield* this.request(serverId, CHAT_COLORS_ROUTES.set, decodeRemoteChatColors, {
+      method: "POST",
+      body: { agentId: input.agentId, color: input.color },
+    });
+    this.#refresh.rememberChatColors(serverId, colors);
   }).bind(this);
 
   #levelsUnsupported() {
@@ -838,6 +901,45 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   supportsCapability(serverId: string, capability: TeamCurrentCapability): boolean {
     return this.#connections.compatibilityFor(serverId)?.capabilities.includes(capability) ?? false;
   }
+
+  /**
+   * Whether this computer shares its connection with a joined server (`browser-egress-v1`). Null when
+   * it cannot: this computer's own server, a server over HTTPS, or a host without the capability.
+   */
+  browserComputerSharing(serverId: string): BrowserComputerSharing | null {
+    if (serverId === LOCAL_SERVER_ID || this.#store.find(serverId)?.transport !== "webrtc-v2") return null;
+    if (!this.supportsCapability(serverId, BROWSER_EGRESS_CAPABILITY)) return null;
+    return { sharing: this.#store.sharesBrowserEgress(serverId) };
+  }
+
+  /** Whether the egress channel to a server must be open now: sharing is on and the server is connected. */
+  browserEgressWanted(serverId: string): boolean {
+    return (
+      this.browserComputerSharing(serverId)?.sharing === true && this.#webrtcTransport?.isConnected(serverId) === true
+    );
+  }
+
+  /** Turning sharing on also adds this member's computer to the proxies of the host. */
+  readonly setBrowserComputerSharing = Effect.fn("RemoteManager.setBrowserComputerSharing")(
+    function* (
+      this: RemoteServerManager,
+      serverId: string,
+      sharing: boolean,
+    ): Effect.fn.Return<void, RemoteWorkflowError, RemoteRequest> {
+      if (this.browserComputerSharing(serverId) === null)
+        return yield* new RemoteWorkflowError({ cause: new Error(sourceText("error.team.agentSettingsUnsupported")) });
+      if (sharing)
+        yield* RemoteRequest.use((service) =>
+          service.request(serverId, BROWSER_PROXIES_ROUTES.computer, decodeBrowserProxyComputer, {
+            method: "POST",
+            body: {},
+          }),
+        );
+      yield* this.#store.setBrowserEgress(serverId, sharing);
+      this.#emitChanged();
+    },
+    (operation) => this.#owned(operation),
+  ).bind(this);
 
   readonly startEventConnections = Effect.fn("RemoteManager.startEventConnections")(function* (
     this: RemoteServerManager,
@@ -1107,6 +1209,28 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   setThisComputerServers(serverIds: Iterable<string>): void {
     this.#thisComputerServers = new Set(serverIds);
     this.#emitChanged();
+  }
+
+  /**
+   * Before a server is registered, or while the app is signed out, its members and invitations stay
+   * with the server's own Team API, which lists its owner without an account.
+   */
+  setRegisteredThisComputerServers(serverIds: Iterable<string>): void {
+    this.#registeredThisComputerServers = new Set(serverIds);
+  }
+
+  setThisComputerMembersListener(listener: (serverId: string) => void): void {
+    this.#thisComputerMembersChanged = listener;
+  }
+
+  /**
+   * The child cannot read the account directory, so a change made here must reach it. Also after a
+   * failure: the account service can have changed the member before a later step failed.
+   */
+  #membersChanged(serverId: string): Effect.Effect<void> {
+    return Effect.sync(() => {
+      if (this.#thisComputerServers.has(serverId)) this.#thisComputerMembersChanged(serverId);
+    });
   }
 
   /**
@@ -1427,6 +1551,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       this.#scheduleHostedStartRead(serverId);
     }
     this.#events.setHostStarting(serverId, true);
+    // Signal holds the next attempt until the host connects, so the connection starts at once.
+    this.#webrtcTransport?.setWaitForHost(serverId, true);
     const sleepChanged = this.#connections.setHostedSleep(serverId, "waking");
     const step = (server && hostedStartStep(server)) ?? this.#connections.statusFor(serverId).hostedStart?.step;
     if (this.#applyHostedStartStep(serverId, step ?? "machine") || sleepChanged) this.#emitChanged();
@@ -1473,13 +1599,16 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     if (!hosted || this.#stopping || !this.#hostedStartAt.has(serverId)) return;
     const revision = this.#hostedStartRevision.get(serverId) ?? 0;
     const status = yield* hosted.status(serverId).pipe(Effect.catch(() => Effect.succeed(null)));
-    if (
-      this.#stopping ||
-      !this.#hostedStartAt.has(serverId) ||
-      !this.#store.has(serverId) ||
-      this.#connections.stateFor(serverId) === "online"
-    )
+    if (this.#stopping || !this.#hostedStartAt.has(serverId) || this.#connections.stateFor(serverId) === "online")
       return;
+    // A late wake reply can start a server after its removal cleared the start state but before the
+    // store dropped it. Nothing else ends that start, and it hides the next start of the same id.
+    if (!this.#store.has(serverId)) {
+      this.#clearHostedStart(serverId);
+      this.#events.setHostStarting(serverId, false);
+      this.#connections.setHostedSleep(serverId, null);
+      return;
+    }
     // A wake during the read changed the start. Its state is read again later.
     if ((this.#hostedStartRevision.get(serverId) ?? 0) !== revision) {
       this.#scheduleHostedStartRead(serverId);
@@ -1600,6 +1729,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#hostedRunningSince.delete(serverId);
     this.#hostedFailedReads.delete(serverId);
     this.#connections.setHostedStart(serverId, null);
+    this.#webrtcTransport?.setWaitForHost(serverId, false);
   }
 
   #expireHostedStart(serverId: string): void {
@@ -1725,11 +1855,18 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   getPresence(serverId = this.#store.activeServerId): TeamPresenceSnapshot {
-    return this.#presence.get(serverId);
+    return this.#withMemberChatColors(serverId, this.#presence.get(serverId));
   }
 
   getPresenceFor(serverId: string): Effect.Effect<TeamPresenceSnapshot, RemoteWorkflowError> {
-    return this.#owned(this.#presence.refresh(serverId));
+    return this.#owned(this.#presence.refresh(serverId)).pipe(
+      Effect.map((snapshot) => this.#withMemberChatColors(serverId, snapshot)),
+    );
+  }
+
+  /** The presence with the last member chat colours of the server. The released presence has none. */
+  #withMemberChatColors(serverId: string, snapshot: TeamPresenceSnapshot): TeamPresenceSnapshot {
+    return { ...snapshot, members: this.#refresh.withMemberChatColors(serverId, snapshot.members) };
   }
 
   readonly refreshIdentity = Effect.fn("RemoteManager.refreshIdentity")(
@@ -1759,15 +1896,21 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   ).bind(this);
 
   listMembers(serverId: string): Effect.Effect<TeamMemberSummary[], RemoteWorkflowError> {
-    return this.#owned(this.#team.listMembers(serverId));
+    return this.#owned(this.#team.listMembers(serverId)).pipe(
+      Effect.map((members) => this.#refresh.withMemberChatColors(serverId, members)),
+    );
   }
 
   updateMember(serverId: string, input: UpdateTeamMemberInput): Effect.Effect<TeamMemberSummary, RemoteWorkflowError> {
-    return this.#owned(this.#team.updateMember(serverId, input));
+    return this.#owned(
+      this.#team.updateMember(serverId, input).pipe(Effect.ensuring(this.#membersChanged(serverId))),
+    ).pipe(Effect.map((member) => this.#refresh.withMemberChatColors(serverId, [member])[0] ?? member));
   }
 
   removeMember(serverId: string, memberId: string): Effect.Effect<void, RemoteWorkflowError> {
-    return this.#owned(this.#team.removeMember(serverId, memberId));
+    return this.#owned(
+      this.#team.removeMember(serverId, memberId).pipe(Effect.ensuring(this.#membersChanged(serverId))),
+    );
   }
 
   listInvites(serverId: string): Effect.Effect<TeamInviteSummary[], RemoteWorkflowError> {
@@ -1897,12 +2040,14 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       serverId: string,
     ): Effect.fn.Return<RemoteDesktopSession, RemoteWorkflowError, RemoteRequest> {
       const viewerProxy = this.#remoteViewerProxy;
-
+      const webRtc = (yield* remoteDecode(() => this.#store.require(serverId))).transport === "webrtc-v2";
+      // The host can wait for its user to allow the session. A WebRTC request already waits longer.
       const session = yield* this.request(serverId, TEAM_API_ROUTES.remoteScreen.sessions, decodeRemoteDesktopSession, {
         method: "POST",
         body: {},
+        ...(webRtc ? {} : { timeoutMs: REMOTE_DESKTOP_SESSION_HTTP_TIMEOUT_MS }),
       });
-      if ((yield* remoteDecode(() => this.#store.require(serverId))).transport !== "webrtc-v2") return session;
+      if (!webRtc) return session;
       if (!viewerProxy)
         return yield* new RemoteWorkflowError({
           cause: new Error(sourceText("error.remote.viewerProxyUnavailable")),
@@ -2436,6 +2581,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     else if (event.type === "team-direct-typing") this.emit("directTyping", serverId, event);
     else if (event.type === "host-restart") this.#applyHostRestart(serverId, event);
     else if (event.type === "machine-alert") this.emit("machineAlert", serverId, event);
+    else if (event.type === "live-voice") this.emit("liveVoice", serverId, event);
     else this.#background(this.#owned(this.#refresh.forward(serverId, event)));
   }
 

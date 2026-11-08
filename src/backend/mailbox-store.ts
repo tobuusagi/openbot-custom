@@ -49,6 +49,7 @@ import { StoredStateFailure, storedIO, storedSync, toStoredStateFailure } from "
 export type { ExportedAttachmentFile, GeneratedAttachmentSource } from "./attachment-files";
 
 import { isEmptyStoredFile, parseStoredJson } from "./atomic-json-file";
+import { routineNameInLimit } from "./database/legacy-conversation-message";
 import { mailboxReactionRowKey } from "./database/mailbox-projection";
 import { MailboxDeliveryGate } from "./mailbox-delivery-gate";
 import { OpenBotDatabase } from "./openbot-database";
@@ -56,6 +57,8 @@ import { isRecord } from "./protocol";
 import { recordRestartActivity } from "./restart-activity";
 
 const MAX_ATTACHMENTS = INPUT_LIMITS.attachments;
+/** How much of a delivery's error the note for a failed request quotes. */
+const FAILED_REQUEST_REASON_LIMIT = 2_000;
 /**
  * The external conversation a message came from. Such a message runs in the execution thread of
  * that conversation, so the queue and the public chat do not show it, like channel work.
@@ -84,7 +87,7 @@ interface StoredMessage {
   taskId?: string;
   /**
    * The side thread an agent sent this message from. An answer to it runs in that thread, and the
-   * sender's own chat does not show it. Never sent to a client.
+   * sender's own chat does not show it. The recipient's chat gets it, so the sender link opens that thread.
    */
   senderTaskId?: string;
   id: string;
@@ -441,11 +444,31 @@ export class MailboxStore {
    * in the chats.
    */
   #answerReturn(input: EnqueueInput, recipients: readonly string[]): MessagingOrigin | undefined {
-    if (input.sender.kind !== "agent" || !input.replyToMessageId || recipients.length !== 1) return undefined;
-    const request = this.#state.messages.find((message) => message.id === input.replyToMessageId);
-    if (!request?.messagingReturn || request.sender.kind !== "agent" || request.sender.agentId !== recipients[0])
+    if (input.sender.kind !== "agent" || !input.replyToMessageId) return undefined;
+    return this.answerReturn([input.replyToMessageId], recipients);
+  }
+
+  /**
+   * The external conversation that an agent's answer to these requests goes back to, when they all
+   * came from that one conversation and the answer goes to the agent that sent them, and to no one else.
+   */
+  answerReturn(requestIds: readonly string[], recipients: readonly string[]): MessagingOrigin | undefined {
+    if (recipients.length !== 1) return undefined;
+    const origins = requestIds.map((requestId) => {
+      const request = this.#state.messages.find((message) => message.id === requestId);
+      return request?.sender.kind === "agent" && request.sender.agentId === recipients[0]
+        ? request.messagingReturn
+        : undefined;
+    });
+    const [origin] = origins;
+    if (
+      !origin ||
+      origins.some(
+        (candidate) => candidate?.linkId !== origin.linkId || candidate.platformMessageId !== origin.platformMessageId,
+      )
+    )
       return undefined;
-    return structuredClone(request.messagingReturn);
+    return structuredClone(origin);
   }
 
   /**
@@ -588,7 +611,7 @@ export class MailboxStore {
         ...(input.taskId ? { taskId: input.taskId } : {}),
         ...(input.senderTaskId ? { senderTaskId: input.senderTaskId } : {}),
         id: messageId,
-        sender: input.sender,
+        sender: storedSender(input.sender),
         ...(input.sender.kind === "user" && input.senderMember ? { senderMember: input.senderMember } : {}),
         text: rewriteAttachmentReferences(text, (reference) => {
           const attachment = committedByDraftId.get(reference.attachmentId);
@@ -884,6 +907,22 @@ export class MailboxStore {
     });
   }
 
+  /**
+   * The queued deliveries of one task, in queue order, as the agent's own chat lists its queue. The
+   * same deliveries as `queuedTaskMessages`, with their files and state, for the queue of the thread.
+   */
+  taskQueue(agentId: string, taskId: string): QueueDelivery[] {
+    const queued = this.#queuedFor(agentId).filter((delivery) => !waitsForPlanContinuation(delivery));
+    if (queued.length === 0) return [];
+    const messages = this.#messagesById();
+    const deliveries = queued.filter((delivery) => this.#taskIdOf(delivery, messages) === taskId);
+    // The position is in the queue of the thread, as the panel of the thread shows it.
+    const positions = new Map(deliveries.map((delivery, index) => [delivery.id, index + 1]));
+    return deliveries.map((delivery) =>
+      this.#publicDelivery(delivery, positions, this.#requireMessage(delivery.messageId, messages)),
+    );
+  }
+
   /** Whether a delivery of this lane is starting or running: the agent's own chat when `taskId` is null. */
   laneActive(agentId: string, taskId: string | null): boolean {
     return this.#state.deliveries.some(
@@ -994,80 +1033,87 @@ export class MailboxStore {
    * still use them, and the deleted-message record hides them in this chat. An active delivery stops
    * the removal, and the state stays as it was.
    */
-  deleteShownMessage = Effect.fn("MailboxStore.deleteShownMessage")(function* (
+  deleteShownMessage(agentId: string, shownMessageId: string): Effect.Effect<"busy" | "deleted", StoredStateFailure> {
+    return this.deleteShownMessages(agentId, [shownMessageId], `mailbox:message-deleted:${agentId}:${shownMessageId}`);
+  }
+
+  /**
+   * As `deleteShownMessage`, for each message of a chat history that a person deletes, in one write.
+   * One active delivery stops the whole removal.
+   */
+  deleteShownMessages = Effect.fn("MailboxStore.deleteShownMessages")(function* (
     this: MailboxStore,
     agentId: string,
-    shownMessageId: string,
+    shownMessageIds: readonly string[],
+    commandPrefix = `mailbox:history-deleted:${agentId}`,
   ): Effect.fn.Return<"busy" | "deleted", StoredStateFailure> {
     try {
+      const shown = new Set(shownMessageIds);
       const found = () => {
-        const delivery = this.#state.deliveries.find(
-          (candidate) => candidate.id === shownMessageId && candidate.recipientAgentId === agentId,
+        const deliveries = this.#state.deliveries.filter(
+          (candidate) => shown.has(candidate.id) && candidate.recipientAgentId === agentId,
         );
-        const message = delivery
-          ? this.#state.messages.find((candidate) => candidate.id === delivery.messageId)
-          : undefined;
-        const personal = delivery && message?.sender.kind === "user" ? { delivery, message } : undefined;
-        const lastDelivery =
-          personal !== undefined &&
-          !this.#state.deliveries.some(
-            (candidate) => candidate.messageId === personal.message.id && candidate.id !== personal.delivery.id,
-          );
-        return { delivery, personal, lastDelivery };
+        const messages = this.#messagesById();
+        const personal = deliveries.flatMap((delivery) => {
+          const message = messages.get(delivery.messageId);
+          return message?.sender.kind === "user" ? [{ delivery, message }] : [];
+        });
+        const removedDeliveryIds = new Set(personal.map(({ delivery }) => delivery.id));
+        // A message goes with its last delivery; a delivery that this delete keeps keeps it.
+        const keptMessageIds = new Set(
+          this.#state.deliveries
+            .filter((candidate) => !removedDeliveryIds.has(candidate.id))
+            .map((candidate) => candidate.messageId),
+        );
+        const lastOf = personal.filter(({ message }) => !keptMessageIds.has(message.id)).map(({ message }) => message);
+        return { deliveries, personal, lastOf: [...new Set(lastOf)] };
       };
       const before = found();
-      if (before.delivery && isActiveDelivery(before.delivery)) return "busy";
+      if (before.deliveries.some(isActiveDelivery)) return "busy";
       // The path checks wait, so they run before the state changes, as in `deleteStoredFile`.
       const managedPaths = new Map<string, string | null>();
-      if (before.personal && before.lastDelivery) {
-        for (const file of messageFiles(before.personal.message)) {
+      for (const message of before.lastOf) {
+        for (const file of messageFiles(message)) {
           if (file.deletedAt || managedPaths.has(file.path)) continue;
           managedPaths.set(file.path, yield* this.#files.managedTransferFile(file.path).pipe(toStoredStateFailure));
         }
       }
-      const { delivery, personal, lastDelivery } = found();
-      if (delivery && isActiveDelivery(delivery)) return "busy";
+      const { deliveries, personal, lastOf } = found();
+      if (deliveries.some(isActiveDelivery)) return "busy";
+      const removedMessageIds = new Set(lastOf.map((message) => message.id));
       const reactions = this.#state.reactions.filter(
         (reaction) =>
-          (reaction.agentId === agentId && reaction.messageId === shownMessageId) ||
-          (lastDelivery && reaction.messageId === personal?.message.id),
+          (reaction.agentId === agentId && shown.has(reaction.messageId)) || removedMessageIds.has(reaction.messageId),
       );
-      if (!personal && reactions.length === 0) return "deleted";
+      if (personal.length === 0 && reactions.length === 0) return "deleted";
       const previous = structuredClone(this.#state);
       const deletions: string[] = [];
-      if (personal) {
-        this.#state.deliveries = this.#state.deliveries.filter((candidate) => candidate.id !== personal.delivery.id);
-        this.#changes.deliveryIds.add(personal.delivery.id);
-        if (lastDelivery) {
-          const messageId = personal.message.id;
-          this.#state.messages = this.#state.messages.filter((candidate) => candidate.id !== messageId);
-          this.#changes.messageIds.add(messageId);
-          for (const [key, keyMessageId] of Object.entries(this.#state.idempotency))
-            if (keyMessageId === messageId) delete this.#state.idempotency[key];
-          const inUse = new Set(
-            this.#fileRecords()
-              .filter((record) => !record.deletedAt)
-              .map((record) => record.path),
-          );
-          for (const path of new Set(
-            messageFiles(personal.message)
-              .filter((file) => !file.deletedAt)
-              .map((file) => file.path),
-          )) {
-            const managed = inUse.has(path) ? null : managedPaths.get(path);
-            if (managed) deletions.push(managed);
-          }
+      const removedDeliveryIds = new Set(personal.map(({ delivery }) => delivery.id));
+      this.#state.deliveries = this.#state.deliveries.filter((candidate) => !removedDeliveryIds.has(candidate.id));
+      for (const id of removedDeliveryIds) this.#changes.deliveryIds.add(id);
+      if (removedMessageIds.size > 0) {
+        this.#state.messages = this.#state.messages.filter((candidate) => !removedMessageIds.has(candidate.id));
+        for (const id of removedMessageIds) this.#changes.messageIds.add(id);
+        for (const [key, keyMessageId] of Object.entries(this.#state.idempotency))
+          if (removedMessageIds.has(keyMessageId)) delete this.#state.idempotency[key];
+        const inUse = new Set(
+          this.#fileRecords()
+            .filter((record) => !record.deletedAt)
+            .map((record) => record.path),
+        );
+        for (const path of new Set(
+          lastOf.flatMap(messageFiles).flatMap((file) => (file.deletedAt ? [] : [file.path])),
+        )) {
+          const managed = inUse.has(path) ? null : managedPaths.get(path);
+          if (managed) deletions.push(managed);
         }
       }
-      this.#state.reactions = this.#state.reactions.filter((reaction) => !reactions.includes(reaction));
+      const removedReactions = new Set(reactions);
+      this.#state.reactions = this.#state.reactions.filter((reaction) => !removedReactions.has(reaction));
       for (const reaction of reactions)
         this.#changes.reactionKeys.add(mailboxReactionRowKey(reaction.agentId, reaction.messageId, reaction.actor));
       try {
-        this.#persist(
-          "mailbox.message-deleted",
-          `mailbox:message-deleted:${agentId}:${shownMessageId}:${randomUUID()}`,
-          deletions,
-        );
+        this.#persist("mailbox.message-deleted", `${commandPrefix}:${randomUUID()}`, deletions);
       } catch (error) {
         this.#state = previous;
         throw error;
@@ -1085,38 +1131,54 @@ export class MailboxStore {
    * assignment messages that already went to members stay: their turns used them. A copy that a
    * delivery still uses stays too.
    */
-  deleteChannelMessageCopy = Effect.fn("MailboxStore.deleteChannelMessageCopy")(function* (
+  deleteChannelMessageCopy(channelId: string, messageId: string): Effect.Effect<void, StoredStateFailure> {
+    return this.deleteChannelMessageCopies(
+      channelId,
+      [messageId],
+      `mailbox:channel-message-deleted:${channelId}:${messageId}`,
+    );
+  }
+
+  /** As `deleteChannelMessageCopy`, for each copy of the channel when `messageIds` is "all", in one write. */
+  deleteChannelMessageCopies = Effect.fn("MailboxStore.deleteChannelMessageCopies")(function* (
     this: MailboxStore,
     channelId: string,
-    messageId: string,
+    messageIds: readonly string[] | "all",
+    commandPrefix = `mailbox:channel-history-deleted:${channelId}`,
   ): Effect.fn.Return<void, StoredStateFailure> {
     try {
-      const find = () =>
-        this.#state.messages.find(
+      const named = messageIds === "all" ? null : new Set(messageIds);
+      const find = () => {
+        const delivered = new Set(this.#state.deliveries.map((delivery) => delivery.messageId));
+        return this.#state.messages.filter(
           (candidate) =>
-            candidate.id === messageId &&
             candidate.channelId === channelId &&
-            !this.#state.deliveries.some((delivery) => delivery.messageId === messageId),
+            (named === null || named.has(candidate.id)) &&
+            !delivered.has(candidate.id),
         );
+      };
       const before = find();
-      if (!before) return;
-      // The path checks wait, so they run before the state changes, as in `deleteShownMessage`.
+      if (before.length === 0) return;
+      // The path checks wait, so they run before the state changes, as in `deleteShownMessages`.
       const managedPaths = new Map<string, string | null>();
-      for (const file of messageFiles(before)) {
+      for (const file of before.flatMap(messageFiles)) {
         if (file.deletedAt || managedPaths.has(file.path)) continue;
         managedPaths.set(file.path, yield* this.#files.managedTransferFile(file.path).pipe(toStoredStateFailure));
       }
-      const message = find();
-      if (!message) return;
+      const messages = find();
+      if (messages.length === 0) return;
+      const removed = new Set(messages);
+      const removedIds = new Set(messages.map((message) => message.id));
       const previous = structuredClone(this.#state);
-      this.#state.messages = this.#state.messages.filter((candidate) => candidate !== message);
-      this.#changes.messageIds.add(message.id);
-      const reactions = this.#state.reactions.filter((reaction) => reaction.messageId === message.id);
-      this.#state.reactions = this.#state.reactions.filter((reaction) => !reactions.includes(reaction));
+      this.#state.messages = this.#state.messages.filter((candidate) => !removed.has(candidate));
+      for (const id of removedIds) this.#changes.messageIds.add(id);
+      const reactions = this.#state.reactions.filter((reaction) => removedIds.has(reaction.messageId));
+      const removedReactions = new Set(reactions);
+      this.#state.reactions = this.#state.reactions.filter((reaction) => !removedReactions.has(reaction));
       for (const reaction of reactions)
         this.#changes.reactionKeys.add(mailboxReactionRowKey(reaction.agentId, reaction.messageId, reaction.actor));
       for (const [key, keyMessageId] of Object.entries(this.#state.idempotency))
-        if (keyMessageId === message.id) delete this.#state.idempotency[key];
+        if (removedIds.has(keyMessageId)) delete this.#state.idempotency[key];
       const inUse = new Set(
         this.#fileRecords()
           .filter((record) => !record.deletedAt)
@@ -1124,19 +1186,13 @@ export class MailboxStore {
       );
       const deletions: string[] = [];
       for (const path of new Set(
-        messageFiles(message)
-          .filter((file) => !file.deletedAt)
-          .map((file) => file.path),
+        messages.flatMap(messageFiles).flatMap((file) => (file.deletedAt ? [] : [file.path])),
       )) {
         const managed = inUse.has(path) ? null : managedPaths.get(path);
         if (managed) deletions.push(managed);
       }
       try {
-        this.#persist(
-          "mailbox.channel-message-deleted",
-          `mailbox:channel-message-deleted:${channelId}:${messageId}:${randomUUID()}`,
-          deletions,
-        );
+        this.#persist("mailbox.channel-message-deleted", `${commandPrefix}:${randomUUID()}`, deletions);
       } catch (error) {
         this.#state = previous;
         throw error;
@@ -1402,6 +1458,7 @@ export class MailboxStore {
                   recipientAgentIds: deliveries.map((item) => item.recipientAgentId),
                   replyToMessageId: message.replyToMessageId,
                   ...(message.expectsReply === false ? { expectsReply: false } : {}),
+                  ...(message.senderTaskId ? { senderTaskId: message.senderTaskId } : {}),
                   deliveries: deliveries.map((item) => {
                     const publicItem = this.#publicDelivery(item, positions, message);
                     return {
@@ -1729,6 +1786,21 @@ export class MailboxStore {
     return delivery ? this.#context(delivery) : null;
   }
 
+  /**
+   * Whether a turn of the agent started to answer a request that an agent sent from an external
+   * conversation. A request steered into a running turn does not count: the user can watch that turn.
+   */
+  answersMessagingRequest(agentId: string, turnId: string): boolean {
+    return this.#state.deliveries.some(
+      (delivery) =>
+        delivery.recipientAgentId === agentId &&
+        delivery.turnId === turnId &&
+        delivery.steeredAt === undefined &&
+        (delivery.status === "starting" || delivery.status === "running") &&
+        this.#state.messages.some((message) => message.id === delivery.messageId && message.messagingReturn),
+    );
+  }
+
   findDeliveriesByTurn(agentId: string, turnId: string): DeliveryContext[] {
     return this.#contexts(
       this.#state.deliveries.filter(
@@ -1904,6 +1976,15 @@ export class MailboxStore {
     return null;
   }
 
+  /**
+   * The stored message that a reply reference names. An agent's history and tool results show the id of
+   * a delivery, so a delivery id names its message. Null when the id names neither.
+   */
+  replyReferenceMessageId(id: string): string | null {
+    if (this.#state.messages.some((message) => message.id === id)) return id;
+    return this.#state.deliveries.find((delivery) => delivery.id === id)?.messageId ?? null;
+  }
+
   /** Whether the message's sender waits for an answer. Unknown messages count as expecting one. */
   expectsReply(messageId: string): boolean {
     return this.#state.messages.find((message) => message.id === messageId)?.expectsReply !== false;
@@ -1920,6 +2001,50 @@ export class MailboxStore {
         message.sender.kind === "agent" && message.sender.agentId === agentId && message.replyToMessageId === messageId,
     );
   }
+
+  /**
+   * Answers a teammate request whose delivery failed, so the agent that asked does not wait for a
+   * result that never comes (#5055). The note goes where a result would go, as a reply from the
+   * teammate in the reply format, and the key sends it once. The text is the delivery's error, which
+   * `markTerminal` redacted. Returns the agent to wake, or null when no note is due.
+   */
+  answerFailedRequest = Effect.fn("MailboxStore.answerFailedRequest")(function* (
+    this: MailboxStore,
+    deliveryId: string,
+    taskOpen: (taskId: string) => boolean,
+  ): Effect.fn.Return<string | null, StoredStateFailure> {
+    const delivery = this.#state.deliveries.find((candidate) => candidate.id === deliveryId);
+    const request = delivery && this.#state.messages.find((message) => message.id === delivery.messageId);
+    if (delivery?.status !== "failed" || request?.sender.kind !== "agent" || request.channelId) return null;
+    const teammateId = delivery.recipientAgentId;
+    const requesterId = request.sender.agentId;
+    const originAgentId = this.chainOriginAgentId(request.id);
+    if (
+      requesterId === teammateId ||
+      !originAgentId ||
+      originAgentId === teammateId ||
+      request.expectsReply === false ||
+      this.hasReplyFrom(teammateId, request.id)
+    )
+      return null;
+    const answerTaskId = this.answerTaskId(teammateId, request.id, [requesterId]);
+    const taskId = answerTaskId && taskOpen(answerTaskId) ? answerTaskId : undefined;
+    yield* this.enqueue({
+      sender: { kind: "agent", agentId: teammateId },
+      recipientAgentIds: [requesterId],
+      text: [
+        "Status: blocked",
+        `Result: OpenBot note, not written by this teammate: the request failed before the teammate answered. ${(delivery.error ?? "The provider gave no reason.").slice(0, FAILED_REQUEST_REASON_LIMIT)}`,
+        "Evidence: none",
+        "Unblock: The user must fix the cause, then ask for the request again.",
+      ].join("\n"),
+      replyToMessageId: request.id,
+      ...(taskId ? { taskId } : {}),
+      expectsReply: false,
+      idempotencyKey: `failed-request:${deliveryId}`,
+    });
+    return requesterId;
+  }, Effect.uninterruptible).bind(this);
 
   hasAgentMessageFromTurnTo(agentId: string, turnId: string, recipientAgentId: string): boolean {
     const turnIds = this.#sourceTurnIds();
@@ -3201,12 +3326,26 @@ function toCurrentMailboxMessage(value: unknown): DynamicRecord | null {
   // mailbox from loading.
   return {
     ...message,
-    sender: toCurrentMailboxActor(value.sender),
+    sender: withRoutineNameInLimit(toCurrentMailboxActor(value.sender)),
     ...(isConversationMessageSender(senderMember) ? { senderMember } : {}),
     // Released builds kept an agent's `replyToMessageId: ""`, which refers to no message, and every
     // conversation that showed the message then failed to read.
     ...(message.replyToMessageId === "" ? { replyToMessageId: null } : {}),
   };
+}
+
+/**
+ * A workflow handoff uses the workflow title as its routine name, and a title can be longer than the
+ * routine name that every reader accepts. A longer name made each read of the message fail.
+ */
+function storedSender(sender: StoredMessage["sender"]): StoredMessage["sender"] {
+  return sender.kind === "routine" ? { ...sender, routineName: routineNameInLimit(sender.routineName) } : sender;
+}
+
+function withRoutineNameInLimit(sender: DynamicRecord | null): DynamicRecord | null {
+  return sender?.kind === "routine" && isString(sender.routineName)
+    ? { ...sender, routineName: routineNameInLimit(sender.routineName) }
+    : sender;
 }
 
 function toCurrentMailboxReaction(value: unknown): DynamicRecord | null {
