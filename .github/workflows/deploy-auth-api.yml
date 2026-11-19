@@ -22,9 +22,16 @@ jobs:
       - name: Build
         working-directory: apps/auth-api
         run: bun run build
-      - name: Deploy
+      - name: Deploy (only when CLOUDFLARE_API_TOKEN secret exists)
+        if: ${{ env.CLOUDFLARE_API_TOKEN != '' }}
         working-directory: apps/auth-api
-        run: bunx wrangler deploy
-      - name: D1 migrations
-        working-directory: apps/auth-api
-        run: bunx wrangler d1 migrations apply openbot-auth --remote
+        run: bunx wrangler deploy && bunx wrangler d1 migrations apply openbot-auth --remote
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: auth-api-build
+          include-hidden-files: true
+          retention-days: 7
+          path: |
+            apps/auth-api/dist
+            apps/auth-api/.wrangler/deploy
