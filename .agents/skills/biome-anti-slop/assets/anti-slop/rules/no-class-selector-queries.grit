@@ -1,0 +1,17 @@
+language js(typescript)
+
+// scope: tests
+
+or {
+  `$_.$method($selector)`,
+  `$_.$method<$_>($selector)`
+} as $call where {
+  $method <: or { `querySelector`, `querySelectorAll`, `closest` },
+  $selector <: r"[\"'].*\.[A-Za-z_-].*",
+  $call <: within or { `expect($...)`, `within($...)` },
+  register_diagnostic(
+    span=$call,
+    message="Do not assert on an element found by CSS class. See the Tests section of AGENTS.md: a class is a styling detail, so this asserts markup structure rather than behaviour and breaks on any refactor. Query by accessible role and name instead.",
+    severity="error"
+  )
+}

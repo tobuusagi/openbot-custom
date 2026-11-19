@@ -1,0 +1,618 @@
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import type {
+  AgentDefaults,
+  AgentDockAction,
+  AgentDockDragPhase,
+  AgentDockInputRect,
+  AgentDockPresentation,
+  AgentMemoryLimitPreference,
+  AgentProviderId,
+  AppBehaviorPreferenceChange,
+  AppFontFamily,
+  AvatarColor,
+  BrowserDockAction,
+  BrowserDockFrame,
+  BrowserDockPresentation,
+  BrowserTakeoverPage,
+  BusyMessageModePreference,
+  ChatBackgroundColor,
+  ChatWindowTarget,
+  DeleteHostedSiteInput,
+  DynamicIslandAction,
+  DynamicIslandPreference,
+  DynamicIslandPresentation,
+  ExternalDestination,
+  ExternalLinkPreference,
+  HostUpdateSettingsChange,
+  IdleRestartTarget,
+  InstallMarketplaceAgentInput,
+  InstallSkillInput,
+  MacAutomationTarget,
+  MacPermissionId,
+  MarketplaceAgentQuery,
+  MarketplaceSkillQuery,
+  MarketplaceSkillSort,
+  MemoryReviewPreference,
+  NotificationPreference,
+  PublishHostedSiteInput,
+  RemoteNetworkRoutePreference,
+  RemoteSessionReusePreference,
+  RendererTimingReport,
+  ReplaceHostedSiteInput,
+  SaveSetupInput,
+  SetAgentDockInteractiveInput,
+  SetAgentDockXWaylandInput,
+  SetAnalyticsPreferenceInput,
+  SetAppAppearancePreferenceInput,
+  SetAppInterfaceSizePreferenceInput,
+  SetAppLanguagePreferenceInput,
+  SetAppLogoColorPreferenceInput,
+  SetDynamicIslandInteractiveInput,
+  SetEnabledSkillInput,
+  SubmitMarketplaceAgentInput,
+  SubmitSkillInput,
+  UninstallSkillInput,
+  UpdatePreferenceChange,
+  VerifyEmailCodeInput,
+} from "@openbot/contracts/ipc";
+import {
+  decodeExternalLinkTarget,
+  GITHUB_SKILL_ID_MAX_LENGTH,
+  IDLE_RESTART_TARGETS,
+  isAgentDefaults,
+  isAgentDockAction,
+  isAgentDockDragPhase,
+  isAgentDockInputRegion,
+  isAgentDockInteractive,
+  isAgentDockPresentation,
+  isAgentDockXWayland,
+  isAgentMemoryLimit,
+  isAgentModel,
+  isAgentProvider,
+  isAppAppearance,
+  isAppFontFamily,
+  isAppInterfaceSize,
+  isAppLanguage,
+  isAppLogoColor,
+  isAppThemePaletteId,
+  isAvatarColor,
+  isBrowserDockAction,
+  isBrowserDockFrame,
+  isBrowserDockPresentation,
+  isBrowserTakeoverPage,
+  isBusyMessageMode,
+  isChatBackgroundColor,
+  isDynamicIslandAction,
+  isDynamicIslandInteractive,
+  isDynamicIslandPreference,
+  isDynamicIslandPresentation,
+  isMemoryReviewInterval,
+  isRemoteNetworkRoute,
+  isSkillCategory,
+  MAC_AUTOMATION_TARGETS,
+  QUIT_GUARDS,
+  RENDERER_TIMING_LIMITS,
+} from "@openbot/contracts/ipc";
+import { isReferralCode } from "@openbot/contracts/referral";
+import {
+  type DynamicRecord,
+  isBoolean,
+  isDynamicRecord,
+  isNumber,
+  isOneOf,
+  isString,
+} from "@openbot/contracts/runtime-values";
+import { validateProfileName } from "@openbot/contracts/validation";
+import { parseAvatarImage } from "./avatar-inputs";
+import { isObject, optionalBoolean, requireString } from "./validation";
+
+export function parseSetup(input: unknown): SaveSetupInput {
+  if (!isDynamicRecord(input)) throw new Error("Setup input is required.");
+  const provider = input.preferredProvider;
+  if (!isAgentProvider(provider)) throw new Error("Unknown provider.");
+  const model = input.preferredModel;
+  if (model !== null && !isAgentModel(model)) throw new Error("Unknown model.");
+  return { preferredProvider: provider, preferredModel: model };
+}
+
+export function parseProviderId(input: unknown): AgentProviderId {
+  if (!isAgentProvider(input)) throw new Error("Unknown provider.");
+  return input;
+}
+
+export function parseAnalyticsPreference(input: unknown): SetAnalyticsPreferenceInput {
+  if (!isDynamicRecord(input) || !isBoolean(input.enabled)) throw new Error("Analytics preference is required.");
+  if (input.chosen !== undefined && !isBoolean(input.chosen)) throw new Error("Analytics choice is not valid.");
+  return { enabled: input.enabled, ...(input.chosen ? { chosen: true } : {}) };
+}
+
+function isCount(value: unknown, max: number): value is number {
+  return isNumber(value) && Number.isSafeInteger(value) && value >= 0 && value <= max;
+}
+
+export function parseRendererTimingReport(input: unknown): RendererTimingReport {
+  if (!isDynamicRecord(input)) throw new Error("Renderer timing is required.");
+  const { workspaceReady, longTasks, inputs, inputDelaysMs } = input;
+  if (workspaceReady !== undefined && workspaceReady !== true) throw new Error("Workspace ready is not valid.");
+  if (!isCount(longTasks, RENDERER_TIMING_LIMITS.longTasks) || !isCount(inputs, RENDERER_TIMING_LIMITS.inputs))
+    throw new Error("Renderer timing is not valid.");
+  if (
+    !Array.isArray(inputDelaysMs) ||
+    inputDelaysMs.length > Math.min(RENDERER_TIMING_LIMITS.inputDelays, inputs) ||
+    !inputDelaysMs.every((delay) => isCount(delay, RENDERER_TIMING_LIMITS.inputDelayMs))
+  ) {
+    throw new Error("Input delays are not valid.");
+  }
+  return { ...(workspaceReady ? { workspaceReady } : {}), longTasks, inputs, inputDelaysMs: [...inputDelaysMs] };
+}
+
+export function parseBusyMessageModePreference(input: unknown): BusyMessageModePreference {
+  if (!isDynamicRecord(input) || !isBusyMessageMode(input.mode)) throw new Error("Busy message mode is required.");
+  return { mode: input.mode };
+}
+
+export function parseAgentDefaults(input: unknown): AgentDefaults {
+  if (!isAgentDefaults(input)) throw new Error("Agent defaults are required.");
+  return {
+    allowAutomation: input.allowAutomation,
+    allowNewChat: input.allowNewChat,
+    quickAcknowledgement: input.quickAcknowledgement,
+    planStartAfterMs: input.planStartAfterMs,
+    automationRunsPerHour: input.automationRunsPerHour,
+    commitCoAuthor: input.commitCoAuthor,
+  };
+}
+
+export function parseAgentMemoryLimitPreference(input: unknown): AgentMemoryLimitPreference {
+  if (!isDynamicRecord(input) || !isAgentMemoryLimit(input.limit)) throw new Error("Agent memory limit is required.");
+  return { limit: input.limit };
+}
+
+export function parseMemoryReviewPreference(input: unknown): MemoryReviewPreference {
+  if (!isDynamicRecord(input) || !isMemoryReviewInterval(input.interval))
+    throw new Error("Memory review interval is required.");
+  return { interval: input.interval };
+}
+
+export function parseChatWindowTarget(input: unknown): ChatWindowTarget {
+  if (!isDynamicRecord(input)) throw new Error("A chat is required.");
+  return { serverId: requireString(input.serverId, "Server"), agentId: requireString(input.agentId, "Agent") };
+}
+
+export function parseExternalLinkPreference(input: unknown): ExternalLinkPreference {
+  const target = isDynamicRecord(input) ? decodeExternalLinkTarget(input.target) : null;
+  if (!target) throw new Error("The external link setting is required.");
+  return { target };
+}
+
+export function parseRemoteSessionReusePreference(input: unknown): RemoteSessionReusePreference {
+  if (!isDynamicRecord(input) || !isBoolean(input.keepBetweenRuns))
+    throw new Error("The remote session setting is required.");
+  return { keepBetweenRuns: input.keepBetweenRuns };
+}
+
+export function parseRemoteNetworkRoutePreference(input: unknown): RemoteNetworkRoutePreference {
+  if (!isDynamicRecord(input) || !isRemoteNetworkRoute(input.route)) throw new Error("The network route is required.");
+  return { route: input.route };
+}
+
+export function parseAppLanguagePreference(input: unknown): SetAppLanguagePreferenceInput {
+  if (!isDynamicRecord(input) || !isAppLanguage(input.language)) throw new Error("Language preference is required.");
+  return { language: input.language };
+}
+
+export function parseAppLogoColorPreference(input: unknown): SetAppLogoColorPreferenceInput {
+  if (!isDynamicRecord(input) || !isAppLogoColor(input.color)) throw new Error("Logo color is required.");
+  return { color: input.color };
+}
+
+function parseChatBackground(value: unknown): ChatBackgroundColor | null {
+  if (value !== null && !isChatBackgroundColor(value)) throw new Error("Chat background is invalid.");
+  return value;
+}
+
+function parseFontFamily(value: unknown): AppFontFamily | null {
+  if (value !== null && !isAppFontFamily(value)) throw new Error("Font is invalid.");
+  return value;
+}
+
+export function parseAppAppearancePreference(input: unknown): SetAppAppearancePreferenceInput {
+  if (!isDynamicRecord(input)) throw new Error("Appearance is required.");
+  const { appearance, transparentWindow, palette, chatBackgroundLight, chatBackgroundDark, interfaceFont, codeFont } =
+    input;
+  if (appearance !== undefined && !isAppAppearance(appearance)) throw new Error("Appearance is invalid.");
+  if (transparentWindow !== undefined && typeof transparentWindow !== "boolean")
+    throw new Error("Transparent window must be true or false.");
+  if (palette !== undefined && palette !== null && !isAppThemePaletteId(palette))
+    throw new Error("Theme palette is invalid.");
+  if (
+    appearance === undefined &&
+    transparentWindow === undefined &&
+    palette === undefined &&
+    chatBackgroundLight === undefined &&
+    chatBackgroundDark === undefined &&
+    interfaceFont === undefined &&
+    codeFont === undefined
+  )
+    throw new Error("Appearance is required.");
+  return {
+    ...(appearance === undefined ? {} : { appearance }),
+    ...(transparentWindow === undefined ? {} : { transparentWindow }),
+    ...(palette === undefined ? {} : { palette }),
+    ...(chatBackgroundLight === undefined ? {} : { chatBackgroundLight: parseChatBackground(chatBackgroundLight) }),
+    ...(chatBackgroundDark === undefined ? {} : { chatBackgroundDark: parseChatBackground(chatBackgroundDark) }),
+    ...(interfaceFont === undefined ? {} : { interfaceFont: parseFontFamily(interfaceFont) }),
+    ...(codeFont === undefined ? {} : { codeFont: parseFontFamily(codeFont) }),
+  };
+}
+
+export function parseAppInterfaceSizePreference(input: unknown): SetAppInterfaceSizePreferenceInput {
+  if (!isDynamicRecord(input) || !isAppInterfaceSize(input.percent)) throw new Error("Interface size is required.");
+  return { percent: input.percent };
+}
+
+export function parseIdleRestartTarget(input: unknown): IdleRestartTarget {
+  if (!isOneOf(IDLE_RESTART_TARGETS, input)) throw new Error("A restart target is required.");
+  return input;
+}
+
+const APP_BEHAVIOR_SWITCHES = ["launchAtLogin", "keepRunningInBackground", "keepAwake", "keepAwakeOnBattery"] as const;
+
+export function parseAppBehaviorPreferenceChange(input: unknown): AppBehaviorPreferenceChange {
+  const message = "The app behavior setting is required.";
+  if (!isDynamicRecord(input)) throw new Error(message);
+  const hasSwitch = APP_BEHAVIOR_SWITCHES.some((key) => input[key] !== undefined);
+  const change: AppBehaviorPreferenceChange = hasSwitch ? parseSwitches(input, APP_BEHAVIOR_SWITCHES, message) : {};
+  if (input.quitGuard !== undefined) {
+    if (!isOneOf(QUIT_GUARDS, input.quitGuard)) throw new Error(message);
+    change.quitGuard = input.quitGuard;
+  }
+  if (Object.keys(change).length === 0) throw new Error(message);
+  return change;
+}
+
+export function parseUpdatePreference(input: unknown): UpdatePreferenceChange {
+  return parseSwitches(input, ["autoDownload", "allowRemoteUpdates", "autoInstall"], "Update preference is required.");
+}
+
+export function parseHostUpdateSettings(input: unknown): HostUpdateSettingsChange {
+  return parseSwitches(input, ["autoDownload", "autoInstall"], "Update settings are required.");
+}
+
+function parseSwitches<Key extends string>(
+  input: unknown,
+  keys: readonly Key[],
+  message: string,
+): Partial<Record<Key, boolean>> {
+  if (!isDynamicRecord(input)) throw new Error(message);
+  const change: Partial<Record<Key, boolean>> = {};
+  for (const key of keys) {
+    const value = input[key];
+    if (value === undefined) continue;
+    if (!isBoolean(value)) throw new Error(message);
+    change[key] = value;
+  }
+  if (Object.keys(change).length === 0) throw new Error(message);
+  return change;
+}
+
+export function parseNotificationPreference(input: unknown): NotificationPreference {
+  if (!isDynamicRecord(input) || !isBoolean(input.desktopNotifications) || !isBoolean(input.messagePreview)) {
+    throw new Error("Notification preference is required.");
+  }
+  return { desktopNotifications: input.desktopNotifications, messagePreview: input.messagePreview };
+}
+
+export function parseDynamicIslandPreference(input: unknown): DynamicIslandPreference {
+  if (!isDynamicIslandPreference(input)) {
+    throw new Error("Dynamic Island preference is required.");
+  }
+  return input;
+}
+
+export function parseDynamicIslandInteractive(input: unknown): SetDynamicIslandInteractiveInput {
+  if (!isDynamicIslandInteractive(input)) {
+    throw new Error("Dynamic Island interaction state is required.");
+  }
+  return input;
+}
+
+export function parseDynamicIslandPresentation(input: unknown): DynamicIslandPresentation {
+  if (!isDynamicIslandPresentation(input)) throw new Error("Dynamic Island presentation is invalid.");
+  return input;
+}
+
+export function parseDynamicIslandAction(input: unknown): DynamicIslandAction {
+  if (isDynamicIslandAction(input)) return input;
+  throw new Error("Dynamic Island action is invalid.");
+}
+
+export function parseBrowserTakeoverPage(input: unknown): BrowserTakeoverPage {
+  if (isBrowserTakeoverPage(input)) return input;
+  throw new Error("Browser takeover page is invalid.");
+}
+
+export function parseBrowserDockPresentation(input: unknown): BrowserDockPresentation | null {
+  if (input === null || isBrowserDockPresentation(input)) return input;
+  throw new Error("Browser dock presentation is invalid.");
+}
+
+export function parseBrowserDockAction(input: unknown): BrowserDockAction {
+  if (isBrowserDockAction(input)) return input;
+  throw new Error("Browser dock action is invalid.");
+}
+
+export function parseBrowserDockFrame(input: unknown): BrowserDockFrame {
+  if (isBrowserDockFrame(input)) return input;
+  throw new Error("Browser dock frame is invalid.");
+}
+
+export function parseAgentDockPresentation(input: unknown): AgentDockPresentation | null {
+  if (input === null || isAgentDockPresentation(input)) return input;
+  throw new Error("Agent dock presentation is invalid.");
+}
+
+export function parseAgentDockAction(input: unknown): AgentDockAction {
+  if (isAgentDockAction(input)) return input;
+  throw new Error("Agent dock action is invalid.");
+}
+
+export function parseAgentDockInteractive(input: unknown): SetAgentDockInteractiveInput {
+  if (isAgentDockInteractive(input)) return input;
+  throw new Error("Agent dock interaction state is required.");
+}
+
+export function parseAgentDockXWayland(input: unknown): SetAgentDockXWaylandInput {
+  if (isAgentDockXWayland(input)) return input;
+  throw new Error("Agent dock XWayland state is required.");
+}
+
+export function parseAgentDockInputRegion(input: unknown): AgentDockInputRect[] {
+  if (isAgentDockInputRegion(input)) return input;
+  throw new Error("Agent dock input region is invalid.");
+}
+
+export function parseDynamicIslandXWayland(input: unknown): SetAgentDockXWaylandInput {
+  if (isAgentDockXWayland(input)) return input;
+  throw new Error("Dynamic Island XWayland state is required.");
+}
+
+export function parseDynamicIslandInputRegion(input: unknown): AgentDockInputRect[] {
+  if (isAgentDockInputRegion(input)) return input;
+  throw new Error("Dynamic Island input region is invalid.");
+}
+
+export function parseAgentDockDragPhase(input: unknown): AgentDockDragPhase {
+  if (isAgentDockDragPhase(input)) return input;
+  throw new Error("Agent dock drag phase is invalid.");
+}
+
+export function parseMacPermission(input: unknown): MacPermissionId {
+  if (input !== "screen-recording" && input !== "accessibility") {
+    throw new Error("Unknown macOS permission.");
+  }
+  return input;
+}
+
+export function parseMacAutomationTargets(input: unknown): readonly MacAutomationTarget[] {
+  if (!Array.isArray(input) || !input.every((target) => isOneOf(MAC_AUTOMATION_TARGETS, target))) {
+    throw new Error("Unknown Apple app.");
+  }
+  return [...new Set(input)];
+}
+
+const SOCIAL_DESTINATIONS = [
+  "threads",
+  "instagram",
+  "tiktok",
+  "facebook",
+  "linkedin",
+  "reddit",
+  "x-post",
+  "threads-post",
+  "linkedin-post",
+  "reddit-post",
+  "facebook-post",
+  "instagram-post",
+  "tiktok-post",
+] as const satisfies readonly ExternalDestination[];
+
+function isSocialDestination(input: unknown): input is (typeof SOCIAL_DESTINATIONS)[number] {
+  return SOCIAL_DESTINATIONS.some((destination) => destination === input);
+}
+
+export function parseExternalDestination(input: unknown): ExternalDestination {
+  if (
+    input !== "agent-setup" &&
+    input !== "claude-install" &&
+    input !== "hermes-install" &&
+    input !== "opencode-install" &&
+    input !== "opencode-auth" &&
+    input !== "feedback" &&
+    input !== "report-problem" &&
+    input !== "message" &&
+    input !== "changelog" &&
+    input !== "guides" &&
+    input !== "discord" &&
+    input !== "github" &&
+    input !== "x" &&
+    !isSocialDestination(input) &&
+    input !== "grok-bot-export" &&
+    input !== "hosted-server-contact" &&
+    input !== "download" &&
+    input !== "mac-screen-recording"
+  ) {
+    throw new Error("Unknown external destination.");
+  }
+  return input;
+}
+
+export function parseEmailCodeVerification(input: unknown): VerifyEmailCodeInput {
+  if (!isObject(input)) throw new Error("Sign-in code details are required.");
+  return {
+    challengeId: requireString(input.challengeId, "challengeId", INPUT_LIMITS.identifier),
+    code: requireString(input.code, "code", 32),
+    ...(isReferralCode(input.referralCode) ? { referralCode: input.referralCode } : {}),
+  };
+}
+
+export function parseProfileName(input: unknown): string {
+  const validation = validateProfileName(requireString(input, "name", INPUT_LIMITS.accountName));
+  if (validation.error) {
+    throw new Error(`name must contain ${INPUT_LIMITS.profileNameMin} to ${INPUT_LIMITS.profileName} safe characters.`);
+  }
+  return validation.name;
+}
+
+export function parseChatColor(input: unknown): AvatarColor | null {
+  if (input === null) return null;
+  if (!isAvatarColor(input)) throw new Error("chatColor must be null or a lower-case #rrggbb color.");
+  return input;
+}
+
+function parseMarketplaceQueryFields(input: DynamicRecord) {
+  return {
+    ...(isString(input.query) ? { query: input.query.slice(0, 100) } : {}),
+    ...(input.featured === true ? { featured: true } : {}),
+    ...(isString(input.cursor) ? { cursor: input.cursor } : {}),
+    ...(isNumber(input.limit) ? { limit: input.limit } : {}),
+  };
+}
+
+function parseMarketplaceSort<T extends string>(value: unknown, sorts: readonly T[], error: string): { sort?: T } {
+  if (value === undefined) return {};
+  if (!isOneOf(sorts, value)) throw new Error(error);
+  return { sort: value };
+}
+
+const SKILL_SORTS = ["installs", "updated", "name"] as const satisfies readonly MarketplaceSkillSort[];
+
+export function parseMarketplaceSkillQuery(input: unknown): MarketplaceSkillQuery {
+  if (!isObject(input)) throw new Error("Invalid marketplace query.");
+  const category = input.category;
+  if (category !== undefined && !isSkillCategory(category)) throw new Error("Unknown skill category.");
+  const verified = input.verified;
+  if (verified !== undefined && !isBoolean(verified)) throw new Error("Invalid skill source filter.");
+  return {
+    ...parseMarketplaceQueryFields(input),
+    ...parseMarketplaceSort(input.sort, SKILL_SORTS, "Unknown skill sort order."),
+    ...(verified === undefined ? {} : { verified }),
+    ...(category ? { category } : {}),
+  };
+}
+
+export function parseMarketplaceAgentQuery(input: unknown): MarketplaceAgentQuery {
+  if (!isObject(input)) throw new Error("Invalid agent marketplace query.");
+  const category = input.category;
+  if (category !== undefined && !isSkillCategory(category)) throw new Error("Unknown agent category.");
+  const verified = input.verified;
+  if (verified !== undefined && !isBoolean(verified)) throw new Error("Invalid agent source filter.");
+  return {
+    ...parseMarketplaceQueryFields(input),
+    ...parseMarketplaceSort(input.sort, ["installs"] as const, "Unknown agent sort order."),
+    ...(category ? { category } : {}),
+    ...(verified === undefined ? {} : { verified }),
+  };
+}
+
+export function parseSubmitSkill(input: unknown): SubmitSkillInput {
+  if (!isObject(input) || !isSkillCategory(input.category)) throw new Error("Invalid skill submission.");
+  return {
+    draftId: requireString(input.draftId, "draftId"),
+    ...creatorAvatarOption(input),
+    category: input.category,
+    icon: parseAvatarImage(input.icon),
+    ...(input.skillId === undefined ? {} : { skillId: requireString(input.skillId, "skillId") }),
+  };
+}
+
+export function requireSkillId(value: unknown): string {
+  return requireString(value, "skillId", GITHUB_SKILL_ID_MAX_LENGTH);
+}
+
+export function parseInstallSkill(input: unknown): InstallSkillInput {
+  if (!isObject(input)) throw new Error("Invalid skill installation.");
+  return {
+    agentId: requireString(input.agentId, "agentId"),
+    skillId: requireSkillId(input.skillId),
+    ...(input.versionId === undefined ? {} : { versionId: requireString(input.versionId, "versionId") }),
+    ...(input.replaceModified === true ? { replaceModified: true } : {}),
+  };
+}
+
+export function parseUninstallSkill(input: unknown): UninstallSkillInput {
+  if (!isObject(input)) throw new Error("Invalid skill removal.");
+  return {
+    agentId: requireString(input.agentId, "agentId"),
+    skillId: requireSkillId(input.skillId),
+    ...(input.removeModified === true ? { removeModified: true } : {}),
+  };
+}
+
+export function parseSetEnabledSkill(input: unknown): SetEnabledSkillInput {
+  if (!isObject(input)) throw new Error("Invalid skill enablement.");
+  const enabled = optionalBoolean(input.enabled, "enabled");
+  if (enabled === undefined) throw new Error("Invalid skill enablement.");
+  return {
+    agentId: requireString(input.agentId, "agentId"),
+    skillId: requireSkillId(input.skillId),
+    enabled,
+  };
+}
+
+export function parsePublishHostedSite(input: unknown): PublishHostedSiteInput {
+  if (!isObject(input)) throw new Error("Invalid site publication.");
+  const spaFallback = optionalBoolean(input.spaFallback, "spaFallback");
+  return {
+    sourcePath: requireString(input.sourcePath, "sourcePath", INPUT_LIMITS.path),
+    title: requireString(input.title, "title", 120),
+    description: requireString(input.description, "description", 500),
+    ...(spaFallback !== undefined ? { spaFallback } : {}),
+  };
+}
+
+export function parseReplaceHostedSite(input: unknown): ReplaceHostedSiteInput {
+  if (!isObject(input)) throw new Error("Invalid site replacement.");
+  const spaFallback = optionalBoolean(input.spaFallback, "spaFallback");
+  return {
+    siteId: requireString(input.siteId, "siteId", INPUT_LIMITS.identifier),
+    sourcePath: requireString(input.sourcePath, "sourcePath", INPUT_LIMITS.path),
+    title: requireString(input.title, "title", 120),
+    description: requireString(input.description, "description", 500),
+    ...(spaFallback !== undefined ? { spaFallback } : {}),
+  };
+}
+
+export function parseDeleteHostedSite(input: unknown): DeleteHostedSiteInput {
+  if (!isObject(input)) throw new Error("Invalid site deletion.");
+  return { siteId: requireString(input.siteId, "siteId", INPUT_LIMITS.identifier) };
+}
+
+export function parseSubmitMarketplaceAgent(input: unknown): SubmitMarketplaceAgentInput {
+  if (!isObject(input)) throw new Error("Invalid agent submission.");
+  const category = input.category;
+  if (category !== undefined && !isSkillCategory(category)) throw new Error("Unknown agent category.");
+  return {
+    agentId: requireString(input.agentId, "agentId"),
+    ...(input.listingId === undefined ? {} : { listingId: requireString(input.listingId, "listingId") }),
+    ...(category ? { category } : {}),
+    ...creatorAvatarOption(input),
+  };
+}
+
+export function parseInstallMarketplaceAgent(input: unknown): InstallMarketplaceAgentInput {
+  if (!isObject(input)) throw new Error("Invalid agent installation.");
+  return {
+    listingId: requireString(input.listingId, "listingId"),
+    ...(input.agentId === undefined
+      ? {}
+      : { agentId: requireString(input.agentId, "agentId", INPUT_LIMITS.identifier) }),
+    timezone: requireString(input.timezone, "timezone", 255),
+    receiptId: requireString(input.receiptId, "receiptId", INPUT_LIMITS.identifier),
+  };
+}
+
+function creatorAvatarOption(input: DynamicRecord): { showCreatorAvatar?: boolean } {
+  const showCreatorAvatar = optionalBoolean(input.showCreatorAvatar, "showCreatorAvatar");
+  return showCreatorAvatar === undefined ? {} : { showCreatorAvatar };
+}

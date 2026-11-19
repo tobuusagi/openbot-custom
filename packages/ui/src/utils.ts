@@ -1,0 +1,82 @@
+import type { JSX } from "@solidjs/web";
+import { createSignal } from "solid-js";
+
+type ClassValue = JSX.HTMLAttributes<HTMLElement>["class"] | false | null | undefined;
+
+export function cx(...values: ClassValue[]): string {
+  return values
+    .flatMap((value): string[] => {
+      if (!value || value === true) return [];
+      if (Array.isArray(value)) return [cx(...value)];
+      if (Object.prototype.toString.call(value) === "[object Object]") {
+        return Object.entries(value)
+          .filter(([, enabled]) => enabled)
+          .map(([className]) => className);
+      }
+      return [String(value)];
+    })
+    .join(" ");
+}
+
+export function truncateMiddle(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+  const visibleLength = maxLength - 1;
+  const startLength = Math.ceil((visibleLength * 2) / 3);
+  const endLength = visibleLength - startLength;
+  return `${value.slice(0, startLength)}…${value.slice(-endLength)}`;
+}
+
+export const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+
+export function prefersReducedMotion(): boolean {
+  return window.matchMedia?.(REDUCED_MOTION_QUERY).matches ?? false;
+}
+
+export function usesTouchLayout(): boolean {
+  return window.matchMedia?.("(hover: none), (pointer: coarse)").matches ?? false;
+}
+
+export function clamp(value: number, minimum: number, maximum: number): number {
+  return Math.min(maximum, Math.max(minimum, value));
+}
+
+export function mix(start: number, end: number, progress: number): number {
+  return start + (end - start) * progress;
+}
+
+const flagHolders = new WeakMap<Element, Map<string, number>>();
+
+export function holdFlag(element: Element, name: string): () => void {
+  const holders = flagHolders.get(element) ?? new Map<string, number>();
+  flagHolders.set(element, holders);
+  const count = holders.get(name) ?? 0;
+  holders.set(name, count + 1);
+  if (count === 0) element.setAttribute(`data-${name}`, "");
+  return () => {
+    const left = (holders.get(name) ?? 1) - 1;
+    if (left > 0) {
+      holders.set(name, left);
+      return;
+    }
+    holders.delete(name);
+    element.removeAttribute(`data-${name}`);
+  };
+}
+
+export function motionDuration(name: string, fallback: number): number {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  if (value.endsWith("ms")) return Number.parseFloat(value) || fallback;
+  if (value.endsWith("s")) return (Number.parseFloat(value) || fallback / 1_000) * 1_000;
+  return Number.parseFloat(value) || fallback;
+}
+
+export function createPressedPopupCue(): { ref: (element: HTMLElement) => void; cue: () => string } {
+  const [closing, setClosing] = createSignal(false);
+  return {
+    ref: (element) =>
+      element.addEventListener("pointerdown", () => setClosing(element.getAttribute("aria-expanded") === "true"), {
+        capture: true,
+      }),
+    cue: () => (closing() ? "close" : ""),
+  };
+}

@@ -1,0 +1,902 @@
+import type { MessagingPlatform } from "@openbot/contracts/ipc";
+import { decodeSignalServerMessage } from "@openbot/contracts/signal-protocol/decode";
+import { type DiscordApiRequest, decodeDiscordApiError } from "@openbot/contracts/signal-protocol/discord-api";
+import { DISCORD_API_PATH } from "@openbot/contracts/signal-protocol/discord-route";
+import type { GitHubDeliveryStatus } from "@openbot/contracts/signal-protocol/github-route";
+import {
+  INGRESS_QUEUE_CAPABILITY,
+  openQueuedDelivery,
+  type QueuedSignalMessage,
+} from "@openbot/contracts/signal-protocol/ingress-queue";
+import {
+  SIGNAL_PROTOCOL_VERSION,
+  type SignalClientMessage,
+  type SignalServerMessage,
+  SLACK_DELIVERY_RESPONSE_BYTES_LIMIT,
+  type WebhookDeliveryStatus,
+} from "@openbot/contracts/signal-protocol/messages";
+import {
+  TELEGRAM_CAPABILITY,
+  type TelegramCallMethod,
+  type TelegramCallParams,
+  type TelegramCallResult,
+} from "@openbot/contracts/signal-protocol/telegram-route";
+import {
+  STANDARD_WEBHOOKS_FORMAT,
+  type WebhookSignatureFormat,
+} from "@openbot/contracts/signal-protocol/webhook-route";
+import { createOpenBotLogger } from "@openbot/logging";
+import { Context, Deferred, Effect, Exit, Layer, ManagedRuntime, Option, Result, Scope, Semaphore } from "effect";
+import WebSocket from "ws";
+import {
+  DiscordApiError,
+  type DiscordUploadFile,
+  type IngressAnswer,
+  type IngressHandler,
+  type IngressState,
+  type LinkedRoutePlatform,
+  MessagingAdapterError,
+  type MessagingIngress,
+  TelegramCallError,
+  type TelegramGateway,
+} from "../backend/messaging/messaging-types";
+import type { IngressQueueKey } from "./ingress-queue-key";
+import { type RemoteWorkflowError, remoteDecode } from "./remote-service-effects";
+import { downloadTelegramFile, signalHttpOrigin, uploadTelegramFile } from "./telegram-files";
+
+const logger = createOpenBotLogger("signal-ingress");
+
+function queuedRoute(message: QueuedSignalMessage): string {
+  if (message.type === "slack-delivery") return `slack:${message.teamId}`;
+  if (message.type === "discord-delivery") return `discord:${message.guildId}`;
+  return `telegram:${message.chatId}`;
+}
+
+interface LinkedRouteTicket {
+  ticket: string;
+  ids: readonly string[] | null;
+}
+
+type LinkedRouteIds = Record<LinkedRoutePlatform, ReadonlySet<string> | null>;
+
+function linkedRouteIds(route: LinkedRouteTicket | null): ReadonlySet<string> | null {
+  return route?.ids ? new Set(route.ids) : null;
+}
+
+const BACKOFF_START_MS = 2_000;
+const BACKOFF_LIMIT_MS = 5 * 60_000;
+const PING_INTERVAL_MS = 30_000;
+const PONG_TIMEOUT_MS = 10_000;
+const READY_TIMEOUT_MS = 15_000;
+const DISCORD_SESSION_WAIT_MS = 15_000;
+const DISCORD_CALL_TIMEOUT_MS = 60_000;
+const TELEGRAM_READY_TIMEOUT_MS = 10_000;
+const TELEGRAM_CALL_TIMEOUT_MS = 20_000;
+
+export interface SignalIngressOptions {
+  hostId(): string | null;
+  signedIn(): boolean;
+  issueTicket(hostId: string): Effect.Effect<{ ticket: string; signalUrl: string }, RemoteWorkflowError>;
+  issueSlackRoute(hostId: string): Effect.Effect<LinkedRouteTicket, RemoteWorkflowError>;
+  issueDiscordRoute(hostId: string): Effect.Effect<string, RemoteWorkflowError>;
+  issueWebhookRoute(hostId: string): Effect.Effect<string, RemoteWorkflowError>;
+  issueGitHubRoute(hostId: string): Effect.Effect<string, RemoteWorkflowError>;
+  issueTelegramRoute?(hostId: string): Effect.Effect<LinkedRouteTicket, RemoteWorkflowError>;
+  queueKey?(): Effect.Effect<IngressQueueKey | null>;
+}
+
+class SignalIngressAccount extends Context.Service<
+  SignalIngressAccount,
+  {
+    ticket(hostId: string): Effect.Effect<{ ticket: string; signalUrl: string }, RemoteWorkflowError>;
+    slackRoute(hostId: string): Effect.Effect<LinkedRouteTicket, RemoteWorkflowError>;
+    discordRoute(hostId: string): Effect.Effect<string, RemoteWorkflowError>;
+    webhookRoute(hostId: string): Effect.Effect<string, RemoteWorkflowError>;
+    githubRoute(hostId: string): Effect.Effect<string, RemoteWorkflowError>;
+    telegramRoute(hostId: string): Effect.Effect<LinkedRouteTicket | null>;
+  }
+>()("openbot/main/SignalIngressAccount") {
+  static layer(options: SignalIngressOptions) {
+    return Layer.succeed(
+      SignalIngressAccount,
+      SignalIngressAccount.of({
+        ticket: (hostId) => options.issueTicket(hostId),
+        slackRoute: (hostId) => options.issueSlackRoute(hostId),
+        discordRoute: (hostId) => options.issueDiscordRoute(hostId),
+        webhookRoute: (hostId) => options.issueWebhookRoute(hostId),
+        githubRoute: (hostId) => options.issueGitHubRoute(hostId),
+        telegramRoute: (hostId) =>
+          options.issueTelegramRoute
+            ? options.issueTelegramRoute(hostId).pipe(
+                Effect.catch(() =>
+                  Effect.sync(() => {
+                    logger.warn(
+                      "The Telegram route ticket is not available. The socket opens again later for Telegram.",
+                    );
+                    return null;
+                  }),
+                ),
+              )
+            : Effect.succeed(null),
+      }),
+    );
+  }
+}
+
+interface DiscordSession {
+  token: string;
+  url: string;
+}
+
+export interface WebhookIngressDelivery {
+  routeId: string;
+  deliveryId: string;
+  timestamp: string;
+  signature: string;
+  body: Uint8Array;
+  format?: WebhookSignatureFormat;
+}
+
+interface WebhookIngressAnswer {
+  status: WebhookDeliveryStatus;
+}
+
+export type WebhookIngressHandler = (delivery: WebhookIngressDelivery) => Effect.Effect<WebhookIngressAnswer, unknown>;
+
+export interface GitHubIngressDelivery {
+  event: string;
+  deliveryId: string;
+  body: Uint8Array;
+}
+
+export interface GitHubIngressHandler {
+  deliver(delivery: GitHubIngressDelivery): Effect.Effect<{ status: GitHubDeliveryStatus }, unknown>;
+  offline(from: number, to: number): Effect.Effect<void>;
+}
+
+export class SignalIngress implements MessagingIngress {
+  readonly #options: SignalIngressOptions;
+  readonly #runtime: ManagedRuntime.ManagedRuntime<SignalIngressAccount, never>;
+  readonly #scope = Scope.makeUnsafe();
+  #disposing = false;
+  readonly #listeners = new Set<(state: IngressState) => void>();
+  readonly #holders = new Map<MessagingPlatform, number>();
+  #state: IngressState = "unavailable";
+  #handler: IngressHandler | null = null;
+  #socket: WebSocket | null = null;
+  #retry: ReturnType<typeof setTimeout> | null = null;
+  #ping: ReturnType<typeof setInterval> | null = null;
+  #readyDeadline: ReturnType<typeof setTimeout> | null = null;
+  #backoffMs = BACKOFF_START_MS;
+  #generation = 0;
+  #apiUrl: string | null = null;
+  #discordSession: DiscordSession | null = null;
+  #webhookHolders = 0;
+  #webhookHandler: WebhookIngressHandler | null = null;
+  #webhookReady = false;
+  #webhookMissing = false;
+  #webhookBackoffMs = BACKOFF_START_MS;
+  #githubHolders = 0;
+  #githubHandler: GitHubIngressHandler | null = null;
+  #githubReady = false;
+  #githubMissing = false;
+  #githubBackoffMs = BACKOFF_START_MS;
+  #githubLostAt: number | null = null;
+  #telegramMissing = false;
+  #telegramBackoffMs = BACKOFF_START_MS;
+  readonly #sessionListeners = new Set<(session: DiscordSession | null) => void>();
+  readonly #routeListeners = new Set<(guildIds: ReadonlySet<string>) => void>();
+  #discordGuilds: ReadonlySet<string> | null = null;
+  readonly #linkedRouteListeners: Record<LinkedRoutePlatform, Set<(ids: ReadonlySet<string> | null) => void>> = {
+    slack: new Set(),
+    telegram: new Set(),
+  };
+  #pendingLinkedRoutes: LinkedRouteIds = { slack: null, telegram: null };
+  #linkedRoutes: LinkedRouteIds = { slack: null, telegram: null };
+  #capabilities = new Set<string>();
+  #signalOrigin: string | null = null;
+  readonly #telegramCalls = new Map<string, (answer: TelegramCallAnswer) => void>();
+  #queueKey: IngressQueueKey | null = null;
+  readonly #queuedOrder = Semaphore.makeUnsafe(1);
+  readonly #queuedRoutes = new Map<string, Deferred.Deferred<void>>();
+
+  readonly #loadQueueKey: Effect.Effect<IngressQueueKey | null>;
+
+  constructor(options: SignalIngressOptions) {
+    this.#options = options;
+    this.#loadQueueKey = Effect.runSync(Effect.cached(options.queueKey?.() ?? Effect.succeed(null)));
+    this.#runtime = ManagedRuntime.make(SignalIngressAccount.layer(options));
+  }
+
+  queueReady(): boolean {
+    return Boolean(this.#queueKey) && this.#capabilities.has(INGRESS_QUEUE_CAPABILITY);
+  }
+
+  acquire(platform: MessagingPlatform): () => void {
+    const before = this.#holders.get(platform) ?? 0;
+    this.#holders.set(platform, before + 1);
+    if (this.#held() === 1 && this.#webhookHolders === 0 && this.#githubHolders === 0) this.#run(this.#open());
+    else if (before === 0) this.reconnect();
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.#holders.set(platform, (this.#holders.get(platform) ?? 1) - 1);
+      if (this.#unheld()) this.#close();
+    };
+  }
+
+  acquireWebhooks(): () => void {
+    this.#webhookHolders += 1;
+    if (this.#held() === 0 && this.#webhookHolders === 1 && this.#githubHolders === 0) this.#run(this.#open());
+    else if (this.#webhookHolders === 1) this.reconnect();
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.#webhookHolders = Math.max(0, this.#webhookHolders - 1);
+      if (this.#unheld()) this.#close();
+    };
+  }
+
+  acquireGitHub(): () => void {
+    this.#githubHolders += 1;
+    if (this.#held() === 0 && this.#webhookHolders === 0 && this.#githubHolders === 1) this.#run(this.#open());
+    else if (this.#githubHolders === 1) this.reconnect();
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.#githubHolders = Math.max(0, this.#githubHolders - 1);
+      if (this.#githubHolders === 0) this.#githubLostAt = null;
+      if (this.#unheld()) this.#close();
+    };
+  }
+
+  #unheld(): boolean {
+    return this.#held() === 0 && this.#webhookHolders === 0 && this.#githubHolders === 0;
+  }
+
+  #held(): number {
+    let total = 0;
+    for (const count of this.#holders.values()) total += count;
+    return total;
+  }
+
+  #holds(platform: MessagingPlatform): boolean {
+    return (this.#holders.get(platform) ?? 0) > 0;
+  }
+
+  state(): IngressState {
+    return this.#state;
+  }
+
+  onState(listener: (state: IngressState) => void): () => void {
+    this.#listeners.add(listener);
+    return () => this.#listeners.delete(listener);
+  }
+
+  handle(handler: IngressHandler | null): void {
+    this.#handler = handler;
+  }
+
+  handleWebhooks(handler: WebhookIngressHandler | null): void {
+    this.#webhookHandler = handler;
+  }
+
+  readonly telegram: TelegramGateway = {
+    available: () => this.#state === "online" && this.#capabilities.has(TELEGRAM_CAPABILITY),
+    call: <M extends TelegramCallMethod>(botId: string, method: M, params: TelegramCallParams[M]) =>
+      this.#telegramCall(botId, method, params),
+    download: (fileToken, destination, maxBytes) =>
+      Effect.suspend(() =>
+        this.#signalOrigin
+          ? downloadTelegramFile(this.#signalOrigin, fileToken, destination, maxBytes)
+          : Effect.fail(telegramUnavailable()),
+      ),
+    upload: (uploadToken, path) =>
+      Effect.suspend(() =>
+        this.#signalOrigin
+          ? uploadTelegramFile(this.#signalOrigin, uploadToken, path)
+          : Effect.fail(telegramUnavailable()),
+      ),
+  };
+
+  handleGitHub(handler: GitHubIngressHandler | null): void {
+    this.#githubHandler = handler;
+  }
+
+  githubReady(): boolean {
+    return this.#githubReady;
+  }
+
+  webhookReady(): boolean {
+    return this.#webhookReady;
+  }
+
+  reconnect(): void {
+    if (this.#unheld()) return;
+    this.#close();
+    this.#run(this.#open());
+  }
+
+  readonly discord = Effect.fn("SignalIngress.discord")(function* <A>(
+    this: SignalIngress,
+    request: DiscordApiRequest,
+    decode: (value: unknown) => A,
+    file?: DiscordUploadFile,
+  ): Effect.fn.Return<A, MessagingAdapterError> {
+    const session = yield* this.#awaitSession().pipe(
+      Effect.timeoutOption(DISCORD_SESSION_WAIT_MS),
+      Effect.map(Option.getOrNull),
+    );
+    if (!session) return yield* new MessagingAdapterError({ cause: new DiscordApiError(request.op, "unavailable") });
+    const { token, url } = session;
+    let body: string | FormData = JSON.stringify(request);
+    if (file) {
+      const form = new FormData();
+      form.set("request", body);
+      form.set("file", new Blob([new Uint8Array(file.bytes)], { type: file.mimeType }), "file");
+      body = form;
+    }
+    const sent = body;
+    const { status, text } = yield* Effect.tryPromise({
+      try: async (signal) => {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${token}`,
+            ...(typeof sent === "string" ? { "content-type": "application/json" } : {}),
+          },
+          body: sent,
+          redirect: "error",
+          signal: AbortSignal.any([signal, AbortSignal.timeout(DISCORD_CALL_TIMEOUT_MS)]),
+        });
+        return { status: response.status, text: await response.text() };
+      },
+      catch: () => new MessagingAdapterError({ cause: new DiscordApiError(request.op, "unreachable") }),
+    });
+    if (status >= 200 && status < 300)
+      return yield* Effect.try({
+        try: () => decode(JSON.parse(text)),
+        catch: () => new MessagingAdapterError({ cause: new DiscordApiError(request.op, "invalid_answer") }),
+      });
+    const refused = Result.getOrNull(Result.try(() => decodeDiscordApiError(JSON.parse(text))));
+    if (
+      refused?.code === "unknown_guild" &&
+      this.#discordSession === session &&
+      this.#discordGuilds?.has(request.guildId)
+    )
+      this.#setDiscordGuilds(new Set([...this.#discordGuilds].filter((guildId) => guildId !== request.guildId)));
+    return yield* new MessagingAdapterError({
+      cause: new DiscordApiError(request.op, refused?.code ?? `http_${status}`, refused?.retryAfterMs),
+    });
+  });
+
+  onDiscordRoutes(listener: (guildIds: ReadonlySet<string>) => void): () => void {
+    this.#routeListeners.add(listener);
+    return () => this.#routeListeners.delete(listener);
+  }
+
+  #setDiscordGuilds(guildIds: ReadonlySet<string>): void {
+    this.#discordGuilds = guildIds;
+    for (const listener of [...this.#routeListeners]) listener(guildIds);
+  }
+
+  onLinkedRoutes(platform: LinkedRoutePlatform, listener: (ids: ReadonlySet<string> | null) => void): () => void {
+    const listeners = this.#linkedRouteListeners[platform];
+    listeners.add(listener);
+    const ids = this.#linkedRoutes[platform];
+    if (ids) listener(ids);
+    return () => listeners.delete(listener);
+  }
+
+  #setLinkedRoutes(routes: LinkedRouteIds): void {
+    this.#linkedRoutes = routes;
+    for (const platform of ["slack", "telegram"] as const)
+      for (const listener of [...this.#linkedRouteListeners[platform]]) listener(routes[platform]);
+  }
+
+  #awaitSession(): Effect.Effect<DiscordSession | null> {
+    return Effect.callback<DiscordSession | null>((resume) => {
+      const current = this.#discordSession;
+      if (current || this.#disposing || !this.#holds("discord")) {
+        resume(Effect.succeed(current));
+        return;
+      }
+      const listener = (session: DiscordSession | null) => {
+        this.#sessionListeners.delete(listener);
+        resume(Effect.succeed(session));
+      };
+      this.#sessionListeners.add(listener);
+      return Effect.sync(() => this.#sessionListeners.delete(listener));
+    });
+  }
+
+  readonly dispose = Effect.fn("SignalIngress.dispose")(function* (this: SignalIngress) {
+    this.#disposing = true;
+    this.#holders.clear();
+    this.#close();
+    this.#listeners.clear();
+    this.#routeListeners.clear();
+    this.#linkedRouteListeners.slack.clear();
+    this.#linkedRouteListeners.telegram.clear();
+    this.#webhookHandler = null;
+    this.#webhookHolders = 0;
+    this.#githubHandler = null;
+    this.#githubHolders = 0;
+    yield* Scope.close(this.#scope, Exit.void);
+    yield* this.#runtime.disposeEffect;
+  }, Effect.uninterruptible);
+
+  readonly #open = Effect.fn("SignalIngress.open")(function* (this: SignalIngress) {
+    if (this.#disposing) return;
+    const generation = ++this.#generation;
+    this.#clearRetry();
+    const hostId = this.#options.hostId();
+    if (!this.#options.signedIn()) return this.#wait("signed_out");
+    if (!hostId) return this.#wait("no_host");
+    this.#setState("connecting");
+    const account = yield* SignalIngressAccount;
+    const slack = this.#holds("slack");
+    const discord = this.#holds("discord");
+    const telegram = this.#holds("telegram");
+    const webhooks = this.#webhookHolders > 0;
+    const github = this.#githubHolders > 0;
+    let webhookTicket: Effect.Effect<string | null, RemoteWorkflowError> = webhooks
+      ? account.webhookRoute(hostId)
+      : Effect.succeed(null);
+    if (webhooks && (slack || discord || telegram || github))
+      webhookTicket = webhookTicket.pipe(
+        Effect.catch(() =>
+          Effect.sync(() => {
+            logger.warn("The webhook route ticket is not available. The socket opens again later for webhooks.");
+            return null;
+          }),
+        ),
+      );
+    let githubTicket: Effect.Effect<string | null, RemoteWorkflowError> = github
+      ? account.githubRoute(hostId)
+      : Effect.succeed(null);
+    if (github && (slack || discord || telegram || webhooks))
+      githubTicket = githubTicket.pipe(
+        Effect.catch(() =>
+          Effect.sync(() => {
+            logger.warn("The GitHub route ticket is not available. The socket opens again later for GitHub.");
+            return null;
+          }),
+        ),
+      );
+    const issued = yield* Effect.all(
+      [
+        account.ticket(hostId),
+        slack ? account.slackRoute(hostId) : Effect.succeed(null),
+        discord ? account.discordRoute(hostId) : Effect.succeed(null),
+        webhookTicket,
+        telegram ? account.telegramRoute(hostId) : Effect.succeed(null),
+        githubTicket,
+      ],
+      { concurrency: "unbounded" },
+    ).pipe(Effect.result);
+    if (Result.isFailure(issued)) {
+      if (generation === this.#generation) this.#wait("unavailable");
+      return;
+    }
+    const [bootstrap, slackRoute, discordRoute, webhookRoute, telegramRoute, githubRoute] = issued.success;
+    const routes = {
+      ...(slackRoute === null ? {} : { slackRoute: slackRoute.ticket }),
+      ...(discordRoute === null ? {} : { discordRoute }),
+      ...(webhookRoute === null ? {} : { webhookRoute }),
+      ...(telegramRoute === null ? {} : { telegramRoute: telegramRoute.ticket }),
+      ...(githubRoute === null ? {} : { githubRoute }),
+    };
+    const queueKey = yield* this.#loadQueueKey;
+    this.#queueKey = queueKey;
+    if (generation !== this.#generation || this.#unheld()) return;
+    this.#webhookMissing = webhooks && webhookRoute === null;
+    this.#githubMissing = github && githubRoute === null;
+    this.#telegramMissing = telegram && telegramRoute === null;
+    if (telegram && telegramRoute !== null) this.#telegramBackoffMs = BACKOFF_START_MS;
+    this.#pendingLinkedRoutes = { slack: linkedRouteIds(slackRoute), telegram: linkedRouteIds(telegramRoute) };
+    const socket = new WebSocket(bootstrap.signalUrl);
+    this.#socket = socket;
+    this.#clearReadyDeadline();
+    this.#readyDeadline = setTimeout(() => {
+      this.#readyDeadline = null;
+      if (socket === this.#socket) socket.terminate();
+    }, READY_TIMEOUT_MS);
+    this.#apiUrl = discordApiUrl(bootstrap.signalUrl);
+    this.#signalOrigin = signalHttpOrigin(bootstrap.signalUrl);
+    socket.on("open", () => {
+      const hello: SignalClientMessage = {
+        type: "hello",
+        version: SIGNAL_PROTOCOL_VERSION,
+        peer: "ingress",
+        token: bootstrap.ticket,
+        ...routes,
+        ...(queueKey ? { queueKey: queueKey.publicKey } : {}),
+        webhookFormats: [STANDARD_WEBHOOKS_FORMAT],
+      };
+      socket.send(JSON.stringify(hello));
+    });
+    socket.on("message", (data) => this.#run(this.#receive(socket, hostId, data.toString())));
+    socket.on("pong", () => pongs.set(socket, true));
+    socket.on("close", () => {
+      if (socket !== this.#socket) return;
+      this.#socket = null;
+      this.#discordSession = null;
+      this.#discordGuilds = null;
+      this.#linkedRoutes = { slack: null, telegram: null };
+      this.#endTelegram();
+      this.#stopPing();
+      this.#clearReadyDeadline();
+      this.#webhookReady = false;
+      this.#loseGitHub();
+      if (!this.#unheld()) this.#wait("unavailable");
+    });
+    socket.on("error", () => {});
+  });
+
+  readonly #receive = Effect.fn("SignalIngress.receive")(function* (
+    this: SignalIngress,
+    socket: WebSocket,
+    hostId: string,
+    text: string,
+  ) {
+    if (this.#disposing) return;
+    const decoded = yield* remoteDecode(() => decodeSignalServerMessage(JSON.parse(text))).pipe(Effect.result);
+    if (Result.isFailure(decoded)) {
+      if (socket === this.#socket) socket.close(1002);
+      return;
+    }
+    const message = decoded.success;
+    if (!message) return;
+    if (message.type !== "queued-delivery") {
+      if (socket === this.#socket) yield* this.#dispatch(socket, message, false);
+      return;
+    }
+    const { id, sealed } = message;
+    const turn = yield* this.#queuedOrder.withPermit(
+      Effect.gen({ self: this }, function* () {
+        const key = this.#queueKey;
+        const opened = key
+          ? yield* Effect.tryPromise(() => openQueuedDelivery(key.privateKey, hostId, sealed)).pipe(
+              Effect.catch(() => Effect.succeed(null)),
+            )
+          : null;
+        if (!opened) return null;
+        const route = queuedRoute(opened);
+        const previous = this.#queuedRoutes.get(route);
+        const done = Deferred.makeUnsafe<void>();
+        this.#queuedRoutes.set(route, done);
+        return { opened, route, previous, done };
+      }),
+    );
+    yield* Effect.gen({ self: this }, function* () {
+      if (turn) {
+        if (turn.previous) yield* Deferred.await(turn.previous);
+        yield* this.#dispatch(socket, turn.opened, true);
+      } else logger.warn("A kept delivery from Signal could not be opened, and is dropped.");
+      const current = this.#socket;
+      if (current?.readyState !== WebSocket.OPEN || !this.#capabilities.has(INGRESS_QUEUE_CAPABILITY)) return;
+      const ack: SignalClientMessage = { type: "queued-delivery-ack", version: SIGNAL_PROTOCOL_VERSION, id };
+      current.send(JSON.stringify(ack));
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (!turn) return;
+          Deferred.doneUnsafe(turn.done, Effect.void);
+          if (this.#queuedRoutes.get(turn.route) === turn.done) this.#queuedRoutes.delete(turn.route);
+        }),
+      ),
+    );
+  });
+
+  readonly #dispatch = Effect.fn("SignalIngress.dispatch")(function* (
+    this: SignalIngress,
+    socket: WebSocket,
+    message: Exclude<SignalServerMessage, { type: "queued-delivery" }>,
+    queued: boolean,
+  ) {
+    if (message.type === "ready") {
+      this.#clearReadyDeadline();
+      this.#capabilities = new Set(message.capabilities ?? []);
+      this.#backoffMs = BACKOFF_START_MS;
+      this.#startPing(socket);
+      this.#setLinkedRoutes(this.#pendingLinkedRoutes);
+      this.#setState("online");
+      if (this.#webhookMissing || this.#githubMissing || this.#telegramMissing) this.#retryRoutes();
+      return;
+    }
+    if (message.type === "webhook-ready") {
+      this.#webhookReady = true;
+      this.#webhookBackoffMs = BACKOFF_START_MS;
+      return;
+    }
+    if (message.type === "github-ready") {
+      this.#githubReady = true;
+      this.#githubBackoffMs = BACKOFF_START_MS;
+      const lostAt = this.#githubLostAt;
+      this.#githubLostAt = null;
+      const handler = this.#githubHandler;
+      if (lostAt !== null && handler) yield* handler.offline(lostAt, Date.now());
+      return;
+    }
+    if (message.type === "github-delivery") {
+      const handler = this.#githubHandler;
+      const answer = handler
+        ? yield* handler
+            .deliver({
+              event: message.event,
+              deliveryId: message.deliveryId,
+              body: Buffer.from(message.bodyBase64, "base64"),
+            })
+            .pipe(Effect.catch(() => Effect.succeed({ status: 503 as const })))
+        : { status: 503 as const };
+      if (socket.readyState !== WebSocket.OPEN) return;
+      const result: SignalClientMessage = {
+        type: "github-delivery-result",
+        version: SIGNAL_PROTOCOL_VERSION,
+        requestId: message.requestId,
+        status: answer.status,
+      };
+      socket.send(JSON.stringify(result));
+      return;
+    }
+    if (message.type === "error") {
+      logger.warn("Signal refused the ingress socket.", { code: message.code });
+      return;
+    }
+    if (message.type === "discord-session") {
+      const url = this.#apiUrl;
+      if (!url) return;
+      const session = { token: message.token, url };
+      this.#discordSession = session;
+      for (const listener of [...this.#sessionListeners]) listener(session);
+      this.#setDiscordGuilds(new Set(message.guilds));
+      return;
+    }
+    if (message.type === "discord-delivery") {
+      const handler = this.#handler;
+      if (handler)
+        yield* handler(message.guildId, { platform: "discord", delivery: message.delivery, queued }).pipe(
+          Effect.catch(() => Effect.void),
+        );
+      return;
+    }
+    if (message.type === "telegram-call-result") {
+      this.#telegramCalls.get(message.requestId)?.(message);
+      return;
+    }
+    if (message.type === "telegram-delivery") {
+      const chats = this.#linkedRoutes.telegram;
+      if (message.linked === true && chats && !chats.has(message.chatId))
+        this.#linkedRoutes = { ...this.#linkedRoutes, telegram: new Set([...chats, message.chatId]) };
+      const handler = this.#handler;
+      if (handler)
+        yield* handler(message.chatId, {
+          platform: "telegram",
+          botId: message.botId,
+          body: Buffer.from(message.bodyBase64, "base64"),
+          linked: message.linked === true,
+          queued,
+        }).pipe(Effect.catch(() => Effect.void));
+      return;
+    }
+    if (message.type === "webhook-delivery") {
+      const handler = this.#webhookHandler;
+      const answer = handler
+        ? yield* handler({
+            routeId: message.routeId,
+            deliveryId: message.deliveryId,
+            timestamp: message.timestamp,
+            signature: message.signature,
+            body: Buffer.from(message.bodyBase64, "base64"),
+            ...(message.format ? { format: message.format } : {}),
+          }).pipe(Effect.catch(() => Effect.succeed<WebhookIngressAnswer>({ status: 503 })))
+        : { status: 503 as const };
+      if (socket.readyState !== WebSocket.OPEN) return;
+      const result: SignalClientMessage = {
+        type: "webhook-delivery-result",
+        version: SIGNAL_PROTOCOL_VERSION,
+        requestId: message.requestId,
+        status: answer.status,
+      };
+      socket.send(JSON.stringify(result));
+      return;
+    }
+    if (message.type !== "slack-delivery") return;
+    const handler = this.#handler;
+    const answer: IngressAnswer = handler
+      ? yield* handler(message.teamId, {
+          platform: "slack",
+          kind: message.kind,
+          retryNum: message.retryNum,
+          body: Buffer.from(message.bodyBase64, "base64"),
+          queued,
+        }).pipe(Effect.catch(() => Effect.succeed<IngressAnswer>({ status: 503 })))
+      : { status: 503 };
+    if (queued || socket.readyState !== WebSocket.OPEN) return;
+    const body =
+      answer.contentType && answer.body !== undefined && answer.body.length <= SLACK_DELIVERY_RESPONSE_BYTES_LIMIT
+        ? { contentType: answer.contentType, body: answer.body }
+        : {};
+    const result: SignalClientMessage = {
+      type: "slack-delivery-result",
+      version: SIGNAL_PROTOCOL_VERSION,
+      requestId: message.requestId,
+      status: answer.status,
+      ...body,
+    };
+    socket.send(JSON.stringify(result));
+  });
+
+  #run(operation: Effect.Effect<void, never, SignalIngressAccount>): void {
+    if (this.#disposing) return;
+    this.#runtime.runFork(
+      operation.pipe(Effect.uninterruptible, Effect.forkIn(this.#scope, { startImmediately: true })),
+    );
+  }
+
+  #wait(state: Exclude<IngressState, "online" | "connecting">): void {
+    this.#setState(state);
+    if (this.#unheld() || this.#retry) return;
+    const delay = this.#backoffMs * (0.5 + Math.random() / 2);
+    this.#backoffMs = Math.min(this.#backoffMs * 2, BACKOFF_LIMIT_MS);
+    this.#retry = setTimeout(() => {
+      this.#retry = null;
+      this.#run(this.#open());
+    }, delay);
+  }
+
+  #retryRoutes(): void {
+    if (this.#retry) return;
+    let delay: number;
+    if (this.#webhookMissing) {
+      delay = this.#webhookBackoffMs * (0.5 + Math.random() / 2);
+      this.#webhookBackoffMs = Math.min(this.#webhookBackoffMs * 2, BACKOFF_LIMIT_MS);
+    } else if (this.#githubMissing) {
+      delay = this.#githubBackoffMs * (0.5 + Math.random() / 2);
+      this.#githubBackoffMs = Math.min(this.#githubBackoffMs * 2, BACKOFF_LIMIT_MS);
+    } else {
+      delay = this.#telegramBackoffMs * (0.5 + Math.random() / 2);
+      this.#telegramBackoffMs = Math.min(this.#telegramBackoffMs * 2, BACKOFF_LIMIT_MS);
+    }
+    this.#retry = setTimeout(() => {
+      this.#retry = null;
+      this.reconnect();
+    }, delay);
+  }
+
+  #telegramCall<M extends TelegramCallMethod>(
+    botId: string,
+    method: M,
+    params: TelegramCallParams[M],
+  ): Effect.Effect<TelegramCallResult, MessagingAdapterError> {
+    return Effect.gen({ self: this }, function* () {
+      yield* this.#telegramReady();
+      const socket = this.#socket;
+      if (!socket || socket.readyState !== WebSocket.OPEN) return yield* telegramUnavailable();
+      const requestId = crypto.randomUUID().replaceAll("-", "");
+      const answer = yield* Effect.callback<TelegramCallAnswer>((resume) => {
+        this.#telegramCalls.set(requestId, (value) => resume(Effect.succeed(value)));
+        const request: SignalClientMessage = {
+          type: "telegram-call",
+          version: SIGNAL_PROTOCOL_VERSION,
+          requestId,
+          botId,
+          method,
+          params,
+        };
+        socket.send(JSON.stringify(request));
+      }).pipe(
+        Effect.timeoutOrElse({ duration: TELEGRAM_CALL_TIMEOUT_MS, orElse: () => Effect.succeed(TELEGRAM_TIMED_OUT) }),
+        Effect.ensuring(Effect.sync(() => this.#telegramCalls.delete(requestId))),
+      );
+      if (answer.ok) return answer.result;
+      return yield* new MessagingAdapterError({
+        cause: new TelegramCallError(answer.errorCode, answer.description, answer.retryAfter ?? null),
+      });
+    });
+  }
+
+  #telegramReady(): Effect.Effect<void, MessagingAdapterError> {
+    if (this.telegram.available()) return Effect.void;
+    if (this.#state === "online") return Effect.fail(telegramUnavailable());
+    return Effect.callback<void>((resume) => {
+      const stop = this.onState(() => {
+        if (!this.telegram.available()) return;
+        stop();
+        resume(Effect.void);
+      });
+      return Effect.sync(stop);
+    }).pipe(
+      Effect.timeoutOrElse({ duration: TELEGRAM_READY_TIMEOUT_MS, orElse: () => Effect.fail(telegramUnavailable()) }),
+    );
+  }
+
+  #endTelegram(): void {
+    this.#capabilities = new Set();
+    for (const settle of [...this.#telegramCalls.values()]) settle(TELEGRAM_UNAVAILABLE_ANSWER);
+    this.#telegramCalls.clear();
+  }
+
+  #close(): void {
+    this.#generation += 1;
+    this.#clearRetry();
+    this.#stopPing();
+    this.#clearReadyDeadline();
+    this.#endTelegram();
+    const socket = this.#socket;
+    this.#socket = null;
+    this.#discordSession = null;
+    this.#discordGuilds = null;
+    this.#linkedRoutes = { slack: null, telegram: null };
+    this.#webhookReady = false;
+    this.#loseGitHub();
+    if (this.#unheld()) for (const listener of [...this.#sessionListeners]) listener(null);
+    socket?.close(1000);
+    this.#backoffMs = BACKOFF_START_MS;
+    this.#setState("unavailable");
+  }
+
+  #loseGitHub(): void {
+    if (this.#githubReady && this.#githubHolders > 0) this.#githubLostAt ??= Date.now();
+    this.#githubReady = false;
+  }
+
+  #setState(state: IngressState): void {
+    if (state === this.#state) return;
+    this.#state = state;
+    for (const listener of this.#listeners) listener(state);
+  }
+
+  #clearRetry(): void {
+    if (this.#retry) clearTimeout(this.#retry);
+    this.#retry = null;
+  }
+
+  #clearReadyDeadline(): void {
+    if (this.#readyDeadline) clearTimeout(this.#readyDeadline);
+    this.#readyDeadline = null;
+  }
+
+  #startPing(socket: WebSocket): void {
+    this.#stopPing();
+    this.#ping = setInterval(() => {
+      if (socket !== this.#socket) return;
+      pongs.set(socket, false);
+      socket.ping();
+      setTimeout(() => {
+        if (pongs.get(socket) === false) socket.terminate();
+      }, PONG_TIMEOUT_MS);
+    }, PING_INTERVAL_MS);
+  }
+
+  #stopPing(): void {
+    if (this.#ping) clearInterval(this.#ping);
+    this.#ping = null;
+  }
+}
+
+const pongs = new WeakMap<WebSocket, boolean>();
+
+type TelegramCallAnswer =
+  | { ok: true; result: TelegramCallResult }
+  | { ok: false; errorCode: number; description: string; retryAfter?: number };
+
+const TELEGRAM_UNAVAILABLE_ANSWER: TelegramCallAnswer = { ok: false, errorCode: 503, description: "relay_unavailable" };
+const TELEGRAM_TIMED_OUT: TelegramCallAnswer = { ok: false, errorCode: 504, description: "timeout" };
+
+function telegramUnavailable(): MessagingAdapterError {
+  return new MessagingAdapterError({ cause: new TelegramCallError(503, "relay_unavailable", null) });
+}
+
+function discordApiUrl(signalUrl: string): string {
+  const url = new URL(signalUrl);
+  url.protocol = url.protocol === "ws:" ? "http:" : "https:";
+  url.pathname = DISCORD_API_PATH;
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}

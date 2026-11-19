@@ -1,0 +1,109 @@
+import type { PartialTranslation } from "../../../message";
+import type { messages as source } from "../../en/error/workflow";
+
+export const messages = {
+  "error.workflow.missing": "Este fluxo de trabalho não existe mais.",
+  "error.workflow.versionMissing": "Esta versão do fluxo de trabalho não existe mais.",
+  "error.workflow.annotation": "Textos, notas e formas não podem ter conexões.",
+  "error.workflow.port": "Uma etapa não pode receber este tipo de entrada.",
+  "error.workflow.branch": "Somente uma condição pode ter conexões de sim e não.",
+  "error.workflow.conditionBranch": "Cada conexão de uma condição deve ser sim ou não.",
+  "error.workflow.duplicateEdge": "Estas duas etapas já têm esta conexão.",
+  "error.workflow.serverTooOld":
+    "Este servidor não oferece suporte a fluxos de trabalho. Atualize o OpenBot no computador que o executa.",
+  "error.workflow.nodeUnsupported":
+    "Esta versão do OpenBot ainda não pode executar etapas de imagem, arquivo e mensagem.",
+  "error.workflow.interrupted": "O OpenBot parou enquanto esta etapa era executada. Execute-a novamente.",
+  "error.workflow.agentMissing": "Escolha um agente para esta etapa.",
+  "error.workflow.handoffFailed": "O OpenBot não conseguiu enviar esta etapa ao agente.",
+  "error.workflow.agentStepEnded": "A mensagem ao agente foi removida antes da resposta.",
+  "error.workflow.agentStepStopped": "O agente parou antes de responder a esta etapa. Execute a etapa novamente.",
+  "error.workflow.conditionUnclear": "O modelo não respondeu sim ou não.",
+  "error.workflow.modelFailed": "O modelo não conseguiu responder. Execute a etapa novamente.",
+  "error.workflow.modelTimedOut":
+    "O modelo não respondeu a tempo. Escolha um esforço menor ou um modelo mais rápido para esta etapa e execute-a novamente.",
+  "error.workflow.modelToolUse":
+    "O modelo tentou usar uma ferramenta, mas esta etapa só pode responder com texto. Execute a etapa novamente ou escolha outro modelo para ela.",
+  "error.workflow.modelUnavailable": "O modelo desta etapa não está disponível. Escolha outro modelo para esta etapa.",
+  "error.workflow.providerBusy": "O provedor está ocupado. Aguarde alguns minutos e execute a etapa novamente.",
+  "error.workflow.providerOffline":
+    "O OpenBot não conseguiu acessar o provedor. Verifique a conexão com a internet e execute a etapa novamente.",
+  "error.workflow.modelBusy": "Outra solicitação ao modelo está em andamento. Execute a etapa novamente em breve.",
+  "error.workflow.mediaFailed": "O modelo não conseguiu criar a imagem ou o vídeo. Execute a etapa novamente.",
+  "error.workflow.pictureMissing": "A imagem não está mais no servidor. Envie-a novamente.",
+  "error.workflow.pictureType": "Use uma imagem PNG, JPEG ou WebP.",
+  "error.workflow.mediaInputMissing":
+    "Uma imagem de uma etapa anterior não está disponível. Execute essa etapa novamente.",
+  "error.workflow.mediaEmptyRequest":
+    "Escreva uma descrição ou execute as etapas anteriores para que chegue um texto ou uma imagem.",
+  "error.workflow.mediaInputNotImage":
+    "Esta etapa aceita apenas imagens, não vídeos. Remova a conexão a partir do vídeo.",
+  "error.workflow.stepMissing": "Esta etapa não existe mais.",
+  "error.workflow.nodeMissing": "Esta etapa não está no fluxo de trabalho.",
+  "error.workflow.runMissing": "Esta execução não existe mais.",
+  "error.workflow.notRetryable": "Somente uma etapa que falhou ou parou pode ser executada novamente.",
+  "error.workflow.noDecision": "Esta etapa não aguarda uma decisão.",
+  "error.workflow.outputPlaceMissing": "Escolha um local de mensagens para esta saída.",
+  "error.workflow.outputChannelMissing": "Escolha um canal para esta saída.",
+  "error.workflow.outputChannelFailed":
+    "O OpenBot não conseguiu publicar o resultado no canal. Execute a etapa novamente.",
+  "error.workflow.discordNoMessage":
+    "Esta saída age na mensagem do Discord que iniciou a execução. Inicie a execução a partir de uma menção no Discord ou escolha Publicar no canal.",
+  "error.workflow.slackNoMessage":
+    "Esta saída age na mensagem do Slack que iniciou a execução. Inicie a execução a partir de uma menção no Slack ou escolha Publicar no canal.",
+  "error.workflow.telegramNoMessage":
+    "Esta saída age na mensagem do Telegram que iniciou a execução. Inicie a execução a partir de uma menção no Telegram ou escolha Publicar no chat.",
+  "error.workflow.outputConnectionOff":
+    "A conexão de mensagens desta saída está desativada ou foi removida. Escolha um local novamente.",
+  "error.workflow.outputNotRunning": "A conexão de mensagens não está em execução agora. Tente de novo quando estiver.",
+  "error.workflow.outputRefused": "O local recusou a publicação. Verifique se o OpenBot pode publicar lá.",
+  "error.workflow.outputUncertain":
+    "A publicação parou no caminho. Uma parte pode já estar no local. Verifique antes de tentar de novo.",
+  "error.workflow.tooLarge":
+    "Este fluxo de trabalho é grande demais para ser salvo. Remova alguns desenhos ou textos longos e tente novamente.",
+  "error.workflow.tooLargeToSend":
+    "Este fluxo de trabalho é grande demais para ser enviado a outro computador. Abra-o no computador que executa o servidor.",
+  "error.workflow.webhookMissing":
+    "Esta etapa não é um gatilho de webhook. Salve o fluxo de trabalho e tente novamente.",
+  "error.workflow.githubActionMissing": "Escolha o que esta saída faz no GitHub.",
+  "error.workflow.githubRepositoryMissing": "Escolha um repositório para esta saída.",
+  "error.workflow.githubItemMissing":
+    "Esta saída não tem issue nem pull request. Inicie a execução a partir de um evento do GitHub ou coloque o número na entrada dela.",
+  "error.workflow.githubPullRequestOnly": "Esta ação funciona apenas em pull requests.",
+  "error.workflow.githubTextMissing": "Esta saída não tem texto para enviar. Conecte uma etapa que o escreva.",
+  "error.workflow.githubEventText":
+    "Esta saída não pode enviar o evento bruto do gatilho. Coloque um agente entre o gatilho e esta saída.",
+  "error.workflow.githubChoiceMissing": "Escolha os rótulos ou a pessoa para esta saída.",
+  "error.workflow.githubChoseNothing": "O modelo não escolheu nenhum rótulo ou pessoa deste repositório.",
+  "error.workflow.githubNotConnected": "Conecte o GitHub no computador que executa este fluxo de trabalho.",
+  "error.workflow.githubNoAccess":
+    "O GitHub App do OpenBot não consegue ver este repositório ou item. Abra o GitHub e dê acesso ao app.",
+  "error.workflow.githubNoWrite":
+    "O GitHub App do OpenBot não pode alterar este repositório. Abra o GitHub e dê acesso ao app.",
+  "error.workflow.githubLocked": "Esta conversa está bloqueada no GitHub.",
+  "error.workflow.githubRefused": "O GitHub recusou a alteração: {detail}",
+  "error.workflow.githubUnreachable": "O OpenBot não conseguiu acessar o GitHub. Execute a etapa novamente.",
+  "error.workflow.githubUncertain":
+    "A alteração parou no caminho. Ela pode já estar no GitHub. Verifique lá antes de executar a etapa novamente.",
+  "error.workflow.githubNoEvent": "O GitHub não tem issue nem pull request para este gatilho iniciar.",
+  "error.workflow.sunraSignIn": "Entre no Sunra em Apps para usar os modelos do Sunra.",
+  "error.workflow.sunraNoCredits":
+    "Sua conta do Sunra não tem créditos suficientes. Adicione créditos em sunra.ai/pricing e execute a etapa novamente.",
+  "error.workflow.sunraNeedsPlan":
+    "Este modelo do Sunra precisa de um plano do Sunra. Escolha um plano em sunra.ai/pricing ou selecione outro modelo.",
+  "error.workflow.sunraTeamInputs":
+    "O Sunra usa imagens de entrada apenas com uma conta pessoal. Selecione sua conta pessoal no Sunra ou remova as conexões de imagem.",
+  "error.workflow.sunraFailed": "O Sunra não conseguiu criar o arquivo: {reason}",
+  "error.workflow.sunraTimeout":
+    "O Sunra não terminou o arquivo a tempo. Veja o projeto OpenBot em sunra.ai antes de executar a etapa novamente.",
+  "error.workflow.higgsfieldSignIn": "Entre no Higgsfield em Apps para usar os modelos do Higgsfield.",
+  "error.workflow.higgsfieldNoCredits":
+    "Sua conta do Higgsfield não tem créditos suficientes. Adicione créditos em higgsfield.ai/pricing e execute a etapa novamente.",
+  "error.workflow.higgsfieldNeedsPlan":
+    "Este modelo do Higgsfield precisa de um plano do Higgsfield. Escolha um plano em higgsfield.ai/pricing ou selecione outro modelo.",
+  "error.workflow.higgsfieldBlocked":
+    "O Higgsfield não criou o arquivo porque a verificação de conteúdo o bloqueou. Altere o prompt ou as imagens de entrada e execute a etapa novamente.",
+  "error.workflow.higgsfieldFailed": "O Higgsfield não conseguiu criar o arquivo: {reason}",
+  "error.workflow.higgsfieldTimeout":
+    "O Higgsfield não terminou o arquivo a tempo. Veja seu histórico em higgsfield.ai antes de executar a etapa novamente.",
+} as const satisfies PartialTranslation<typeof source>;

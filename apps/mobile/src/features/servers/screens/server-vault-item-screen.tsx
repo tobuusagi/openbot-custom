@@ -1,0 +1,525 @@
+import {
+  VAULT_API_KEY_LIMIT,
+  VAULT_NOTES_LIMIT,
+  VAULT_PASSWORD_LIMIT,
+  VAULT_TEXT_LIMIT,
+  type VaultContactSummary,
+  type VaultItemKind,
+  type VaultItemSummary,
+  type VaultSaveInput,
+  type VaultState,
+} from "@openbot/contracts/ipc";
+import { router, Stack, useLocalSearchParams } from "expo-router";
+import { Typography } from "heroui-native";
+import { Children, type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Alert, StyleSheet, View } from "react-native";
+import { useUniwind } from "uniwind";
+import { VaultTwoStepSection } from "@/features/servers/components/vault-two-step-section";
+import { useServerVault } from "@/features/servers/model/use-server-vault";
+import { useVaultAgentPicker } from "@/features/servers/model/vault-agent-picker";
+import {
+  type VaultDraft,
+  vaultAddressExample,
+  vaultAgentsSummary,
+  vaultCardTitle,
+  vaultContactTitle,
+  vaultCountryOptions,
+  vaultDraft,
+  vaultLoginTitle,
+  vaultSaveInput,
+} from "@/features/servers/model/vault-items";
+import {
+  SettingsContent,
+  SettingsNote,
+  SettingsRow,
+  SettingsSection,
+} from "@/features/settings/components/settings-content";
+import { SettingsPicker } from "@/features/settings/components/settings-controls";
+import {
+  useMobileWorkspaceActions,
+  useMobileWorkspaceSelector,
+} from "@/features/workspace/context/mobile-workspace-context";
+import { SheetFormField } from "@/shared/components/sheet-form-field";
+import type { SheetFormFieldProps } from "@/shared/components/sheet-form-field.types";
+import { SheetSaveAction } from "@/shared/components/sheet-save-action";
+import { isIOS } from "@/shared/lib/platform";
+import { useText } from "@/shared/lib/text";
+import { useDiscardGuard } from "@/shared/lib/use-discard-guard";
+
+const KINDS: readonly VaultItemKind[] = ["login", "card", "contact", "apiKey"];
+const WEBSITE_PLACEHOLDER = "https://example.com";
+const PERSON_PLACEHOLDER = "Ada Lovelace";
+const EMAIL_PLACEHOLDER = "ada@example.com";
+const PASSWORD_PLACEHOLDER = "••••••••••••";
+const CARD_NUMBER_PLACEHOLDER = "4242 4242 4242 4242";
+const SECURITY_CODE_PLACEHOLDER = "123";
+const API_KEY_PLACEHOLDER = "sk-proj-4f9a…";
+const VARIABLE_NAME_LIMIT = 64;
+
+function FieldRow({ children }: { children: ReactNode }) {
+  return (
+    <View className="flex-row gap-3">
+      {Children.map(children, (child) => (
+        <View className="min-w-0 flex-1">{child}</View>
+      ))}
+    </View>
+  );
+}
+
+type FieldProps = Partial<Omit<SheetFormFieldProps, "label" | "value" | "onChangeText">>;
+type TextKey = Exclude<keyof VaultDraft, "fillSites" | "twoStepKey" | "agents">;
+
+function isKind(value: string | undefined): value is VaultItemKind {
+  return KINDS.some((kind) => kind === value);
+}
+
+function LoginLine({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <View className="flex-row items-center ps-4">
+      <Typography.Paragraph className="w-28 py-2 pe-2 text-grouped-secondary">{label}</Typography.Paragraph>
+      <View className="min-w-0 flex-1">{children}</View>
+    </View>
+  );
+}
+
+export function ServerVaultItemScreen() {
+  const { t } = useText();
+  const { serverId, itemId, kind } = useLocalSearchParams<{ serverId: string; itemId?: string; kind?: string }>();
+  const vault = useServerVault(serverId);
+  const saved = itemId ? vault.query.data?.items.find((item) => item.id === itemId) : undefined;
+  const itemKind = saved?.kind ?? (isKind(kind) && (kind !== "apiKey" || vault.canManageApiKeys) ? kind : undefined);
+  if (!vault.server || !vault.canManage || !itemKind || (itemId && !saved))
+    return (
+      <SettingsContent>
+        <SettingsNote>
+          {!vault.server
+            ? t("mobile.server.unavailable")
+            : !vault.canManage
+              ? t("mobile.server.vault.unavailable")
+              : vault.query.isPending && !vault.query.isError
+                ? t("mobile.server.vault.loading")
+                : t("mobile.server.vault.gone")}
+        </SettingsNote>
+      </SettingsContent>
+    );
+  const contacts = (vault.query.data?.items ?? []).filter(
+    (item): item is VaultContactSummary => item.kind === "contact",
+  );
+  return (
+    <VaultItemForm
+      key={saved?.id ?? itemKind}
+      serverId={serverId}
+      host={vault.server.name}
+      kind={itemKind}
+      saved={saved}
+      contacts={contacts}
+      vault={vault}
+    />
+  );
+}
+
+export interface VaultItemRequest {
+  title: string;
+  prefill: Partial<VaultDraft>;
+  save: (input: VaultSaveInput) => Promise<void>;
+}
+
+export function VaultItemForm({
+  serverId,
+  host,
+  kind,
+  saved,
+  contacts,
+  vault,
+  request,
+}: {
+  serverId: string;
+  host: string;
+  kind: VaultItemKind;
+  saved: VaultItemSummary | undefined;
+  contacts: VaultContactSummary[];
+  vault: ReturnType<typeof useServerVault>;
+  request?: VaultItemRequest | undefined;
+}) {
+  const { t, errorMessage } = useText();
+  const { theme } = useUniwind();
+  const { saveVaultItem, deleteVaultItem } = useMobileWorkspaceActions();
+  const { action, perform, setState } = vault;
+  const { label: suggestedLabel, ...prefill } = request?.prefill ?? {};
+  const [initial] = useState(() => ({ ...vaultDraft(saved), ...prefill }));
+  const [draft, setDraft] = useState<VaultDraft>(initial);
+  const [leaving, setLeaving] = useState(false);
+  const removedState = useRef<VaultState | null>(null);
+  const showState = useRef(setState);
+  showState.current = setState;
+  useEffect(() => {
+    if (!leaving) return;
+    router.back();
+    const state = removedState.current;
+    removedState.current = null;
+    if (state) void showState.current(state);
+  }, [leaving]);
+  const allAgents = useMobileWorkspaceSelector((workspace) => workspace.agents);
+  const agents = useMemo(() => allAgents.filter((agent) => agent.serverId === serverId), [allAgents, serverId]);
+  const agentScope = vault.query.data?.agentScope === true && !request && agents.length > 0;
+  const openAgentPicker = useVaultAgentPicker((state) => state.open);
+  const agentsKey = (value: string[] | null) => (value === null ? null : [...value].sort());
+  const agentsChanged = JSON.stringify(agentsKey(draft.agents)) !== JSON.stringify(agentsKey(initial.agents));
+  const input = vaultSaveInput(kind, saved?.id ?? null, draft, agentScope && agentsChanged);
+  const example = vaultAddressExample(draft.country);
+  const dirty =
+    agentsChanged || JSON.stringify({ ...draft, agents: null }) !== JSON.stringify({ ...initial, agents: null });
+  const locked = action.isPending;
+  const formId = useId();
+
+  useDiscardGuard((dirty || locked) && !leaving, { busy: () => locked, warn: true });
+
+  const edit = (change: Partial<VaultDraft>) => {
+    setDraft((current) => ({ ...current, ...change }));
+    if (action.error) action.reset();
+  };
+  const save = () => {
+    if (!input) return;
+    void perform(async () => {
+      if (request) await request.save(input);
+      else await setState(await saveVaultItem(input, serverId));
+    }).then((done) => {
+      if (done) setLeaving(true);
+    });
+  };
+  const remove = () => {
+    if (!saved) return;
+    Alert.alert(t("mobile.server.vault.deleteTitle"), t("mobile.server.vault.deleteBody", { host }), [
+      { text: t("common.cancel"), style: "cancel" },
+      {
+        text: t("mobile.server.vault.deleteConfirm"),
+        style: "destructive",
+        onPress: () =>
+          void perform(async () => {
+            removedState.current = await deleteVaultItem(saved.id, serverId);
+          }).then((done) => {
+            if (done) setLeaving(true);
+          }),
+      },
+    ]);
+  };
+
+  const editText = (key: TextKey, value: string) => {
+    setDraft((current) => {
+      const next = { ...current };
+      next[key] = value;
+      return next;
+    });
+    if (action.error) action.reset();
+  };
+  const field = (key: TextKey, label: string, props: FieldProps = {}) => (
+    <SheetFormField
+      label={label}
+      autoCorrect={false}
+      maxLength={VAULT_TEXT_LIMIT}
+      editable={!locked}
+      value={draft[key]}
+      onChangeText={(value) => editText(key, key === "name" ? value.toUpperCase() : value)}
+      {...props}
+    />
+  );
+  const secret = (key: "password" | "number" | "securityCode" | "key", label: string, props: FieldProps) =>
+    field(key, label, {
+      autoCapitalize: "none",
+      isRequired: !saved && key !== "securityCode",
+      ...props,
+      ...(saved
+        ? {
+            placeholder: t(
+              key === "securityCode" ? "mobile.server.vault.secretSavedShort" : "mobile.server.vault.secretSaved",
+            ),
+          }
+        : {}),
+    });
+
+  const title = request?.title
+    ? request.title
+    : saved
+      ? saved.kind === "login"
+        ? vaultLoginTitle(saved)
+        : saved.kind === "card"
+          ? vaultCardTitle(saved, t)
+          : saved.kind === "apiKey"
+            ? saved.name
+            : vaultContactTitle(saved, t)
+      : t(
+          kind === "login"
+            ? "mobile.server.vault.newLogin"
+            : kind === "card"
+              ? "mobile.server.vault.newCard"
+              : kind === "apiKey"
+                ? "mobile.server.vault.newApiKey"
+                : "mobile.server.vault.newContact",
+        );
+  const failure = action.error
+    ? errorMessage(action.error, t(saved ? "mobile.server.vault.saveFailed" : "mobile.server.vault.addFailed"))
+    : null;
+
+  return (
+    <SettingsContent>
+      <Stack.Screen options={{ title }} />
+      <SheetSaveAction
+        dirty={dirty || Boolean(request)}
+        canSave={input !== null && !locked}
+        pending={locked && (dirty || Boolean(request))}
+        label={saved ? undefined : t("mobile.server.vault.addConfirm")}
+        onSave={save}
+      />
+      {failure ? (
+        <Typography.Paragraph accessibilityRole="alert" type="body-xs" className="px-4 text-danger-text">
+          {failure}
+        </Typography.Paragraph>
+      ) : null}
+      <View className="gap-5">
+        {kind === "login" ? (
+          <>
+            {field("website", t("mobile.server.vault.website"), {
+              isRequired: true,
+              autoCapitalize: "none",
+              inputMode: "url",
+              placeholder: WEBSITE_PLACEHOLDER,
+              hint: t("mobile.server.vault.websiteHint"),
+            })}
+            <View className="gap-2">
+              <View
+                className={`overflow-hidden border border-border bg-grouped ${isIOS ? "" : "rounded-2xl"}`}
+                style={isIOS ? { borderRadius: 16, borderCurve: "continuous" } : undefined}
+              >
+                <LoginLine label={t("mobile.server.vault.username")}>
+                  {field("username", t("mobile.server.vault.username"), {
+                    autoCapitalize: "none",
+                    placeholder: EMAIL_PLACEHOLDER,
+                    hideLabel: true,
+                    appearance: "soft",
+                  })}
+                </LoginLine>
+                <View className="ms-4 bg-border" style={{ height: StyleSheet.hairlineWidth }} />
+                <LoginLine label={`${t("mobile.server.vault.password")}${saved ? "" : " *"}`}>
+                  {secret("password", t("mobile.server.vault.password"), {
+                    secureTextEntry: true,
+                    placeholder: PASSWORD_PLACEHOLDER,
+                    maxLength: VAULT_PASSWORD_LIMIT,
+                    hideLabel: true,
+                    appearance: "soft",
+                  })}
+                </LoginLine>
+              </View>
+              <View className="px-1">
+                <Typography.Paragraph type="body-xs" className="text-text-secondary">
+                  {t("mobile.server.vault.secretHint", { host })}
+                </Typography.Paragraph>
+              </View>
+            </View>
+            {request
+              ? null
+              : field("notes", t("mobile.server.vault.notes"), {
+                  multiline: true,
+                  maxLength: VAULT_NOTES_LIMIT,
+                  placeholder: t("mobile.server.vault.notesPlaceholder"),
+                })}
+          </>
+        ) : kind === "card" ? (
+          <>
+            {field("label", t("mobile.server.vault.label"), {
+              placeholder: suggestedLabel || t("mobile.server.vault.cardLabelPlaceholder"),
+            })}
+            {field("nameOnCard", t("mobile.server.vault.nameOnCard"), {
+              placeholder: PERSON_PLACEHOLDER,
+            })}
+            {secret("number", t("mobile.server.vault.cardNumber"), {
+              inputMode: "numeric",
+              placeholder: CARD_NUMBER_PLACEHOLDER,
+              maxLength: 23,
+            })}
+            <View className="gap-1">
+              <FieldRow>
+                {field("expMonth", t("mobile.server.vault.expMonth"), {
+                  isRequired: true,
+                  inputMode: "numeric",
+                  maxLength: 2,
+                  placeholder: t("mobile.server.vault.expMonthPlaceholder"),
+                })}
+                {field("expYear", t("mobile.server.vault.expYear"), {
+                  isRequired: true,
+                  inputMode: "numeric",
+                  maxLength: 4,
+                  placeholder: t("mobile.server.vault.expYearPlaceholder"),
+                })}
+                {secret("securityCode", t("mobile.server.vault.securityCode"), {
+                  inputMode: "numeric",
+                  secureTextEntry: true,
+                  maxLength: 4,
+                  placeholder: SECURITY_CODE_PLACEHOLDER,
+                })}
+              </FieldRow>
+              <View className="px-1">
+                <Typography.Paragraph type="body-xs" className="text-text-secondary">
+                  {t("mobile.server.vault.secretHint", { host })}
+                </Typography.Paragraph>
+              </View>
+            </View>
+          </>
+        ) : kind === "apiKey" ? (
+          <>
+            {field("name", t("mobile.server.vault.variableName"), {
+              isRequired: true,
+              autoCapitalize: "characters",
+              maxLength: VARIABLE_NAME_LIMIT,
+              placeholder: t("mobile.server.vault.variableNamePlaceholder"),
+              hint: t("mobile.server.vault.variableNameHint"),
+            })}
+            {secret("key", t("mobile.server.vault.apiKey"), {
+              secureTextEntry: true,
+              placeholder: API_KEY_PLACEHOLDER,
+              maxLength: VAULT_API_KEY_LIMIT,
+              hint: t("mobile.server.vault.secretHint", { host }),
+            })}
+            {field("notes", t("mobile.server.vault.notes"), {
+              multiline: true,
+              maxLength: VAULT_NOTES_LIMIT,
+              placeholder: t("mobile.server.vault.notesPlaceholder"),
+            })}
+          </>
+        ) : (
+          <>
+            {field("label", t("mobile.server.vault.label"), {
+              placeholder: suggestedLabel || t("mobile.server.vault.contactLabelPlaceholder"),
+            })}
+            {field("fullName", t("mobile.server.vault.fullName"), {
+              placeholder: PERSON_PLACEHOLDER,
+            })}
+            <SettingsSection>
+              <SettingsRow
+                disclosure={false}
+                trailing={
+                  <SettingsPicker
+                    value={draft.country}
+                    enabled={!locked}
+                    dark={theme === "dark"}
+                    label={t("mobile.server.vault.country")}
+                    options={vaultCountryOptions(t, draft.country)}
+                    onChange={(value) => edit({ country: value })}
+                  />
+                }
+              >
+                <Typography.Paragraph>{t("mobile.server.vault.country")}</Typography.Paragraph>
+              </SettingsRow>
+            </SettingsSection>
+            {field("address", t("mobile.server.vault.address"), {
+              placeholder: example.address,
+            })}
+            {field("address2", t("mobile.server.vault.address2"), {
+              placeholder: t("mobile.server.vault.address2Placeholder"),
+            })}
+            <FieldRow>
+              {field("postalCode", t("mobile.server.vault.postalCode"), {
+                placeholder: example.postalCode,
+              })}
+              {field("city", t("mobile.server.vault.city"), { placeholder: example.city })}
+            </FieldRow>
+            {field("region", t("mobile.server.vault.region"), {
+              placeholder: example.region,
+            })}
+            {field("phone", t("mobile.server.vault.phone"), { inputMode: "tel", placeholder: example.phone })}
+            {field("email", t("mobile.server.vault.email"), {
+              autoCapitalize: "none",
+              inputMode: "email",
+              placeholder: EMAIL_PLACEHOLDER,
+            })}
+          </>
+        )}
+        <View className="px-1">
+          <Typography.Paragraph type="body-xs" className="text-text-secondary">
+            {t(kind === "contact" ? "mobile.server.vault.contactRequiredNote" : "mobile.server.vault.requiredNote")}
+          </Typography.Paragraph>
+        </View>
+      </View>
+      {kind === "login" && !request && vault.canManageTwoStep ? (
+        <VaultTwoStepSection
+          formId={formId}
+          serverId={serverId}
+          host={host}
+          website={draft.website}
+          saved={saved?.kind === "login" ? saved : undefined}
+          twoStepKey={draft.twoStepKey}
+          disabled={locked}
+          onChange={(twoStepKey) => edit({ twoStepKey })}
+        />
+      ) : null}
+      {kind === "card" && !request ? (
+        <SettingsSection title={t("mobile.server.vault.billingContact")}>
+          <SettingsRow
+            disclosure={false}
+            trailing={
+              <SettingsPicker
+                value={draft.billingContactId}
+                enabled={!locked}
+                dark={theme === "dark"}
+                label={t("mobile.server.vault.billingContact")}
+                options={[
+                  { value: "", label: t("mobile.server.vault.billingNone") },
+                  ...contacts.map((contact) => ({ value: contact.id, label: vaultContactTitle(contact, t) })),
+                ]}
+                onChange={(value) => edit({ billingContactId: value })}
+              />
+            }
+          >
+            <Typography.Paragraph>{t("mobile.server.vault.billingContact")}</Typography.Paragraph>
+          </SettingsRow>
+        </SettingsSection>
+      ) : null}
+      {kind === "card" && draft.fillSites.length > 0 ? (
+        <SettingsSection title={t("mobile.server.vault.fillSites")} footer={t("mobile.server.vault.fillSitesFooter")}>
+          {draft.fillSites.map((site) => (
+            <SettingsRow
+              key={site}
+              disclosure={false}
+              disabled={locked}
+              accessibilityLabel={t("mobile.server.vault.removeSite", { site })}
+              trailing={
+                <Typography.Paragraph className="text-danger-text">
+                  {t("mobile.server.vault.remove")}
+                </Typography.Paragraph>
+              }
+              onPress={() => edit({ fillSites: draft.fillSites.filter((entry) => entry !== site) })}
+            >
+              <Typography.Paragraph numberOfLines={1}>{site}</Typography.Paragraph>
+            </SettingsRow>
+          ))}
+        </SettingsSection>
+      ) : null}
+      {agentScope ? (
+        <SettingsSection footer={draft.agents?.length === 0 ? t("mobile.server.vault.agentsNone") : undefined}>
+          <SettingsRow
+            value={
+              draft.agents === null ? t("mobile.server.vault.agentsAll") : vaultAgentsSummary(draft.agents, agents, t)
+            }
+            disabled={locked}
+            onPress={() => {
+              openAgentPicker({
+                serverId,
+                agents: draft.agents,
+                onChange: (next) => edit({ agents: next }),
+              });
+              router.push({ pathname: "/server-settings/vault-item-agents" });
+            }}
+          >
+            <Typography.Paragraph>{t("mobile.server.vault.agents")}</Typography.Paragraph>
+          </SettingsRow>
+        </SettingsSection>
+      ) : null}
+      {saved ? (
+        <SettingsSection>
+          <SettingsRow disclosure={false} disabled={locked} onPress={remove}>
+            <Typography.Paragraph className="text-danger-text">{t("mobile.server.vault.delete")}</Typography.Paragraph>
+          </SettingsRow>
+        </SettingsSection>
+      ) : null}
+    </SettingsContent>
+  );
+}

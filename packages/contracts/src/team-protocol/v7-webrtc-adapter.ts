@@ -1,0 +1,91 @@
+import { isDynamicRecord, isString } from "../runtime-values";
+import { isBrowserDisplayRoute } from "./browser-navigation-v1";
+import { isBrowserViewSessionRoute } from "./browser-view-v1";
+import {
+  decodeTeamProtocolV7CurrentHttpRequest,
+  decodeTeamProtocolV7CurrentHttpResponse,
+  encodeTeamProtocolV7CurrentHttpRequest,
+  encodeTeamProtocolV7CurrentHttpResponse,
+} from "./v7-adapter";
+import { decodeTeamProtocolV7BaseCurrentEvent, encodeTeamProtocolV7BaseCurrentEvent } from "./v7-base-adapter";
+import {
+  isTeamWebRtcBodylessRoute,
+  isTeamWebRtcRemoteViewerRoute,
+  teamWebRtcBodylessRequest,
+  teamWebRtcRemoteViewerResponse,
+} from "./webrtc-bodyless-requests";
+import { decodeTeamProtocolV2Json, type TeamProtocolV2EventFrame } from "./webrtc-framing";
+
+export function encodeTeamProtocolV7WebRtcHttpRequest(
+  method: string,
+  path: string,
+  value: unknown,
+  options: { preserveSemanticTags?: boolean; agentCreateModel?: boolean } = {},
+) {
+  if (isBrowserDisplayRoute(method, path) || isBrowserViewSessionRoute(method, path)) return {};
+  if (isTeamWebRtcBodylessRoute(method, path)) return teamWebRtcBodylessRequest(method, path, value);
+  return decodeTeamProtocolV2Json(
+    JSON.parse(encodeTeamProtocolV7CurrentHttpRequest(method, path, value ?? {}, options)),
+  );
+}
+export function decodeTeamProtocolV7WebRtcHttpRequest(
+  method: string,
+  path: string,
+  value: unknown,
+  options: { preserveSemanticTags?: boolean; agentCreateModel?: boolean } = {},
+) {
+  if (isBrowserDisplayRoute(method, path) || isBrowserViewSessionRoute(method, path)) return {};
+  if (isTeamWebRtcBodylessRoute(method, path)) return teamWebRtcBodylessRequest(method, path, value);
+  return decodeTeamProtocolV2Json(decodeTeamProtocolV7CurrentHttpRequest(method, path, value ?? {}, options));
+}
+export function encodeTeamProtocolV7WebRtcHttpResponse(
+  method: string,
+  path: string,
+  status: number,
+  value: unknown,
+  options: {
+    preserveSemanticTags?: boolean;
+    preserveBrowserSecrets?: boolean;
+    historyExtent?: boolean;
+    uiBlocks?: boolean;
+    subagents?: boolean;
+    promptMultiSelect?: boolean;
+    videoGeneration?: boolean;
+  } = {},
+) {
+  if (status === 204) return {};
+  if (isTeamWebRtcRemoteViewerRoute(path)) return teamWebRtcRemoteViewerResponse(value);
+  return decodeTeamProtocolV2Json(
+    JSON.parse(encodeTeamProtocolV7CurrentHttpResponse(method, path, status, value ?? null, options)),
+  );
+}
+export function decodeTeamProtocolV7WebRtcHttpResponse(method: string, path: string, status: number, value: unknown) {
+  if (status === 204) return {};
+  if (isTeamWebRtcRemoteViewerRoute(path)) return teamWebRtcRemoteViewerResponse(value);
+  return decodeTeamProtocolV2Json(decodeTeamProtocolV7CurrentHttpResponse(method, path, status, value ?? null));
+}
+export function createTeamProtocolV7Event(
+  sequence: number,
+  value: unknown,
+  options: {
+    preserveSemanticTags?: boolean;
+    preserveBrowserSecrets?: boolean;
+    uiBlocks?: boolean;
+    subagents?: boolean;
+    promptMultiSelect?: boolean;
+    videoGeneration?: boolean;
+  } = {},
+): TeamProtocolV2EventFrame {
+  const decoded = decodeTeamProtocolV7BaseCurrentEvent(value);
+  if (decoded.kind !== "known") throw new Error("Invalid Team protocol v7 event.");
+  const encoded = encodeTeamProtocolV7BaseCurrentEvent(decoded.event, options);
+  if (!encoded) throw new Error("Invalid Team protocol v7 event.");
+  return { version: 2, type: "event", sequence, payload: decodeTeamProtocolV2Json(JSON.parse(encoded)) };
+}
+export function decodeTeamProtocolV7CurrentEvent(frame: TeamProtocolV2EventFrame) {
+  if (frame.type !== "event") return { status: "invalid" as const };
+  const decoded = decodeTeamProtocolV7BaseCurrentEvent(frame.payload);
+  if (decoded.kind === "invalid" && !(isDynamicRecord(frame.payload) && isString(frame.payload.type)))
+    return { status: "unknown" as const };
+  return decoded.kind === "known" ? { status: "known" as const, event: decoded.event } : { status: decoded.kind };
+}

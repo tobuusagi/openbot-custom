@@ -1,0 +1,178 @@
+import type {
+  CreateRoutineInput,
+  Routine,
+  RoutineRun,
+  RoutineRunStatus,
+  UpdateRoutineInput,
+} from "@openbot/contracts/ipc";
+import type { OpenBotDatabase } from "./openbot-database";
+import {
+  type DueRoutine,
+  type ImportedRoutineRun,
+  type OwnedRoutine,
+  type OwnedRoutineRun,
+  type ReceivedWebhookEvent,
+  type RoutineRunStart,
+  RoutineStore,
+  type WebhookReceiveResult,
+} from "./routine-store";
+import { ROUTINE_TABLES } from "./routine-tables";
+
+const HIDDEN_AGENT_ROUTINE_PAUSE_COMMAND_ID = "routine:hidden-agent-pause:v1";
+
+export interface DueRoutineTrigger {
+  routine: Routine;
+  triggerId: string;
+  nextRunAt: string;
+  schedule: DueRoutine["schedule"];
+}
+
+export class AgentRoutineStore extends RoutineStore {
+  constructor(database: OpenBotDatabase) {
+    super(database, ROUTINE_TABLES.agent);
+  }
+
+  list(agentId: string): Routine[] {
+    return this.listRoutines(agentId).map(toRoutine);
+  }
+
+  get(agentId: string, routineId: string): Routine | null {
+    const routine = this.getRoutine(agentId, routineId);
+    return routine ? toRoutine(routine) : null;
+  }
+
+  duplicate(sourceAgentId: string, targetAgentId: string, now = new Date()): Map<string, Routine> {
+    const duplicated = new Map<string, Routine>();
+    for (const routine of this.list(sourceAgentId)) {
+      duplicated.set(
+        routine.id,
+        this.create(
+          {
+            agentId: targetAgentId,
+            name: routine.name,
+            instruction: routine.instruction,
+            active: routine.active,
+            timezone: routine.timezone,
+            schedule: routine.trigger.schedule,
+            ...(routine.limitPolicy ? { limitPolicy: routine.limitPolicy } : {}),
+            ...(routine.missedPolicy ? { missedPolicy: routine.missedPolicy } : {}),
+            ...(routine.runIn ? { runIn: routine.runIn } : {}),
+          },
+          now,
+        ),
+      );
+    }
+    return duplicated;
+  }
+
+  create(input: CreateRoutineInput, now = new Date()): Routine {
+    const { agentId, ...fields } = input;
+    return toRoutine(this.createRoutine(agentId, fields, now));
+  }
+
+  update(input: UpdateRoutineInput, now = new Date()): Routine {
+    const { agentId, ...fields } = input;
+    return toRoutine(this.updateRoutine(agentId, fields, now));
+  }
+
+  pauseForAgentsHiddenBeforeWork(agentIds: readonly string[], now = new Date()): string[] {
+    if (this.database.commandResult(HIDDEN_AGENT_ROUTINE_PAUSE_COMMAND_ID) !== undefined) return [];
+    const routineIds = agentIds.flatMap((agentId) =>
+      this.listRecords(agentId).flatMap((routine) => (routine.active ? [routine.id] : [])),
+    );
+    this.database.dispatch(
+      HIDDEN_AGENT_ROUTINE_PAUSE_COMMAND_ID,
+      [
+        {
+          aggregateType: "agent-hidden-routine-pause",
+          aggregateId: HIDDEN_AGENT_ROUTINE_PAUSE_COMMAND_ID,
+          eventType: "routine.hidden-agents-paused",
+          payload: { agentIds, routineIds },
+        },
+      ],
+      (db, sequences) => {
+        const pause = db.prepare(
+          `UPDATE ${this.tables.routineTable} SET active = 0, updated_at = ?, last_event_sequence = ?
+           WHERE routine_id = ? AND active = 1`,
+        );
+        for (const routineId of routineIds) pause.run(now.toISOString(), sequences[0] ?? 0, routineId);
+        return null;
+      },
+    );
+    return routineIds;
+  }
+
+  importRuns(agentId: string, routineId: string, runs: readonly ImportedRoutineRun[]): string[] {
+    return this.importRunRows(routineId, agentId, runs);
+  }
+
+  listRuns(agentId: string, routineId: string, limit = 50, withSkipped = false): RoutineRun[] {
+    return this.listRunRows(agentId, routineId, limit, withSkipped).map(toRun);
+  }
+
+  pendingRuns(): RoutineRun[] {
+    return this.pendingRunRows().map(toRun);
+  }
+
+  activeRuns(agentId: string, routineId: string): RoutineRun[] {
+    return this.activeRunRows(agentId, routineId).map(toRun);
+  }
+
+  due(now = new Date(), excludedAgentIds: ReadonlySet<string> = new Set()): DueRoutineTrigger[] {
+    return this.dueRoutines(now, excludedAgentIds).map((entry) => ({
+      routine: toRoutine(entry.routine),
+      triggerId: entry.triggerId,
+      nextRunAt: entry.nextRunAt,
+      schedule: entry.schedule,
+    }));
+  }
+
+  createRun(
+    routine: Pick<Routine, "id" | "agentId" | "name" | "instruction">,
+    triggerId: string | null,
+    start: RoutineRunStart,
+    scheduledFor: string,
+  ): RoutineRun {
+    return toRun(this.createRunRow(runSource(routine), triggerId, start, scheduledFor));
+  }
+
+  skipOccurrences(
+    { agentId, ...fields }: Routine,
+    due: Date,
+    scheduledFor: Date,
+    nextRunAt: Date,
+    reason: string,
+  ): void {
+    this.skipOccurrenceRow({ ...fields, ownerId: agentId }, due, scheduledFor, nextRunAt, reason);
+  }
+
+  receiveWebhook(agentId: string, routineId: string, event: ReceivedWebhookEvent): WebhookReceiveResult<RoutineRun> {
+    const result = this.receiveWebhookRow(agentId, routineId, event);
+    return result.kind === "started" ? { kind: "started", run: toRun(result.run) } : result;
+  }
+
+  attachDelivery(runId: string, deliveryId: string): RoutineRun {
+    return toRun(this.attachHandleRow(runId, deliveryId));
+  }
+
+  updateRunStatus(runId: string, status: RoutineRunStatus, error: string | null = null): RoutineRun {
+    return toRun(this.updateRunRow(runId, status, error));
+  }
+
+  runForDelivery(deliveryId: string): RoutineRun | null {
+    const run = this.runForHandleRow(deliveryId);
+    return run ? toRun(run) : null;
+  }
+}
+
+function toRoutine({ ownerId, ...fields }: OwnedRoutine): Routine {
+  return { ...fields, agentId: ownerId };
+}
+
+function runSource({ id, agentId, name, instruction }: Pick<Routine, "id" | "agentId" | "name" | "instruction">) {
+  return { id, ownerId: agentId, name, instruction };
+}
+
+function toRun({ ownerId, handleId, ...fields }: OwnedRoutineRun): RoutineRun {
+  return { ...fields, agentId: ownerId, deliveryId: handleId };
+}

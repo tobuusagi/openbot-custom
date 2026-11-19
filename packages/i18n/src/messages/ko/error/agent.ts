@@ -1,0 +1,203 @@
+import type { PartialTranslation } from "../../../message";
+import type { messages as source } from "../../en/error/agent";
+
+export const messages = {
+  "error.agent.historyUnavailable":
+    "이 요청에서는 기록을 사용할 수 없어요. 최근 기록을 다시 읽거나, 채널 작업에는 channel_history를 사용하세요.",
+  "error.agent.historyArgumentsInvalid":
+    "기록 인수가 올바르지 않습니다: {detail} 인수를 수정한 후 다시 시도하세요. openbot.tool_describe가 스키마를 제공합니다.",
+  "error.agent.toolRequestInvalid":
+    "도구 검색 인수가 올바르지 않아요. 선언된 스키마와 원래의 정규화된 도구 이름을 사용하세요.",
+  "error.agent.toolCallArgumentsNotObject":
+    "도구가 실행되지 않았어요. tool_call의 arguments는 텍스트가 아니라 JSON 객체여야 해요. arguments를 객체로 바꿔 다시 호출하세요.",
+  "error.agent.toolCallDiscoveryTool":
+    "도구가 실행되지 않았어요. tool_call로는 openbot.tool_search나 openbot.tool_describe를 실행할 수 없어요. 같은 인수로 직접 호출하세요.",
+  "error.agent.toolCallEnvelopeKeys":
+    "도구가 실행되지 않았어요. tool_call은 name과 arguments만 받아요. 도구의 인수를 arguments에 객체로 넣고 다시 호출하세요.",
+  "error.agent.toolCallMissingName":
+    "도구가 실행되지 않았어요. tool_call에 name이 없어요. tool_search가 알려 주는 전체 이름(예: openbot.history_read)을 name에 넣고 다시 호출하세요.",
+  "error.agent.toolCallUnknownTool":
+    "도구가 실행되지 않았어요. tool_call이 이 이름의 도구를 찾지 못했어요. tool_search가 알려 주는 정확한 전체 이름(예: openbot_browser.snapshot)을 사용하세요.",
+  "error.agent.toolCallUnknownToolSuggest":
+    "도구가 실행되지 않았어요. tool_call이 이 이름의 도구를 찾지 못했어요. 전체 이름은 {name}일 수 있어요. 맞다면 그 이름으로 다시 호출하세요.",
+  "error.agent.toolDescribeUnknownNames":
+    "tool_describe가 {names} 이름의 OpenBot 도구를 찾지 못했습니다. openbot.tool_search가 나열하는 OpenBot 및 브라우저 도구만 설명하며 MCP 도구는 설명하지 않습니다.",
+  "error.agent.toolDescribeDiscoveryNames":
+    "{names}은(는) 직접 호출하세요. tool_describe는 검색 도구를 설명하지 않습니다.",
+  "error.agent.routineScheduleArgumentsInvalid":
+    "루틴 일정이 올바르지 않아요: {detail} 일정을 수정한 후 다시 시도하세요. openbot.tool_describe가 스키마를 제공합니다.",
+  "error.agent.approvalWhileDeleting": "에이전트를 삭제하는 중에는 승인할 수 없어요.",
+  "error.agent.accessLocalOnly": "에이전트 접근 권한은 에이전트를 실행하는 컴퓨터에서만 변경할 수 있어요.",
+  "error.agent.duplicateCleanupFailed": "에이전트 복제에 실패했고 불완전한 사본을 제거할 수 없었어요.",
+  "error.agent.commitEffectsFailed": "트랜잭션은 커밋되었지만 저장된 후속 작업이 실패했어요.",
+  "error.agent.settingsLocalOnly": "에이전트 설정은 에이전트를 실행하는 컴퓨터에서만 변경할 수 있어요.",
+  "error.agent.skillsLocalOnly": "스킬은 에이전트를 실행하는 컴퓨터에서만 변경할 수 있어요.",
+  "error.agent.addLocalOnly": "에이전트는 실행하는 컴퓨터에서만 추가할 수 있어요.",
+  "error.agent.joinedServerUpdate": "참여한 서버의 에이전트는 여기서 업데이트할 수 없어요.",
+  "error.agent.searchQueryRequired": "검색어가 필요해요.",
+  "error.agent.messageTooLong": "메시지가 너무 길어요.",
+  "error.agent.messageOrAttachmentRequired": "메시지 또는 첨부 파일이 필요해요.",
+  "error.agent.promptAnswersTooLong": "프롬프트 답변이 너무 길어요.",
+  "error.agent.gone": "이 에이전트는 더 이상 없어요.",
+  "error.agent.instructionsTooLarge": "지침 파일이 너무 커서 여기서 열 수 없어요. 텍스트 편집기에서 줄여 주세요.",
+  "error.agent.instructionsOutside": "지침 파일이 에이전트 작업 공간 밖을 가리켜서 OpenBot에서 열지 않아요.",
+  "error.agent.instructionsReadFailed": "지침 파일을 읽지 못했어요.",
+  "error.agent.instructionsSaveFailed": "지침 파일을 저장하지 못했어요.",
+  "error.agent.profileGenerationBusy": "프로필 생성이 바빠요. 잠시 후 다시 시도해 주세요.",
+  "error.agent.instructionsChanged":
+    "에이전트가 지침 파일을 변경했습니다. 마지막 변경 사항이 저장되지 않았습니다. 다시 변경하세요.",
+  "error.agent.initialMessageRequired": "첫 메시지가 필요해요.",
+  "error.agent.initialMessageTooLong": "첫 메시지가 너무 길어요.",
+  "error.agent.setupCleanupFailed": "에이전트 설정에 실패했고 불완전한 에이전트를 제거할 수 없었어요.",
+  "error.agent.modelUnavailable": "선택한 에이전트 모델을 사용할 수 없어요.",
+  "error.agent.modelProviderNotConnected":
+    '선택한 에이전트 모델 "{model}"을(를) 사용할 수 없어요: {provider}에 연결되어 있지 않아요.',
+  "error.agent.modelListEmpty":
+    '선택한 에이전트 모델 "{model}"을(를) 사용할 수 없어요: {provider}에서 모델 목록이 비어 있어요. 마지막 오류: {detail}',
+  "error.agent.modelListEmptyNoError":
+    '선택한 에이전트 모델 "{model}"을(를) 사용할 수 없어요: {provider}에서 모델 목록이 비어 있어요.',
+  "error.agent.modelNotInProviderList":
+    '선택한 에이전트 모델 "{model}"을(를) 사용할 수 없어요: {provider}의 목록에 없어요.',
+  "error.agent.modelVariantNotListed":
+    '선택한 에이전트 모델 "{model}"을(를) 사용할 수 없어요: {provider}의 목록에 없어요. {provider}가 이 모델에 제공하는 값 중 하나를 사용하세요: {models}',
+  "error.agent.modelProviderMismatch": "선택한 모델이 해당 제공자의 모델이 아니에요.",
+  "error.agent.modelNotListed": '모델 "{model}"을(를) 사용할 수 없어요. 사용 가능한 모델: {models}.',
+  "error.agent.providerNotListed":
+    "지금 사용할 수 있는 {provider} 모델이 없어요. list_models를 호출해 사용 가능한 모델을 확인하세요.",
+  "error.agent.creatorModelNotListed":
+    '내 모델 "{model}"이(가) 지금 모델 목록에 없어서 새 에이전트를 이 모델로 시작할 수 없어요. 몇 초 후에 다시 시도하거나, list_models에 표시되는 모델을 provider와 model에 지정하세요.',
+  "error.agent.reasoningEffortUnsupported":
+    '모델 "{model}"은(는) 추론 강도 "{effort}"을(를) 지원하지 않아요. 지원하는 강도: {efforts}.',
+  "error.agent.reasoningEffortNotConfigurable": '모델 "{model}"에는 추론 강도 설정이 없어서 강도를 바꿀 수 없어요.',
+  "error.agent.noStartingModelInSettings":
+    "{provider}에 사용할 수 있는 모델이 없고, 로그인된 다른 제공자에도 없어요. 제공자에 로그인하거나 서버 설정 → 제공자에서 기본 제공자를 변경하세요.",
+  "error.agent.noStartingModel":
+    "{provider}에 사용할 수 있는 모델이 없고, 로그인된 다른 제공자에도 없어요. 제공자에 로그인하거나 제공자 및 권한에서 기본 제공자를 변경하세요.",
+  "error.agent.waitBeforeProviderChange": "제공자를 변경하기 전에 진행 중인 턴과 대기열이 끝날 때까지 기다려 주세요.",
+  "error.agent.waitForTasksBeforeProviderChange":
+    "이 에이전트의 작업이 실행 중이에요. 제공자를 변경하기 전에 작업이 끝날 때까지 기다리거나 작업을 중지해 주세요.",
+  "error.agent.waitBeforeClearContext": "새 채팅을 시작하기 전에 진행 중인 턴과 대기열이 끝날 때까지 기다려 주세요.",
+  "error.agent.waitBeforeCompactContext": "컨텍스트를 압축하기 전에 진행 중인 턴과 대기열이 끝날 때까지 기다려 주세요.",
+  "error.agent.waitBeforeDeleteHistory": "기록을 삭제하기 전에 진행 중인 턴과 대기열이 끝날 때까지 기다려 주세요.",
+  "error.agent.compactContextUnavailable": "이 에이전트는 지금 컨텍스트를 압축할 수 없어요.",
+  "error.agent.unknown": "알 수 없는 에이전트: {id}",
+  "error.agent.onlyUserWidensSettings":
+    "에이전트에게 전체 접근 권한을 주거나 컴퓨터 제어를 켤 수 있는 사람은 사용자뿐이에요. 사용자에게 에이전트 설정에서 변경해 달라고 요청하세요.",
+  "error.agent.queuedMessageCreateFailed": "대기 중인 메시지를 만들 수 없어요.",
+  "error.agent.messageUnavailable": "이 메시지는 더 이상 사용할 수 없어요.",
+  "error.agent.hostLimit": "호스트 하나에는 에이전트를 최대 {limit}개까지 둘 수 있어요.",
+  "error.agent.changedWhileDuplicating": "복제하는 동안 에이전트가 변경되었어요. 다시 시도해 주세요.",
+  "error.agent.duplicatedAgentGone": "복제한 에이전트가 더 이상 없어요.",
+  "error.agent.stateCorrupt": "에이전트 상태가 손상되었거나 더 새로운 OpenBot 버전의 것이에요. 덮어쓰지 않아요.",
+  "error.agent.oldRoleField":
+    "저장된 에이전트 프로필이 이전 role 필드를 사용해요. OpenBot을 시작하기 전에 데이터를 업데이트하세요.",
+  "error.agent.duplicateIds": "에이전트 상태에 중복된 에이전트 ID가 있어요. 덮어쓰지 않아요.",
+  "error.agent.copyNameFailed": "OpenBot이 고유한 에이전트 사본 이름을 만들지 못했어요.",
+  "error.agent.endpointRemoved": "이 에이전트가 사용하던 엔드포인트가 제거되었어요. 다른 모델을 선택해 주세요.",
+  "error.agent.turnStalled":
+    "{provider}이(가) 응답하지 않아 OpenBot이 이 턴을 종료했어요. 메시지를 다시 보내거나 다른 모델을 선택해 주세요.",
+  "error.agent.promptCancelled": "{provider}이(가) 시작 전에 이 메시지를 취소했어요. 메시지를 다시 보내 주세요.",
+  "error.agent.toolLoopStopped":
+    "{provider}이(가) 실패한 단계를 여러 번 반복해서 OpenBot이 이 턴을 중지했습니다. 메시지를 다시 보내거나 다른 모델을 선택하세요.",
+  "error.agent.answerCutOff": "에이전트가 답변을 마치기 전에 멈춰서 답변이 완전하지 않습니다. 메시지를 다시 보내세요.",
+  "error.agent.compactionConnectionLost":
+    "에이전트가 컨텍스트를 압축하는 동안 연결이 끊겨 작업이 멈췄어요. 인터넷 연결을 확인한 다음 메시지를 보내 계속해 주세요.",
+  "error.agent.compactionConnectionLostAddress":
+    "에이전트가 컨텍스트를 압축하는 동안 연결이 끊겨 작업이 멈췄어요. 인터넷 연결을 확인해 주세요. {provider} 설정의 변수에 있는 {variable}가 모델 서비스의 API 주소(보통 /v1로 끝남)인지도 확인해 주세요. 그런 다음 메시지를 보내 주세요.",
+  "error.agent.compactionLoopStopped":
+    "{provider}이(가) 컨텍스트를 계속 압축했지만 매번 너무 가득 차 있어 계속할 수 없어서 OpenBot이 이 턴을 중지했습니다. 이 에이전트에 필요 없는 MCP 서버나 컴퓨터 사용을 끈 다음 메시지를 보내세요. 사용자나 에이전트가 {provider}의 압축 시점을 바꿨다면 그 변경을 되돌리세요.",
+  "error.agent.selectedGone": "선택한 에이전트가 더 이상 없어요.",
+  "error.agent.profileEndpointsChanged": "생성하는 동안 사용자 지정 엔드포인트가 변경되었어요. 다시 시도해 주세요.",
+  "error.agent.profileInvalid": "제공자가 올바르지 않은 프로필을 반환했어요. 프롬프트를 수정해 보세요.",
+  "error.agent.profileSectionUnavailable": "생성된 섹션을 사용할 수 없어요. 다시 시도하거나 섹션을 직접 선택하세요.",
+  "error.agent.profileTimedOut": "프로필 생성 시간이 초과되었어요. 다시 시도해 주세요.",
+  "error.agent.profileDisconnected": "프로필을 생성하는 동안 제공자 연결이 끊어졌어요.",
+  "error.agent.profileToolUse": "제공자가 도구를 사용하려 했어요. 프롬프트를 수정해 보세요.",
+  "error.agent.profileFailed": "제공자가 프로필을 생성하지 못했어요. 다시 시도해 주세요.",
+  "error.agent.profileTooLarge": "생성된 프로필이 너무 커요. 더 짧은 프롬프트를 사용해 보세요.",
+  "error.agent.profileNotStarted": "제공자가 프로필 생성을 시작하지 못했어요.",
+  "error.agent.deletionBusy": "에이전트를 이미 삭제하는 중이에요.",
+  "error.agent.stopBeforeDelete": "삭제하기 전에 에이전트를 중지하고 대기 중인 메시지를 취소해 주세요.",
+  "error.agent.deleteIncomplete": "에이전트 데이터를 완전히 제거하지 못했어요. 에이전트 삭제를 다시 시도해 주세요.",
+  "error.agent.deleteFolderInUse":
+    "다른 에이전트의 작업이 아직 이 에이전트의 폴더를 사용하고 있어요. 그 작업이 끝나거나 OpenBot을 다시 시작한 뒤에 다시 삭제해 주세요.",
+  "error.agent.deleteWhenFolderFree":
+    "다른 에이전트의 작업이 아직 이 에이전트의 폴더를 사용하고 있어요. 그 작업이 끝나면 OpenBot이 이 에이전트를 삭제해요.",
+  "error.agent.duplicationBusy": "이 에이전트를 이미 복제하는 중이에요.",
+  "error.agent.waitBeforeDuplicate": "복제하기 전에 에이전트가 끝나고 대기열이 비워질 때까지 기다려 주세요.",
+  "error.agent.saveOtherAgent": "이 저장은 다른 에이전트의 것이에요.",
+  "error.agent.savedGone": "저장된 에이전트가 더 이상 없어요.",
+  "error.agent.storedProfileUnreadable":
+    '저장된 에이전트 프로필의 "{field}" 값을 읽을 수 없어요. OpenBot을 시작하기 전에 데이터를 업데이트하세요.',
+  "error.agent.storedProfileUnreadableId":
+    '저장된 에이전트 프로필 {id}의 "{field}" 값을 읽을 수 없어요. OpenBot을 시작하기 전에 데이터를 업데이트하세요.',
+  "error.agent.queueEditRejected": "대기열 수정이 거부되었어요: {reason}",
+  "error.agent.computerUseLocalOnly": "컴퓨터 제어는 에이전트를 실행하는 컴퓨터에서만 변경할 수 있어요.",
+  "error.agent.automationLocalOnly": "로컬 스크립트는 에이전트를 실행하는 컴퓨터에서만 허용할 수 있어요.",
+  "error.agent.newChatLocalOnly":
+    "에이전트가 새 채팅을 시작하도록 허용하는 것은 에이전트를 실행하는 컴퓨터에서만 할 수 있어요.",
+  "error.agent.quickAcknowledgementLocalOnly": "이 설정은 에이전트를 실행하는 컴퓨터에서만 변경할 수 있어요.",
+  "error.agent.sideQuestionBusy": "곁다리 질문이 너무 많이 실행 중이에요. 잠시 후 다시 시도해 주세요.",
+  "error.agent.sideQuestionFailed": "에이전트가 곁다리 질문에 답하지 못했어요. 다시 시도해 주세요.",
+  "error.agent.webSearchSignIn": "웹 검색을 사용하려면 ChatGPT 계정으로 Codex에 로그인해야 합니다.",
+  "error.agent.webSearchBusy": "실행 중인 검색과 사이드 질문이 너무 많습니다. 잠시 후 다시 시도하세요.",
+  "error.agent.webSearchFailed": "웹 검색이 완료되지 않았습니다. 다시 시도하세요.",
+  "error.agent.busyMessageModeLocalOnly":
+    "에이전트가 작업 중일 때 메시지를 처리하는 방식은 에이전트를 실행하는 컴퓨터에서만 설정할 수 있어요.",
+  "error.agent.backupModelsLocalOnly": "백업 모델은 에이전트를 실행하는 컴퓨터에서만 설정할 수 있어요.",
+  "error.agent.taskLimitLocalOnly": "작업 한도는 에이전트를 실행하는 컴퓨터에서만 설정할 수 있어요.",
+  "error.agent.localScriptsOff": "이 에이전트는 로컬 스크립트를 허용하지 않아요.",
+  "error.agent.localScriptsRateLimited":
+    "지난 1시간 동안 로컬 스크립트가 이 에이전트에게 메시지 또는 루틴 요청을 {limit}건 보냈어요. 나중에 다시 시도해 주세요.",
+  "error.agent.automationOff": "이 에이전트는 로컬 스크립트가 루틴을 실행하도록 허용하지 않아요.",
+  "error.agent.automationPayloadTooLong": "페이로드가 {limit}자를 넘어요.",
+  "error.agent.automationRateLimited":
+    "지난 1시간 동안 로컬 스크립트가 이 에이전트의 루틴을 {limit}번 실행했어요. 나중에 다시 시도해 주세요.",
+  "error.agent.workspaceOnlyMacOnly":
+    "이 제공자의 워크스페이스 전용 모드는 macOS에서만 사용할 수 있어요. 에이전트 설정에서 전체 접근 권한을 선택하세요.",
+  "error.agent.lowMemory":
+    "이 서버의 메모리가 부족해요. 메시지는 대기열에서 기다리다가 메모리가 확보되면 시작돼요. 더 큰 플랜을 쓰면 서버 메모리가 늘어나요.",
+  "error.agent.lowMemoryServer":
+    "이 서버의 메모리가 부족해요. 메시지는 대기열에서 기다리다가 메모리가 확보되면 시작돼요.",
+  "error.agent.workspaceOnlyToolMissing":
+    "워크스페이스 전용 모드에는 {tool}이(가) 필요한데 OpenBot이 찾지 못했어요. 설치하거나 에이전트 설정에서 전체 접근 권한을 선택하세요.",
+  "error.agent.codexSandboxUnavailable":
+    "워크스페이스 전용 모드에는 Codex 샌드박스가 필요하지만 이 컴퓨터에서는 Codex가 샌드박스를 시작할 수 없어서 에이전트의 명령이 실패해요. 에이전트 설정에서 먼저 묻기나 전체 접근을 선택하세요.",
+  "error.agent.claudeSandboxUnavailable":
+    "워크스페이스 전용 모드에는 Claude 샌드박스가 필요하지만 이 컴퓨터에서는 Claude가 샌드박스를 시작할 수 없어요: {reason}. 에이전트 설정에서 전체 접근 권한이나 다른 제공자를 선택하세요.",
+  "error.agent.claudeNoSandbox":
+    "이 컴퓨터에서는 Claude가 샌드박스를 사용할 수 없어서 워크스페이스 전용 모드가 작동하지 않아요. 에이전트 설정에서 전체 접근 권한이나 다른 제공자를 선택하세요.",
+  "error.agent.claudeSandboxBlocked":
+    "워크스페이스 전용 모드에는 Claude 샌드박스가 필요하지만 이 컴퓨터에서는 Claude가 샌드박스를 시작할 수 없어서 에이전트의 명령이 실패해요. 에이전트 설정에서 전체 접근 권한이나 다른 제공자를 선택하세요.",
+  "error.agent.screenCaptureOff":
+    "이 에이전트는 화면 캡처가 꺼져 있어요. 사용자가 에이전트 설정에서 컴퓨터 제어를 켤 수 있어요.",
+  "error.agent.screenCaptureUnavailable": "이 컴퓨터에서는 화면 캡처를 사용할 수 없어요.",
+  "error.agent.screenCaptureShared":
+    "Slack, Discord, Telegram 대화에서는 다른 사람도 파일을 받으므로 화면 캡처를 사용할 수 없어요.",
+  "error.agent.screenCaptureDeclined": "사용자가 이 화면 캡처를 허용하지 않았어요. 캡처된 내용은 없어요.",
+  "error.agent.mcpServerDeclined": "사용자가 이 MCP 서버 변경을 허용하지 않았어요. 변경된 내용은 없어요.",
+  "error.agent.mcpToolDeclined": "사용자가 이 MCP 도구 호출을 허용하지 않았어요. 도구는 실행되지 않았어요.",
+  "error.agent.mcpServerNotSaved": "MCP 서버가 응답하지 않아 저장하지 않았어요. {error}",
+  "error.agent.mcpServerKeysMove":
+    "MCP 서버 {name}에는 현재 서버용 키가 있어요. 사용자에게 마켓플레이스, 앱, {name}에서 주소, 명령, 인수 또는 전송 방식을 변경해 달라고 요청하세요.",
+  "error.agent.mcpServerHeadersNeedHttp":
+    "MCP 서버 {name}은(는) 로컬 명령을 실행하므로 헤더를 받지 않아요. 사용자에게 마켓플레이스, 앱, {name}에서 키를 입력해 달라고 요청하세요.",
+  "error.agent.mcpServerHeadersNeedPerson":
+    "이 OpenBot의 사용자만 나와의 채팅에서 MCP 서버 {name}의 키를 줄 수 있어요. 사용자에게 마켓플레이스, 앱, {name}에서 키를 입력해 달라고 요청하세요.",
+  "error.agent.mcpServerBuiltIn":
+    "{name}은(는) OpenBot의 일부라서 MCP 도구로 테스트하거나 켜고 끄거나 제거할 수 없어요. 사용자가 OpenBot을 실행하는 컴퓨터에서 관리해요. GitHub 연결은 마켓플레이스, 앱, GitHub에서, 컴퓨터 제어는 설정, 컴퓨터 제어에서 관리해요.",
+  "error.agent.mcpServerUnknown": "{name}(이)라는 MCP 서버가 없어요. list_mcp_servers를 호출해 이름을 확인하세요.",
+  "error.agent.screenCaptureWindowMissing":
+    "해당 창이 지금 열려 있지 않아요. list_capture_sources를 호출해 현재 창 ID를 확인하세요.",
+  "error.agent.screenCaptureDisplayMissing":
+    "해당 디스플레이가 지금 연결되어 있지 않아요. list_capture_sources를 호출해 현재 디스플레이 ID를 확인하세요.",
+  "error.agent.screenCaptureRegionOutside":
+    "해당 영역이 하나의 디스플레이 안에 있지 않아요. list_capture_sources에서 가져온 한 디스플레이 범위 안의 데스크톱 포인트를 사용하세요.",
+  "error.agent.screenCapturePermissionMissing":
+    "OpenBot에 화면 녹화 권한이 없어요. 사용자에게 시스템 설정 > 개인정보 보호 및 보안 > 화면 및 시스템 오디오 녹화를 열어 OpenBot을 켠 다음, OpenBot을 종료했다가 다시 열도록 요청하세요.",
+  "error.agent.screenCaptureListPermission":
+    "OpenBot에 아직 화면 녹화 권한이 없어서 창 목록을 가져올 수 없어요. 디스플레이를 캡처하려면 target screen으로 capture_screen을 호출하세요. 사용자가 먼저 캡처를 승인하고, 그다음 macOS가 사용자에게 권한을 요청할 수 있어요.",
+  "error.agent.screenCaptureEmptyWindows":
+    "Windows가 빈 이미지를 반환했어요. 사용자에게 컴퓨터 잠금을 해제하고 보호된 콘텐츠를 닫도록 요청하세요. 조직의 정책이 화면 캡처를 막을 수도 있어요.",
+  "error.agent.screenCaptureFailed": "화면 캡처에 실패했어요. 다시 시도해 주세요.",
+} as const satisfies PartialTranslation<typeof source>;

@@ -1,0 +1,670 @@
+import assert from "node:assert/strict";
+import { mkdir, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import { dirname, join } from "node:path";
+import type { AgentEvent, BrowserTab } from "@openbot/contracts/ipc";
+import { redactText } from "@openbot/logging";
+import { Effect, Exit } from "effect";
+import { app, BrowserWindow, type WebContents, webContents } from "electron";
+import { z } from "zod";
+import { browserUserControlResult } from "../src/backend/agent/prompts";
+import { BrowserHost } from "../src/backend/browser-host";
+import { runCauseEffect } from "../src/backend/effect-boundary";
+import type { DynamicToolCallParams, DynamicToolResult } from "../src/backend/protocol";
+import type { UserBrowsingStep } from "../src/backend/user-browsing-log";
+import { RemoteEventRefresh } from "../src/main/remote-server-event-refresh";
+
+const argument = (name: string) => {
+  const value = process.argv.find((item) => item.startsWith(`--${name}=`))?.slice(name.length + 3);
+  if (!value) throw new Error(`Missing ${name}.`);
+  return value;
+};
+const fixtureRoot = argument("fixture-root");
+const reportPath = argument("report-path");
+const runId = argument("run-id");
+
+const cases: string[] = [];
+const resultSchema = z.object({ status: z.literal("user-control-ended"), note: z.string(), next: z.string() });
+
+const capturePage = `<!doctype html><meta charset="utf-8"><title>Capture</title>
+<style>body{margin:0}button,input,p{position:absolute;left:10px;width:200px;height:30px;margin:0}</style>
+<button style="top:10px">Proceed to checkout</button>
+<input style="top:60px" type="password" aria-label="Password" value="hunter2-fixture">
+<label style="position:absolute;top:110px;left:10px">Email <input style="position:static" value="typed-fixture@example.com"></label>
+<p style="top:160px">Plain page text</p>
+<button style="top:210px">Marker</button>
+<label style="position:absolute;top:260px;left:10px">Remember me <input style="position:static" type="checkbox" value="checkbox-value-fixture"></label>
+<script>window.presses = 0; addEventListener("mousedown", () => { window.presses += 1; }, true);</script>`;
+
+const framesPage = (frameOrigin: string) => `<!doctype html><meta charset="utf-8"><title>Frames</title>
+<style>body{margin:0}</style>
+<div id="host" style="position:absolute;top:10px;left:10px;width:200px;height:30px"></div>
+<iframe src="${frameOrigin}/frame-content" style="position:absolute;top:100px;left:0;width:300px;height:100px;border:0"></iframe>
+<script>document.getElementById("host").attachShadow({ mode: "open" }).innerHTML = '<button style="width:200px;height:30px;margin:0">Shadow import</button>';</script>`;
+const frameContentPage = `<!doctype html><meta charset="utf-8"><style>body{margin:0}</style>
+<button style="position:absolute;top:10px;left:10px;width:200px;height:30px;margin:0">Import in frame</button>`;
+
+const server = createServer((request, response) => {
+  if (request.url === "/slow") return;
+  response.setHeader("Content-Type", "text/html; charset=utf-8");
+  if (request.url?.startsWith("/capture")) return response.end(capturePage);
+  const address = server.address();
+  if (request.url === "/frames" && address && typeof address === "object")
+    return response.end(framesPage(`http://localhost:${address.port}`));
+  if (request.url === "/frame-content") return response.end(frameContentPage);
+  response.end('<!doctype html><meta charset="utf-8"><title>Fixture</title><button>Fixture button</button>');
+});
+
+let browser: BrowserHost | undefined;
+let window: BrowserWindow | undefined;
+let sequence = 0;
+let currentPhase = "entry";
+
+void main().catch((error) => {
+  process.stderr.write(`${redactText(String(error))}\n`);
+  app.exit(1);
+});
+
+async function main(): Promise<void> {
+  app.setPath("userData", join(fixtureRoot, "profile"));
+  app.setPath("sessionData", join(fixtureRoot, "session"));
+  if (process.platform === "darwin") app.setActivationPolicy("accessory");
+  phase("entry-start");
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    assert(address && typeof address === "object", "Fixture server address missing.");
+    const origin = `http://127.0.0.1:${address.port}`;
+    await app.whenReady();
+    phase("electron-ready");
+    window = new BrowserWindow({
+      show: false,
+      width: 1024,
+      height: 768,
+      focusable: false,
+      webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+    });
+    const captured: { agentId: string; step: Omit<UserBrowsingStep, "at"> }[] = [];
+    const captureState = { enabled: true, onRecord: () => {} };
+    browser = new BrowserHost(window, join(fixtureRoot, "downloads"), join(fixtureRoot, "tabs.json"), {
+      userBrowsing: {
+        enabled: () => captureState.enabled,
+        record: (agentId, step) => {
+          captured.push({ agentId, step });
+          captureState.onRecord();
+        },
+      },
+    });
+    const host = browser;
+    const params = (tool: string, args: DynamicToolCallParams["arguments"]): DynamicToolCallParams => ({
+      namespace: "openbot_browser",
+      tool,
+      arguments: args,
+      ownerAgentId: "fixture-agent",
+      threadId: "fixture-thread",
+      turnId: "fixture-turn",
+      callId: `user-control-${++sequence}`,
+    });
+    const routed = (
+      call: DynamicToolCallParams,
+      signal: AbortSignal,
+    ): Promise<Exit.Exit<DynamicToolResult, unknown>> => {
+      const userControl = (tabId: string) =>
+        host.awaitUserControlRelease(tabId).pipe(Effect.as(browserUserControlResult()));
+      const operation = Effect.suspend(() => {
+        const heldTabId = host.userControlTabFor(call);
+        return heldTabId ? userControl(heldTabId) : host.handleDynamicTool(call, { onUserControl: userControl });
+      });
+      const cancelled = Effect.callback<never>((resume) => {
+        const abort = () => resume(Effect.interrupt);
+        if (signal.aborted) abort();
+        else signal.addEventListener("abort", abort, { once: true });
+        return Effect.sync(() => signal.removeEventListener("abort", abort));
+      });
+      return Effect.runPromiseExit(operation.pipe(Effect.raceFirst(cancelled)));
+    };
+    const settled = <A>(promise: Promise<A>) => {
+      const state = { done: false };
+      void promise.finally(() => {
+        state.done = true;
+      });
+      return state;
+    };
+    const turn = () => new Promise<void>((resolve) => setImmediate(resolve));
+    const open = async () => {
+      const tab = await runCauseEffect(host.open(`${origin}/page-${++sequence}`, "fixture-thread", "fixture-agent"));
+      const contents = webContents.getAllWebContents().find((item) => item.getURL() === tab.url);
+      assert(contents, "Missing fixture contents.");
+      return { tab, contents };
+    };
+    const listed = (tabId: string): BrowserTab | undefined => host.listTabs().find((tab) => tab.id === tabId);
+    const success = (exit: Exit.Exit<DynamicToolResult, unknown>) => {
+      assert(Exit.isSuccess(exit), "Tool call failed.");
+      return exit.value;
+    };
+    const userControlEnded = (result: DynamicToolResult) => {
+      assert.equal(result.success, true);
+      const text = result.contentItems.find((item) => item.type === "inputText");
+      assert(text?.type === "inputText", "Missing user control result text.");
+      resultSchema.parse(JSON.parse(text.text));
+    };
+    const startBlockingEvaluate = async (tabId: string, contents: WebContents, signal: AbortSignal) => {
+      const call = params("evaluate", {
+        tabId,
+        expression: "new Promise((resolve) => { window.fixtureFinish = resolve; })",
+        awaitPromise: true,
+        timeoutMs: 30_000,
+      });
+      const started = controlStarted(host, call.callId);
+      const running = routed(call, signal);
+      await started;
+      await contents.executeJavaScript(
+        "new Promise((resolve) => { const ready = () => (window.fixtureFinish ? resolve() : requestAnimationFrame(ready)); ready(); })",
+      );
+      return {
+        running,
+        finish: () => contents.executeJavaScript("window.fixtureFinish('finished')"),
+      };
+    };
+
+    phase("cases");
+    const never = new AbortController().signal;
+
+    {
+      const { tab } = await open();
+      const changes: boolean[] = [];
+      const unsubscribe = host.onChanged((tabs) => {
+        changes.push(tabs.find((item) => item.id === tab.id)?.userControl === true);
+      });
+      await runCauseEffect(host.takeUserControl(tab.id, { kind: "local" }));
+      assert.equal(listed(tab.id)?.userControl, true);
+      assert(changes.includes(true), "The take did not report the held tab.");
+      await runCauseEffect(host.takeUserControl(tab.id, { kind: "local" }));
+      recordCases("take-marks-tab", "take-is-idempotent");
+
+      const waiting = routed(params("snapshot", { tabId: tab.id, image: "never" }), never);
+      const state = settled(waiting);
+      await turn();
+      assert.equal(state.done, false, "A call on a held tab did not wait.");
+      host.releaseUserControl(tab.id);
+      userControlEnded(success(await waiting));
+      assert.equal(listed(tab.id)?.userControl, undefined);
+      assert.equal(changes.at(-1), false, "The release did not report the tab.");
+      host.releaseUserControl(tab.id);
+      unsubscribe();
+      const after = success(await routed(params("snapshot", { tabId: tab.id, image: "never" }), never));
+      assert.equal(after.success, true, "A call after the release did not run.");
+      recordCases(
+        "held-call-waits",
+        "release-returns-user-control-result",
+        "release-is-idempotent",
+        "call-runs-after-release",
+      );
+    }
+
+    {
+      const { tab } = await open();
+      await runCauseEffect(host.takeUserControl(tab.id, { kind: "local" }));
+      const listing = routed(params("list_tabs", {}), never);
+      const listingState = settled(listing);
+      await turn();
+      assert.equal(listingState.done, false, "A tab list ran while a tab was held.");
+      host.releaseUserControl(tab.id);
+      userControlEnded(success(await listing));
+      const afterRelease = success(await routed(params("list_tabs", {}), never));
+      assert.equal(afterRelease.success, true, "A tab list after the release did not run.");
+      recordCases("tab-list-waits-for-held-tab", "tab-list-runs-after-release");
+    }
+
+    {
+      const { tab, contents } = await open();
+      const action = await startBlockingEvaluate(tab.id, contents, never);
+      const queued = routed(params("snapshot", { tabId: tab.id, image: "never" }), never);
+      await turn();
+      const take = runCauseEffect(host.takeUserControl(tab.id, { kind: "local" }));
+      const takeState = settled(take);
+      await turn();
+      assert.equal(takeState.done, false, "The take did not wait for the running action.");
+      assert.equal(listed(tab.id)?.userControl, true, "The take did not mark the tab at once.");
+      await action.finish();
+      const finished = success(await action.running);
+      assert.equal(finished.success, true, "The running action did not end normally.");
+      await take;
+      const queuedState = settled(queued);
+      await turn();
+      assert.equal(queuedState.done, false, "A queued call ran on a held tab.");
+      host.releaseUserControl(tab.id);
+      userControlEnded(success(await queued));
+      recordCases(
+        "running-action-ends-normally",
+        "take-resolves-after-running-action",
+        "queued-call-waits-through-hook",
+      );
+    }
+
+    {
+      const { tab } = await open();
+      await runCauseEffect(host.takeUserControl(tab.id, { kind: "local" }));
+      const controller = new AbortController();
+      const waiting = routed(params("snapshot", { tabId: tab.id, image: "never" }), controller.signal);
+      await turn();
+      controller.abort();
+      const exit = await waiting;
+      assert(Exit.isFailure(exit) && Exit.hasInterrupts(exit), "Cancellation did not end the wait.");
+      assert.equal(listed(tab.id)?.userControl, true, "Cancellation released the tab.");
+      host.releaseUserControl(tab.id);
+      recordCases("cancellation-ends-wait");
+
+      await runCauseEffect(host.takeUserControl(tab.id, { kind: "local" }));
+      const closing = routed(params("snapshot", { tabId: tab.id, image: "never" }), never);
+      await turn();
+      await runCauseEffect(host.close(tab.id));
+      userControlEnded(success(await closing));
+      assert.equal(listed(tab.id), undefined);
+      recordCases("close-ends-wait");
+    }
+
+    {
+      const local = await open();
+      const member = await open();
+      const other = await open();
+      await runCauseEffect(host.takeUserControl(local.tab.id, { kind: "local" }));
+      await runCauseEffect(host.takeUserControl(member.tab.id, { kind: "member", memberId: "m1", sessionId: "s1" }));
+      await runCauseEffect(host.takeUserControl(other.tab.id, { kind: "member", memberId: "m2", sessionId: "s2" }));
+      host.releaseUserControlHeldBy({ kind: "local" });
+      assert.equal(listed(local.tab.id)?.userControl, undefined, "Window close kept the local hold.");
+      assert.equal(listed(member.tab.id)?.userControl, true, "Window close released a member hold.");
+      host.releaseUserControlHeldBy({ kind: "session", sessionId: "s1" });
+      assert.equal(listed(member.tab.id)?.userControl, undefined, "Session end kept its hold.");
+      assert.equal(listed(other.tab.id)?.userControl, true, "Session end released another session's hold.");
+      host.releaseUserControlHeldBy({ kind: "member", memberId: "m2" });
+      assert.equal(listed(other.tab.id)?.userControl, undefined, "Member removal kept the member's hold.");
+      recordCases(
+        "window-close-releases-local-holds",
+        "session-end-releases-its-holds",
+        "member-end-releases-its-holds",
+      );
+    }
+
+    {
+      const missing = await runCauseEffect(host.takeUserControl("missing-tab", { kind: "local" })).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      assert(missing instanceof Error, "A take of a missing tab did not fail.");
+      recordCases("take-refuses-missing-tab");
+    }
+
+    {
+      const { tab } = await open();
+      assert.equal(listed(tab.id)?.canGoBack, false, "A new tab reported a page to go back to.");
+      assert.equal(listed(tab.id)?.canGoForward, false, "A new tab reported a page to go forward to.");
+      await runCauseEffect(host.loadUrl(tab.id, `${origin}/page-${++sequence}`));
+      assert.equal(listed(tab.id)?.canGoBack, true, "A second page did not allow Back.");
+      assert.equal(listed(tab.id)?.canGoForward, false);
+      await runCauseEffect(host.navigate(tab.id, "back"));
+      assert.equal(listed(tab.id)?.canGoBack, false, "The first page allowed Back.");
+      assert.equal(listed(tab.id)?.canGoForward, true, "Back did not allow Forward.");
+      recordCases("history-state-follows-navigation");
+
+      const started = new Promise<void>((resolve) => {
+        const unsubscribe = host.onChanged((tabs) => {
+          if (!tabs.some((item) => item.id === tab.id && item.loading)) return;
+          unsubscribe();
+          resolve();
+        });
+      });
+      const loading = runCauseEffect(host.loadUrl(tab.id, `${origin}/slow`));
+      await started;
+      await runCauseEffect(host.stop(tab.id));
+      await loading;
+      assert.equal(listed(tab.id)?.loading, false, "The stopped tab still loads.");
+      await runCauseEffect(host.stop(tab.id));
+      const after = success(await routed(params("snapshot", { tabId: tab.id, image: "never" }), never));
+      assert.equal(after.success, true, "The tab did not work after a stop.");
+      recordCases("stop-ends-load-as-done", "stop-of-idle-tab-is-noop", "tab-works-after-stop");
+    }
+
+    {
+      const emitted: AgentEvent[] = [];
+      const refresh = new RemoteEventRefresh({
+        request: () => Effect.die(new Error("This fixture makes no request.")),
+        hasServer: () => true,
+        emit: (_serverId, event) => emitted.push(event),
+      });
+      const tab = {
+        id: "remote-tab",
+        title: "Remote",
+        url: "https://remote.test",
+        loading: false,
+        ownerThreadId: null,
+        ownerAgentId: null,
+      };
+      await Effect.runPromise(
+        refresh.forward("server-1", { type: "browser-changed", tabs: [tab], activeTabId: tab.id }),
+      );
+      await Effect.runPromise(refresh.forward("server-1", { type: "browser-user-control-changed", tabIds: [tab.id] }));
+      const merged = emitted.at(-1);
+      assert(merged?.type === "browser-changed" && merged.tabs[0]?.userControl === true, "Remote hold was not merged.");
+      await Effect.runPromise(
+        refresh.forward("server-1", { type: "browser-changed", tabs: [tab], activeTabId: tab.id }),
+      );
+      const kept = emitted.at(-1);
+      assert(
+        kept?.type === "browser-changed" && kept.tabs[0]?.userControl === true,
+        "A tab change lost the remote hold.",
+      );
+      await Effect.runPromise(refresh.forward("server-1", { type: "browser-user-control-changed", tabIds: [] }));
+      const released = emitted.at(-1);
+      assert(
+        released?.type === "browser-changed" && released.tabs[0]?.userControl === undefined,
+        "Remote release was not merged.",
+      );
+      await Effect.runPromise(
+        refresh.forward("server-1", {
+          type: "browser-page-state-changed",
+          tabs: [{ tabId: tab.id, canGoBack: true, canGoForward: false }],
+        }),
+      );
+      const paged = emitted.at(-1);
+      assert(
+        paged?.type === "browser-changed" && paged.tabs[0]?.canGoBack === true && paged.tabs[0].canGoForward === false,
+        "Remote page state was not merged.",
+      );
+      await Effect.runPromise(
+        refresh.forward("server-1", { type: "browser-changed", tabs: [tab], activeTabId: tab.id }),
+      );
+      const pageKept = emitted.at(-1);
+      assert(
+        pageKept?.type === "browser-changed" && pageKept.tabs[0]?.canGoBack === true,
+        "A tab change lost the remote page state.",
+      );
+      refresh.forget("server-1");
+      await Effect.runPromise(refresh.forward("server-1", { type: "browser-user-control-changed", tabIds: [tab.id] }));
+      assert.equal(emitted.at(-1)?.type, "browser-user-control-changed", "A forgotten server kept its tab list.");
+      recordCases(
+        "remote-event-merges-hold",
+        "remote-tab-change-keeps-hold",
+        "remote-release-clears-hold",
+        "remote-event-merges-page-state",
+        "remote-tab-change-keeps-page-state",
+        "remote-forget-clears-state",
+      );
+    }
+
+    {
+      const { tab, contents } = await open();
+      const clicks = captured.filter((item) => item.step.kind === "click");
+      const nextClick = () =>
+        new Promise<Omit<UserBrowsingStep, "at">>((resolve) => {
+          const seen = captured.length;
+          captureState.onRecord = () => {
+            const item = captured.slice(seen).find((entry) => entry.step.kind === "click");
+            if (!item) return;
+            captureState.onRecord = () => {};
+            resolve(item.step);
+          };
+        });
+      const press = async (y: number, x = 50) => {
+        const before = Number(await contents.executeJavaScript("window.presses"));
+        contents.sendInputEvent({ type: "mouseDown", x, y, button: "left", clickCount: 1 });
+        contents.sendInputEvent({ type: "mouseUp", x, y, button: "left", clickCount: 1 });
+        await contents.executeJavaScript(
+          `new Promise((resolve) => { const seen = () => (window.presses > ${before} ? resolve() : requestAnimationFrame(seen)); seen(); })`,
+        );
+      };
+
+      await runCauseEffect(host.activate(tab.id));
+      await runCauseEffect(host.setVisible({ visible: true, bounds: { x: 0, y: 0, width: 800, height: 600 } }));
+      await runCauseEffect(host.loadUrl(tab.id, `${origin}/capture?token=QUERY-SECRET#part`));
+      await press(25);
+      assert.equal(captured.length, 0, "A tab that no person holds was recorded.");
+      recordCases("capture-skips-agent-tab");
+
+      await runCauseEffect(host.takeUserControl(tab.id, { kind: "local" }));
+      captureState.enabled = false;
+      await press(25);
+      assert.equal(captured.length, 0, "A held tab was recorded with the setting off.");
+      recordCases("capture-skips-setting-off");
+
+      captureState.enabled = true;
+      await runCauseEffect(host.loadUrl(tab.id, `${origin}/capture?token=QUERY-SECRET#part`));
+      const page = captured.find((item) => item.step.kind === "page");
+      assert.deepEqual(
+        page && { agentId: page.agentId, ...page.step },
+        { agentId: "fixture-agent", kind: "page", host: "127.0.0.1", path: "/capture", title: "Capture" },
+        "The held page was not recorded without its query.",
+      );
+      recordCases("capture-records-page-without-query");
+
+      const button = nextClick();
+      await press(25);
+      assert.deepEqual(await button, {
+        kind: "click",
+        host: "127.0.0.1",
+        path: "/capture",
+        role: "button",
+        name: "Proceed to checkout",
+      });
+      recordCases("capture-records-control-click");
+
+      const field = nextClick();
+      await press(75);
+      await press(175);
+      await press(125, 150);
+      assert.deepEqual(await field, {
+        kind: "click",
+        host: "127.0.0.1",
+        path: "/capture",
+        role: "textbox",
+        name: "Email",
+      });
+      const marker = nextClick();
+      await press(225);
+      assert.equal((await marker).name, "Marker");
+      const checkbox = nextClick();
+      await press(275, 150);
+      assert.deepEqual(await checkbox, {
+        kind: "click",
+        host: "127.0.0.1",
+        path: "/capture",
+        role: "checkbox",
+        name: "Remember me",
+      });
+      assert.deepEqual(
+        captured.filter((item) => item.step.kind === "click").map((item) => item.step.name),
+        [...clicks.map((item) => item.step.name), "Proceed to checkout", "Email", "Marker", "Remember me"],
+        "A password field or page text was recorded.",
+      );
+      const stored = JSON.stringify(captured);
+      for (const secret of [
+        "QUERY-SECRET",
+        "hunter2-fixture",
+        "typed-fixture",
+        "checkbox-value-fixture",
+        "Plain page text",
+        "#part",
+      ])
+        assert(!stored.includes(secret), `A step kept ${secret}.`);
+      recordCases("capture-skips-password-and-text", "capture-keeps-field-label-not-value");
+
+      const frameLoaded = new Promise<void>((resolve) => {
+        const loaded = (_event: unknown, isMainFrame: boolean) => {
+          if (isMainFrame) return;
+          contents.off("did-frame-finish-load", loaded);
+          resolve();
+        };
+        contents.on("did-frame-finish-load", loaded);
+      });
+      await runCauseEffect(host.loadUrl(tab.id, `${origin}/frames`));
+      await frameLoaded;
+      const [childFrame] = contents.mainFrame.frames;
+      assert(
+        childFrame && childFrame.osProcessId !== contents.mainFrame.osProcessId,
+        "The frame shares the page's process.",
+      );
+      const framesClick = (name: string) => ({
+        kind: "click",
+        host: "127.0.0.1",
+        path: "/frames",
+        role: "button",
+        name,
+      });
+      const sendPress = (y: number) => {
+        for (const type of ["mouseMove", "mouseDown", "mouseUp"] as const)
+          contents.sendInputEvent({ type, x: 50, y, button: "left", clickCount: 1 });
+      };
+      const shadowButton = nextClick();
+      sendPress(25);
+      assert.deepEqual(await shadowButton, framesClick("Shadow import"));
+      recordCases("capture-records-shadow-root-click");
+      const frameButton = nextClick();
+      sendPress(125);
+      assert.deepEqual(await frameButton, framesClick("Import in frame"));
+      contents.sendInputEvent({ type: "mouseMove", x: 50, y: 25 });
+      await contents.executeJavaScript(
+        `new Promise((resolve) => { const hovered = () => (document.getElementById("host").matches(":hover") ? resolve() : requestAnimationFrame(hovered)); hovered(); })`,
+      );
+      const viewButton = nextClick();
+      for (const action of ["move", "down", "up"] as const)
+        await runCauseEffect(
+          host.dispatchViewInput(tab.id, {
+            type: "pointer",
+            action,
+            x: 60,
+            y: 130,
+            button: "left",
+            clickCount: 1,
+            deltaX: 0,
+            deltaY: 0,
+            modifiers: 0,
+          }),
+        );
+      assert.deepEqual(await viewButton, framesClick("Import in frame"));
+      recordCases("capture-records-frame-click", "capture-records-frame-click-from-view");
+      await runCauseEffect(host.loadUrl(tab.id, `${origin}/capture`));
+
+      host.releaseUserControl(tab.id);
+      const count = captured.length;
+      await press(25);
+      assert.equal(captured.length, count, "A released tab was recorded.");
+      recordCases("capture-stops-after-release");
+
+      const settled = async () => {
+        await turn();
+        while (contents.debugger.isAttached()) await turn();
+      };
+      const held = () => host.listTabs().find((item) => item.id === tab.id)?.userControl === true;
+      const pageStep = { kind: "page", host: "127.0.0.1", path: "/capture", title: "Capture" };
+      const clickStep = {
+        kind: "click",
+        host: "127.0.0.1",
+        path: "/capture",
+        role: "button",
+        name: "Proceed to checkout",
+      };
+      await runCauseEffect(host.startTeach(tab.id, { kind: "local" }));
+      assert(held(), "The recording did not give the tab to the person.");
+      await press(25);
+      await settled();
+      assert.equal(captured.length, count, "A step of a shown task went to the log of the agent.");
+      const saved = host.stopTeach(tab.id, { kind: "local" }, true);
+      assert.deepEqual(saved, [pageStep, clickStep], "The saved recording did not have the page and the click.");
+      assert(!JSON.stringify(saved).includes("QUERY-SECRET"), "A saved step kept the query.");
+      assert(!held(), "The saved recording did not give the tab back.");
+      recordCases("teach-records-page-and-click", "teach-keeps-steps-from-agent-log", "teach-save-releases-tab");
+
+      captureState.enabled = false;
+      await runCauseEffect(host.startTeach(tab.id, { kind: "local" }));
+      await press(25);
+      await settled();
+      assert.deepEqual(
+        host.stopTeach(tab.id, { kind: "local" }, true),
+        [pageStep, clickStep],
+        "A shown task was not recorded with the setting off.",
+      );
+      captureState.enabled = true;
+      recordCases("teach-records-with-setting-off");
+
+      await runCauseEffect(host.startTeach(tab.id, { kind: "local" }));
+      await press(25);
+      await settled();
+      assert.deepEqual(host.stopTeach(tab.id, { kind: "local" }, false), [], "A discarded recording gave steps.");
+      assert(!held(), "The discarded recording did not give the tab back.");
+      recordCases("teach-discard-gives-no-step");
+
+      await runCauseEffect(host.startTeach(tab.id, { kind: "local" }));
+      host.releaseUserControl(tab.id);
+      assert.deepEqual(
+        host.stopTeach(tab.id, { kind: "local" }, true),
+        [],
+        "A recording stayed after the control of its tab ended.",
+      );
+      recordCases("teach-ends-with-control");
+
+      await runCauseEffect(host.startTeach(tab.id, { kind: "local" }));
+      assert.deepEqual(
+        host.stopTeach(tab.id, { kind: "member", memberId: "other-member", sessionId: "other-session" }, true),
+        [],
+        "A person who did not start the recording got its steps.",
+      );
+      assert(held(), "A person who did not start the recording ended it.");
+      assert.deepEqual(host.stopTeach(tab.id, { kind: "local" }, true), [pageStep], "The recording lost its steps.");
+      assert.equal(captured.length, count, "A teach recording added to the log of the agent.");
+      recordCases("teach-other-holder-gets-no-step");
+    }
+
+    const report = {
+      status: "passed",
+      runId,
+      sourceSha: argument("source-sha"),
+      harnessRuntime: argument("harness-runtime"),
+      bunVersion: argument("bun-version"),
+      electron: process.versions.electron,
+      cases,
+      scope:
+        "Owned hidden native process, temporary profile, and a loopback page. BrowserHost with the tool router's composition, the history state and Stop, the capture of a held tab for learning from browsing, the recording of a shown task, and the remote event merge. No provider calls, no Team API transport, no secret request.",
+    };
+    await mkdir(dirname(reportPath), { recursive: true });
+    await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+  } catch (error) {
+    await mkdir(dirname(reportPath), { recursive: true });
+    await writeFile(
+      reportPath,
+      `${JSON.stringify({ status: "failed", runId, sourceSha: argument("source-sha"), phase: currentPhase, cases, reason: redactText(String(error)) }, null, 2)}\n`,
+    );
+    process.exitCode = 1;
+  } finally {
+    phase("native-cleanup");
+    if (browser) await runCauseEffect(browser.destroy());
+    if (window && !window.isDestroyed()) window.destroy();
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    app.exit(Number(process.exitCode ?? 0));
+  }
+}
+
+function phase(name: string): void {
+  currentPhase = name;
+  process.stdout.write(`${JSON.stringify({ runId, phase: name, status: "running" })}\n`);
+}
+
+function recordCases(...names: string[]): void {
+  for (const name of names) {
+    cases.push(name);
+    process.stdout.write(`${JSON.stringify({ runId, case: name, status: "passed" })}\n`);
+  }
+}
+
+function controlStarted(host: BrowserHost, callId: string): Promise<void> {
+  return new Promise((resolve) => {
+    const unsubscribe = host.onControlChanged((state) => {
+      if (!state.sessions.some((session) => session.callId === callId && session.phase === "acting")) return;
+      unsubscribe();
+      resolve();
+    });
+  });
+}

@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily backup of OpenBot instance %i
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

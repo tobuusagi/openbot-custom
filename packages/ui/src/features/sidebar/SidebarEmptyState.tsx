@@ -1,0 +1,49 @@
+import { Button } from "@openbot/ui";
+import { Show } from "solid-js";
+import { useText } from "../../text";
+import { AgentAvatar } from "../agents/AgentAvatar";
+import { useSidebarScope } from "./sidebar-scope";
+
+export function SidebarEmptyState() {
+  const { props } = useSidebarScope();
+  const { t } = useText();
+  return (
+    <Show
+      when={props.emptyAction}
+      fallback={
+        <p class="empty-search">{props.agentsConnecting ? t("common.connecting") : t("sidebar.empty.noAgents")}</p>
+      }
+    >
+      {(action) => (
+        <div class={props.layout.sections.length === 0 ? "sidebar-first-agent-state" : undefined}>
+          <Button
+            variant="ghost"
+            type="button"
+            class="agent-row agent-row-active sidebar-first-agent-action"
+            aria-label={action().label}
+            aria-pressed="true"
+            data-avatar-seed={action().avatarSeed}
+            data-avatar-hue={action().avatarHue ?? "automatic"}
+            onClick={action().onSelect}
+          >
+            <span class="agent-row-avatar">
+              <AgentAvatar
+                seed={action().avatarSeed}
+                hue={action().avatarHue}
+                color={action().avatarColor}
+                motion="hover"
+              />
+            </span>
+            <span class="agent-row-copy">
+              <span class="agent-row-heading">
+                <span class="agent-row-title">
+                  <strong>{action().label}</strong>
+                </span>
+              </span>
+            </span>
+          </Button>
+        </div>
+      )}
+    </Show>
+  );
+}

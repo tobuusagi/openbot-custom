@@ -1,0 +1,110 @@
+import type { PartialTranslation } from "../../../message";
+import type { messages as source } from "../../en/error/workflow";
+
+export const messages = {
+  "error.workflow.missing": "このワークフローはもう存在しません。",
+  "error.workflow.versionMissing": "このバージョンのワークフローはもう存在しません。",
+  "error.workflow.annotation": "テキスト、メモ、図形には接続を付けられません。",
+  "error.workflow.port": "このステップはこの種類の入力を受け取れません。",
+  "error.workflow.branch": "「はい」と「いいえ」の接続を持てるのは条件だけです。",
+  "error.workflow.conditionBranch": "条件からの接続は、それぞれ「はい」か「いいえ」である必要があります。",
+  "error.workflow.duplicateEdge": "この 2 つのステップにはすでにこの接続があります。",
+  "error.workflow.serverTooOld":
+    "このサーバーはワークフローに対応していません。サーバーを実行しているコンピューターの OpenBot を更新してください。",
+  "error.workflow.nodeUnsupported":
+    "このバージョンの OpenBot では、画像、ファイル、メッセージのステップはまだ実行できません。",
+  "error.workflow.interrupted": "このステップの実行中に OpenBot が停止しました。もう一度実行してください。",
+  "error.workflow.agentMissing": "このステップのエージェントを選択してください。",
+  "error.workflow.handoffFailed": "OpenBot はこのステップをエージェントに送信できませんでした。",
+  "error.workflow.agentStepEnded": "エージェントが回答する前に、このステップのメッセージが削除されました。",
+  "error.workflow.agentStepStopped":
+    "エージェントはこのステップに回答する前に停止しました。ステップをもう一度実行してください。",
+  "error.workflow.conditionUnclear": "モデルが「はい」か「いいえ」で回答しませんでした。",
+  "error.workflow.modelFailed": "モデルが回答できませんでした。ステップをもう一度実行してください。",
+  "error.workflow.modelTimedOut":
+    "モデルが時間内に回答しませんでした。このステップの推論レベルを下げるか、より速いモデルを選んでから、もう一度実行してください。",
+  "error.workflow.modelToolUse":
+    "モデルがツールを使おうとしましたが、このステップはテキストでしか回答できません。ステップをもう一度実行するか、別のモデルを選んでください。",
+  "error.workflow.modelUnavailable": "このステップのモデルは利用できません。このステップに別のモデルを選んでください。",
+  "error.workflow.providerBusy": "プロバイダーが混み合っています。数分待ってから、ステップをもう一度実行してください。",
+  "error.workflow.providerOffline":
+    "OpenBot がプロバイダーに接続できませんでした。インターネット接続を確認してから、ステップをもう一度実行してください。",
+  "error.workflow.modelBusy": "別のモデルリクエストが実行中です。しばらくしてからステップを再実行してください。",
+  "error.workflow.mediaFailed": "モデルが画像または動画を作成できませんでした。ステップをもう一度実行してください。",
+  "error.workflow.pictureMissing": "画像はサーバーにありません。もう一度送信してください。",
+  "error.workflow.pictureType": "PNG、JPEG、WebP の画像を使用してください。",
+  "error.workflow.mediaInputMissing": "前のステップの画像を利用できません。そのステップをもう一度実行してください。",
+  "error.workflow.mediaEmptyRequest": "説明を書くか、前のステップを実行して、テキストか画像が届くようにしてください。",
+  "error.workflow.mediaInputNotImage":
+    "このステップは画像のみを受け取り、動画は受け取れません。動画からの接続を削除してください。",
+  "error.workflow.stepMissing": "このステップはもう存在しません。",
+  "error.workflow.nodeMissing": "この手順はワークフローにありません。",
+  "error.workflow.runMissing": "この実行はもう存在しません。",
+  "error.workflow.notRetryable": "再実行できるのは、失敗または停止したステップだけです。",
+  "error.workflow.noDecision": "このステップは判断を待っていません。",
+  "error.workflow.outputPlaceMissing": "この出力のメッセージングの投稿先を選んでください。",
+  "error.workflow.outputChannelMissing": "この出力のチャンネルを選んでください。",
+  "error.workflow.outputChannelFailed":
+    "OpenBot は結果をチャンネルに投稿できませんでした。ステップをもう一度実行してください。",
+  "error.workflow.discordNoMessage":
+    "この出力は実行を開始した Discord メッセージに対して動作します。Discord のメンションから実行を開始するか、「チャンネルに投稿」を選んでください。",
+  "error.workflow.slackNoMessage":
+    "この出力は実行を開始した Slack メッセージに対して動作します。Slack のメンションから実行を開始するか、「チャンネルに投稿」を選んでください。",
+  "error.workflow.telegramNoMessage":
+    "この出力は実行を開始した Telegram メッセージに対して動作します。Telegram のメンションから実行を開始するか、「チャットに投稿」を選んでください。",
+  "error.workflow.outputConnectionOff":
+    "この出力のメッセージング接続はオフか、削除されています。投稿先をもう一度選んでください。",
+  "error.workflow.outputNotRunning":
+    "メッセージング接続は現在動作していません。動作しているときにもう一度試してください。",
+  "error.workflow.outputRefused": "投稿先が投稿を拒否しました。OpenBot がそこに投稿できることを確認してください。",
+  "error.workflow.outputUncertain":
+    "投稿が途中で止まりました。一部がすでに投稿先にある可能性があります。もう一度試す前に確認してください。",
+  "error.workflow.tooLarge":
+    "このワークフローは大きすぎるため保存できません。描画や長いテキストを一部削除してから、もう一度お試しください。",
+  "error.workflow.tooLargeToSend":
+    "このワークフローは大きすぎるため、別のコンピューターに送信できません。サーバーを実行しているコンピューターで開いてください。",
+  "error.workflow.webhookMissing":
+    "このステップは Webhook トリガーではありません。ワークフローを保存してから、もう一度お試しください。",
+  "error.workflow.githubActionMissing": "この出力が GitHub で行う操作を選択してください。",
+  "error.workflow.githubRepositoryMissing": "この出力のリポジトリを選択してください。",
+  "error.workflow.githubItemMissing":
+    "この出力には Issue もプルリクエストもありません。GitHub イベントから実行を開始するか、入力に番号を入れてください。",
+  "error.workflow.githubPullRequestOnly": "この操作はプルリクエストでのみ使えます。",
+  "error.workflow.githubTextMissing":
+    "この出力には送信するテキストがありません。テキストを書くステップを接続してください。",
+  "error.workflow.githubEventText":
+    "この出力はトリガーの未加工のイベントを送信できません。トリガーとこの出力の間にエージェントを置いてください。",
+  "error.workflow.githubChoiceMissing": "この出力のラベルまたはユーザーを選択してください。",
+  "error.workflow.githubChoseNothing": "モデルはこのリポジトリのラベルもユーザーも選択しませんでした。",
+  "error.workflow.githubNotConnected": "このワークフローを実行するコンピューターで GitHub に接続してください。",
+  "error.workflow.githubNoAccess":
+    "OpenBot GitHub App はこのリポジトリまたは項目を参照できません。GitHub を開いてアクセスを許可してください。",
+  "error.workflow.githubNoWrite":
+    "OpenBot GitHub App はこのリポジトリを変更できません。GitHub を開いてアクセスを許可してください。",
+  "error.workflow.githubLocked": "この会話は GitHub でロックされています。",
+  "error.workflow.githubRefused": "GitHub が変更を拒否しました: {detail}",
+  "error.workflow.githubUnreachable": "OpenBot は GitHub に接続できませんでした。ステップをもう一度実行してください。",
+  "error.workflow.githubUncertain":
+    "変更が途中で止まりました。GitHub にすでに反映されている可能性があります。ステップを再実行する前に GitHub を確認してください。",
+  "error.workflow.githubNoEvent": "このトリガーが開始する Issue またはプルリクエストが GitHub にありません。",
+  "error.workflow.sunraSignIn": "Sunra のモデルを使うには、アプリで Sunra にサインインしてください。",
+  "error.workflow.sunraNoCredits":
+    "Sunra アカウントのクレジットが足りません。sunra.ai/pricing でクレジットを追加してから、ステップをもう一度実行してください。",
+  "error.workflow.sunraNeedsPlan":
+    "この Sunra モデルには Sunra のプランが必要です。sunra.ai/pricing でプランを選ぶか、別のモデルを選んでください。",
+  "error.workflow.sunraTeamInputs":
+    "Sunra は個人アカウントでのみ入力画像を使います。Sunra で個人アカウントを選ぶか、画像の接続を外してください。",
+  "error.workflow.sunraFailed": "Sunra がファイルを作成できませんでした: {reason}",
+  "error.workflow.sunraTimeout":
+    "Sunra が時間内にファイルを完成できませんでした。ステップをもう一度実行する前に、sunra.ai の OpenBot プロジェクトを確認してください。",
+  "error.workflow.higgsfieldSignIn": "Higgsfield のモデルを使うには、アプリで Higgsfield にサインインしてください。",
+  "error.workflow.higgsfieldNoCredits":
+    "Higgsfield アカウントのクレジットが足りません。higgsfield.ai/pricing でクレジットを追加してから、ステップをもう一度実行してください。",
+  "error.workflow.higgsfieldNeedsPlan":
+    "この Higgsfield モデルには Higgsfield のプランが必要です。higgsfield.ai/pricing でプランを選ぶか、別のモデルを選んでください。",
+  "error.workflow.higgsfieldBlocked":
+    "Higgsfield のコンテンツチェックで止められたため、ファイルは作成されませんでした。プロンプトか入力画像を変更してから、ステップをもう一度実行してください。",
+  "error.workflow.higgsfieldFailed": "Higgsfield がファイルを作成できませんでした: {reason}",
+  "error.workflow.higgsfieldTimeout":
+    "Higgsfield が時間内にファイルを完成できませんでした。ステップをもう一度実行する前に、higgsfield.ai の履歴を確認してください。",
+} as const satisfies PartialTranslation<typeof source>;

@@ -1,0 +1,14 @@
+language js(typescript)
+
+// scope: global
+
+`$framework.$method($args)` as $call where {
+  $framework <: or { `vi`, `jest` },
+  $method <: or { `doMock`, `mock`, `unstable_mockModule` },
+  not $args <: contains r"\"(?:node:[a-z/_-]+|electron|electron-updater)\"",
+  register_diagnostic(
+    span=$call,
+    message="Prefer dependency injection over module mocking. See the Tests section of AGENTS.md: pass a real interface, a service layer, or a faithful fake instead. Mocking is allowed for a module with no injectable seam - electron, electron-updater, and the node: built-ins are already exempt from this rule.",
+    severity="warn"
+  )
+}

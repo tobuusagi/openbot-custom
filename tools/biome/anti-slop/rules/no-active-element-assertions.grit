@@ -1,0 +1,11 @@
+language js(typescript)
+
+// scope: tests
+
+`document.activeElement` as $node where {
+  register_diagnostic(
+    span=$node,
+    message="Do not read document.activeElement in a test. See the Tests section of AGENTS.md: assert expect(element).toHaveFocus() on the element you queried by role and name. Focus placement is behaviour worth testing; this form just names which control was supposed to have it.",
+    severity="error"
+  )
+}

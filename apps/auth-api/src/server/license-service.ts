@@ -1,0 +1,1273 @@
+import {
+  BILLING_INTERVALS,
+  BILLING_METADATA,
+  BILLING_SUBSCRIPTION_STATUSES,
+  type BillingCurrency,
+  type BillingInterval,
+  type BillingSubscriptionStatus,
+  isOpenBillingStatus,
+} from "@openbot/contracts/billing";
+import {
+  LICENSE_INCLUDED_USERS,
+  LICENSE_LOOKUP_KEYS,
+  LICENSE_MAX_USERS,
+  LICENSE_METADATA,
+  LICENSE_METADATA_KIND,
+  LICENSE_PLANS,
+  LICENSE_TIERS,
+  type License,
+  type LicenseCheckoutRequest,
+  type LicenseCoverage,
+  type LicensePlan,
+  type LicensePlanRequest,
+  type LicenseState,
+  type LicenseUser,
+  licenseLookupKey,
+  licenseMonthlyAmount,
+  licensePeriodAmount,
+  licensePlanFromPrice,
+  ORDER_METADATA,
+} from "@openbot/contracts/license";
+import { isOneOf } from "@openbot/contracts/runtime-values";
+import { sourceText } from "@openbot/i18n/source";
+import { Context, Effect, Layer } from "effect";
+import {
+  type AccountAnalytics,
+  type BillingAction,
+  NO_ACCOUNT_ANALYTICS,
+  type PlanChangeDirection,
+  type PlanEndReason,
+} from "./account-analytics";
+import { accountHasServerPlan, licenseEntitled } from "./billing-entitlement";
+import {
+  BillingError,
+  BillingOperationError,
+  billingCall,
+  OPEN_STATUSES_SQL,
+  stripeFailure,
+  stripeRequest,
+} from "./billing-errors";
+import { type BillingPurchase, purchaseEvent, reportPurchase, subscriptionEnd } from "./billing-purchase";
+import type { BillingSales } from "./billing-sales";
+import { checkoutTax } from "./billing-tax";
+import type { LicenseEmailInput } from "./email-templates";
+import type { RemoteFailure } from "./remote-control-plane";
+import type { SmtpLicenseMessage } from "./smtp-email-delivery";
+import {
+  isBillingCurrency,
+  isLicensePrice,
+  priceHasCurrency,
+  type StripeClient,
+  type StripePrice,
+  StripeRequestError,
+  type StripeSubscription,
+  type StripeTransportError,
+  subscriptionCustomerId,
+  subscriptionLatestInvoiceId,
+  subscriptionLicenseItem,
+  subscriptionPaymentMethodId,
+  subscriptionPeriodEnd,
+  subscriptionServerItem,
+  VAT_METADATA,
+} from "./stripe-client";
+
+const PRICE_TTL_MS = 5 * 60_000;
+const priceCache = new Map<string, { expiresAt: number; prices: ReadonlyMap<string, StripePrice> }>();
+
+export type LicenseReturnTarget = "desktop" | "web";
+
+const LICENSE_EMAIL_CLAIM_PREFIXES = {
+  welcome: "openbot_license_email:",
+  payment_failed: "openbot_license_payment_failed:",
+  ended: "openbot_license_ended:",
+} as const satisfies Record<LicenseEmailInput["kind"], string>;
+const BEFORE_FIRST_PAYMENT_STATUSES: ReadonlySet<string> = new Set(["trialing", "incomplete"]);
+const UNPAID_STATUSES: ReadonlySet<string> = new Set(["past_due", "unpaid", "paused"]);
+const FIRST_PERIOD_AFTER_TRIAL_MS: Readonly<Record<BillingInterval, number>> = {
+  month: 32 * 86_400_000,
+  year: 367 * 86_400_000,
+};
+
+export interface FailedLicenseInvoice {
+  invoiceId: string;
+  amountDue: number;
+  nextAttemptAt: number | null;
+  invoiceUrl: string | null;
+}
+
+export interface LicenseSync {
+  kind: "license";
+  userId: string;
+  latestInvoiceId: string | null;
+  plan: LicensePlan;
+  users: number;
+  interval: BillingInterval;
+  currency: BillingCurrency;
+  status: BillingSubscriptionStatus;
+}
+
+interface StoredLicense {
+  users: number;
+  status: string;
+  current_period_end: number | null;
+  cancel_at_period_end: number;
+  tier: string | null;
+  billing_interval: string | null;
+  bundle: number;
+  updated_at: number;
+}
+
+interface LicenseRow {
+  stripe_subscription_id: string;
+  users: number;
+  currency: string;
+  status: string;
+  current_period_end: number | null;
+  cancel_at_period_end: number;
+  tier: string | null;
+  billing_interval: string | null;
+  bundle: number;
+}
+
+const LICENSE_ROW_COLUMNS =
+  "stripe_subscription_id, users, currency, status, current_period_end, cancel_at_period_end, tier, billing_interval, bundle";
+
+interface LicenseUserRow {
+  id: string;
+  name: string | null;
+  email: string;
+  server_name: string | null;
+}
+
+export interface LicenseServiceOptions {
+  database: D1Database;
+  stripe: StripeClient;
+  secretKey: string;
+  trialEnd?: number | null;
+  countryRequired?: boolean;
+  now: () => number;
+  ensureCustomer: (user: { id: string; email: string }) => Effect.Effect<string, BillingError | BillingOperationError>;
+  referralCoupon?: (userId: string) => Effect.Effect<string | null, BillingError | BillingOperationError>;
+  analytics?: AccountAnalytics;
+  sales?: BillingSales | null;
+  onLicenseChanged?: (userId: string) => Effect.Effect<void, RemoteFailure>;
+  onLicenseEmail?: (message: SmtpLicenseMessage) => void;
+  onPurchase?: (purchase: BillingPurchase) => void;
+}
+
+class LicenseDependencies extends Context.Service<
+  LicenseDependencies,
+  { database: D1Database; stripe: StripeClient; now: () => number }
+>()("auth-api/LicenseService/Dependencies") {}
+
+export class LicenseService {
+  readonly #layer: Layer.Layer<LicenseDependencies>;
+  readonly #secretKey: string;
+  readonly #ensureCustomer: LicenseServiceOptions["ensureCustomer"];
+  readonly #referralCoupon: NonNullable<LicenseServiceOptions["referralCoupon"]> | null;
+  readonly #analytics: AccountAnalytics;
+  readonly #sales: BillingSales | null;
+  readonly #trialEnd: number | null;
+  readonly #countryRequired: boolean;
+  readonly #now: () => number;
+  readonly #onLicenseChanged: LicenseServiceOptions["onLicenseChanged"] | null;
+  readonly #onLicenseEmail: LicenseServiceOptions["onLicenseEmail"] | null;
+  readonly #onPurchase: ((purchase: BillingPurchase) => void) | null;
+
+  constructor(options: LicenseServiceOptions) {
+    this.#secretKey = options.secretKey;
+    this.#trialEnd = options.trialEnd ?? null;
+    this.#countryRequired = options.countryRequired ?? false;
+    this.#now = options.now;
+    this.#ensureCustomer = options.ensureCustomer;
+    this.#referralCoupon = options.referralCoupon ?? null;
+    this.#analytics = options.analytics ?? NO_ACCOUNT_ANALYTICS;
+    this.#sales = options.sales ?? null;
+    this.#onLicenseChanged = options.onLicenseChanged ?? null;
+    this.#onLicenseEmail = options.onLicenseEmail ?? null;
+    this.#onPurchase = options.onPurchase ?? null;
+    this.#layer = Layer.succeed(LicenseDependencies, {
+      database: options.database,
+      stripe: options.stripe,
+      now: options.now,
+    });
+  }
+
+  trialEnd(): number | null {
+    return this.#trialEnd !== null && this.#trialEnd - this.#now() >= LICENSE_TRIAL_MARGIN_MS ? this.#trialEnd : null;
+  }
+
+  readonly getState = Effect.fn("LicenseService.getState")(
+    function* (
+      this: LicenseService,
+      userId: string,
+    ): Effect.fn.Return<LicenseState, BillingError | BillingOperationError, LicenseDependencies> {
+      const dependencies = yield* LicenseDependencies;
+      const [license, currency, userRows, coveredBy, bundle] = yield* Effect.all(
+        [
+          this.#latestLicense(userId),
+          this.#lockedCurrency(userId),
+          billingCall(() =>
+            dependencies.database
+              .prepare(
+                `SELECT u.id, u.name, u.email, NULL AS server_name FROM users u WHERE u.id = ?1
+                 UNION ALL
+                 SELECT u.id, u.name, u.email, h.name AS server_name
+                   FROM remote_hosts h
+                   JOIN remote_memberships m ON m.host_id = h.host_id AND m.status = 'active'
+                   JOIN users u ON u.id = m.user_id
+                  WHERE h.owner_user_id = ?1 AND m.user_id <> ?1
+                  ORDER BY server_name COLLATE NOCASE`,
+              )
+              .bind(userId)
+              .all<LicenseUserRow>(),
+          ),
+          billingCall(() =>
+            dependencies.database
+              .prepare(
+                `SELECT DISTINCT o.name AS owner_name, o.email AS owner_email
+                   FROM remote_memberships m
+                   JOIN remote_hosts h ON h.host_id = m.host_id AND h.owner_user_id <> ?1
+                   JOIN licenses l ON l.user_id = h.owner_user_id AND l.status IN ${OPEN_STATUSES_SQL}
+                   JOIN users o ON o.id = h.owner_user_id
+                  WHERE m.user_id = ?1 AND m.status = 'active'
+                  ORDER BY o.name COLLATE NOCASE, o.email`,
+              )
+              .bind(userId)
+              .all<{ owner_name: string | null; owner_email: string }>(),
+          ),
+          this.#bundle(userId),
+        ],
+        { concurrency: "unbounded" },
+      );
+      const users = licenseUsers(userId, userRows.results);
+      const trialEnd = this.trialEnd();
+      return {
+        available: true,
+        currency,
+        license: license ? licenseFromRow(license) : null,
+        used: users.length,
+        users,
+        coveredBy: coveredBy.results.map(
+          (row): LicenseCoverage => ({ ownerName: row.owner_name, ownerEmail: row.owner_email }),
+        ),
+        bundle,
+        ...(trialEnd === null ? {} : { trialEnd }),
+      };
+    },
+    (operation) => operation.pipe(Effect.provide(this.#layer)),
+  ).bind(this);
+
+  readonly createCheckout = Effect.fn("LicenseService.createCheckout")(
+    function* (
+      this: LicenseService,
+      user: { id: string; email: string },
+      request: Required<LicenseCheckoutRequest>,
+      target: LicenseReturnTarget,
+      origin: string,
+      promotionCode: string | null = null,
+    ): Effect.fn.Return<string, BillingError | BillingOperationError, LicenseDependencies> {
+      const dependencies = yield* LicenseDependencies;
+      const plan: LicensePlan = {
+        tier: request.tier,
+        interval: request.interval,
+        bundle: yield* this.#bundle(user.id),
+      };
+      const price = yield* this.#price(plan);
+      if (!price || !priceHasCurrency(price, request.currency)) return yield* licenseUnavailable();
+      if (yield* this.#openLicense(user.id)) return yield* licenseExists();
+      const { used } = yield* this.getState(user.id);
+      if (request.users < used)
+        return yield* new BillingError(409, "license_users_in_use", sourceText("error.billing.licenseUsersInUse"));
+      const locked = yield* this.#lockedCurrency(user.id);
+      if (locked && locked !== request.currency)
+        return yield* new BillingError(409, "license_currency", sourceText("error.billing.licenseCurrency"));
+      const customerId = yield* this.#ensureCustomer(user);
+      const tax = yield* checkoutTax(dependencies.stripe, customerId, this.#countryRequired);
+      const referralCouponId = this.#referralCoupon ? yield* this.#referralCoupon(user.id) : null;
+      const returnUrl = licenseReturnUrl(origin, target);
+      const trialEnd = this.trialEnd();
+      const session = yield* this.#stripeCall(() =>
+        dependencies.stripe.createCheckoutSession({
+          customerId,
+          priceId: price.id,
+          currency: request.currency,
+          userId: user.id,
+          quantity: request.users,
+          tax,
+          metadata: licenseMetadata(plan),
+          ...(trialEnd === null ? {} : { trialEndSeconds: Math.floor(trialEnd / 1_000) }),
+          ...(promotionCode ? { promotionCode } : {}),
+          ...(referralCouponId ? { referralCouponId } : {}),
+          successUrl: returnUrl,
+          cancelUrl: `${returnUrl}${returnUrl.includes("?") ? "&" : "?"}cancelled=1`,
+          nowSeconds: Math.floor(dependencies.now() / 1_000),
+        }),
+      );
+      const listed = yield* this.#stripeCall(() => dependencies.stripe.listOpenCheckoutSessions(customerId));
+      const pages = listed.filter((page) => sellsLicense(page) && page.url !== null);
+      if (!pages.some((page) => page.id === session.id))
+        pages.push({ ...session, status: "open", created: Math.floor(dependencies.now() / 1_000), metadata: {} });
+      pages.sort((left, right) => right.created - left.created || right.id.localeCompare(left.id));
+      const [kept = session, ...older] = pages;
+      const ordered = pages[0] !== undefined && pages[0].metadata[LICENSE_METADATA.kind] !== LICENSE_METADATA_KIND;
+      let paid = false;
+      for (const page of older) {
+        const closed = yield* this.#stripeCall(() => dependencies.stripe.expireCheckoutSession(page.id));
+        if (closed.status === "complete") paid = true;
+      }
+      const readAt = dependencies.now();
+      const subscriptions = yield* this.#stripeCall(() => dependencies.stripe.listCustomerSubscriptions(customerId));
+      const open = subscriptions.find(
+        (subscription) =>
+          isOneOf(BILLING_SUBSCRIPTION_STATUSES, subscription.status) &&
+          isOpenBillingStatus(subscription.status) &&
+          (subscription.items.data.some((item) => isLicensePrice(item.price)) || orderedLicense(subscription) !== null),
+      );
+      if (open && !subscriptionServerItem(open)) yield* this.sync(open, user.id, readAt);
+      if (paid || open) {
+        yield* this.#stripeCall(() => dependencies.stripe.expireCheckoutSession(kept.id));
+        return yield* licenseExists();
+      }
+      if (kept.id !== session.id && ordered) return yield* licenseExists();
+      if (kept.id === session.id)
+        yield* this.#checkoutStarted(user.id, session.id, plan, request.users, request.currency);
+      return kept.url ?? session.url;
+    },
+    (operation) => operation.pipe(Effect.provide(this.#layer)),
+  ).bind(this);
+
+  readonly setUsers = Effect.fn("LicenseService.setUsers")(
+    function* (
+      this: LicenseService,
+      userId: string,
+      users: number,
+    ): Effect.fn.Return<LicenseState, BillingError | BillingOperationError, LicenseDependencies> {
+      const dependencies = yield* LicenseDependencies;
+      const license = yield* this.#openLicense(userId);
+      if (!license) return yield* noLicense();
+      if (rowPlan(license).tier !== "team") return yield* licenseOneUser();
+      const state = yield* this.getState(userId);
+      if (users < Math.max(LICENSE_INCLUDED_USERS, state.used) || users > LICENSE_MAX_USERS)
+        return yield* new BillingError(409, "license_users_in_use", sourceText("error.billing.licenseUsersInUse"));
+      if (users === license.users) return state;
+      const current = yield* this.#stripeCall(() =>
+        dependencies.stripe.getSubscription(license.stripe_subscription_id),
+      );
+      const item = subscriptionLicenseItem(current);
+      if (!item) return yield* noLicense();
+      if (licensePlanFromPrice(item.price).tier !== "team") return yield* licenseOneUser();
+      const quantity = item.quantity ?? 1;
+      const periodEnd = String(subscriptionPeriodEnd(current) ?? "");
+      const paidUsers = Number(current.metadata[LICENSE_METADATA.paidUsers]);
+      const paid =
+        current.metadata[LICENSE_METADATA.paidPeriodEnd] === periodEnd && Number.isSafeInteger(paidUsers)
+          ? Math.max(quantity, paidUsers)
+          : quantity;
+      const setQuantity = (next: number, proration: "always_invoice" | "none") =>
+        stripeRequest(() =>
+          dependencies.stripe.setSubscriptionQuantity({
+            subscriptionId: current.id,
+            itemId: item.id,
+            quantity: next,
+            proration,
+            metadata: {
+              [LICENSE_METADATA.paidUsers]: String(Math.max(paid, proration === "always_invoice" ? next : 0)),
+              [LICENSE_METADATA.paidPeriodEnd]: periodEnd,
+            },
+          }),
+        ).pipe(Effect.map((updated) => ({ updated, readAt: dependencies.now() })));
+      if (users <= paid) {
+        const { updated, readAt } = yield* setQuantity(users, "none").pipe(Effect.mapError(stripeFailure));
+        yield* this.sync(updated, userId, readAt);
+        return yield* this.getState(userId);
+      }
+      if (quantity !== paid) yield* setQuantity(paid, "none").pipe(Effect.mapError(stripeFailure));
+      const sync = (written: { updated: StripeSubscription; readAt: number }) =>
+        this.sync(written.updated, userId, written.readAt);
+      const { updated, readAt } = yield* setQuantity(users, "always_invoice").pipe(
+        Effect.catch((error) =>
+          Effect.gen(function* () {
+            if (!(error instanceof StripeRequestError)) {
+              const readAt = dependencies.now();
+              const after = yield* stripeRequest(() => dependencies.stripe.getSubscription(current.id)).pipe(
+                Effect.mapError(stripeFailure),
+              );
+              if (subscriptionLicenseItem(after)?.quantity === users) return { updated: after, readAt };
+            }
+            if (quantity !== paid)
+              yield* setQuantity(quantity, "none").pipe(
+                Effect.flatMap(sync),
+                Effect.catch(() =>
+                  Effect.sync(() =>
+                    console.warn("billing: license users were not restored", { subscriptionId: current.id }),
+                  ),
+                ),
+              );
+            return yield* Effect.fail(
+              error instanceof StripeRequestError && error.status === 402
+                ? new BillingError(402, "license_payment_failed", sourceText("error.billing.licensePaymentFailed"))
+                : stripeFailure(error),
+            );
+          }),
+        ),
+      );
+      yield* this.sync(updated, userId, readAt);
+      return yield* this.getState(userId);
+    },
+    (operation) => operation.pipe(Effect.provide(this.#layer)),
+  ).bind(this);
+
+  readonly changePlan = Effect.fn("LicenseService.changePlan")(
+    function* (
+      this: LicenseService,
+      userId: string,
+      request: LicensePlanRequest,
+    ): Effect.fn.Return<LicenseState, BillingError | BillingOperationError, LicenseDependencies> {
+      const dependencies = yield* LicenseDependencies;
+      const license = yield* this.#openLicense(userId);
+      if (!license) return yield* noLicense();
+      const state = yield* this.getState(userId);
+      if (request.users < Math.max(LICENSE_INCLUDED_USERS, state.used) || request.users > LICENSE_MAX_USERS)
+        return yield* new BillingError(409, "license_users_in_use", sourceText("error.billing.licenseUsersInUse"));
+      const current = yield* this.#stripeCall(() =>
+        dependencies.stripe.getSubscription(license.stripe_subscription_id),
+      );
+      const item = subscriptionLicenseItem(current);
+      if (!item) return yield* noLicense();
+      const from = licensePlanFromPrice(item.price);
+      const to: LicensePlan = { tier: "team", interval: request.interval, bundle: yield* this.#bundle(userId) };
+      if (!isUpgrade(from, to)) return yield* licensePlanChange();
+      const price = yield* this.#price(to);
+      if (!price) return yield* licenseUnavailable();
+      const readAt = dependencies.now();
+      const updated = yield* stripeRequest(() =>
+        dependencies.stripe.setSubscriptionQuantity({
+          subscriptionId: current.id,
+          itemId: item.id,
+          quantity: request.users,
+          proration: "always_invoice",
+          priceId: price.id,
+          metadata: { [LICENSE_METADATA.paidUsers]: "", [LICENSE_METADATA.paidPeriodEnd]: "" },
+        }),
+      ).pipe(
+        Effect.catch((error) =>
+          Effect.gen(function* () {
+            if (!(error instanceof StripeRequestError)) {
+              const after = yield* stripeRequest(() => dependencies.stripe.getSubscription(current.id)).pipe(
+                Effect.mapError(stripeFailure),
+              );
+              if (subscriptionLicenseItem(after)?.price.id === price.id) return after;
+            }
+            return yield* Effect.fail(
+              error instanceof StripeRequestError && error.status === 402
+                ? new BillingError(402, "license_payment_failed", sourceText("error.billing.licensePaymentFailed"))
+                : stripeFailure(error),
+            );
+          }),
+        ),
+      );
+      yield* this.sync(updated, userId, readAt);
+      return yield* this.getState(userId);
+    },
+    (operation) => operation.pipe(Effect.provide(this.#layer)),
+  ).bind(this);
+
+  readonly alignBundlePrice = Effect.fn("LicenseService.alignBundlePrice")(
+    function* (this: LicenseService, userId: string): Effect.fn.Return<void, never, LicenseDependencies> {
+      const self = this;
+      yield* Effect.gen(function* () {
+        const dependencies = yield* LicenseDependencies;
+        const license = yield* self.#openLicense(userId);
+        if (!license) return;
+        const bundle = yield* self.#bundle(userId);
+        if (rowPlan(license).bundle === bundle) return;
+        const current = yield* self.#stripeCall(() =>
+          dependencies.stripe.getSubscription(license.stripe_subscription_id),
+        );
+        const item = subscriptionLicenseItem(current);
+        if (!item || subscriptionServerItem(current)) return;
+        const from = licensePlanFromPrice(item.price);
+        const readAt = dependencies.now();
+        if (from.bundle === bundle) {
+          yield* self.sync(current, userId, readAt);
+          return;
+        }
+        const price = yield* self.#price({ ...from, bundle });
+        if (!price) {
+          console.warn("billing: license price is missing", { tier: from.tier, interval: from.interval, bundle });
+          return;
+        }
+        const updated = yield* self.#stripeCall(() =>
+          dependencies.stripe.setSubscriptionQuantity({
+            subscriptionId: current.id,
+            itemId: item.id,
+            quantity: item.quantity ?? 1,
+            proration: "none",
+            priceId: price.id,
+          }),
+        );
+        yield* self.sync(updated, userId, readAt);
+      }).pipe(
+        Effect.catch(() =>
+          Effect.sync(() => console.warn("billing: license price was not aligned with the server plans")),
+        ),
+      );
+    },
+    (operation) => operation.pipe(Effect.provide(this.#layer)),
+  ).bind(this);
+
+  readonly splitOrder = Effect.fn("LicenseService.splitOrder")(
+    function* (
+      this: LicenseService,
+      subscription: StripeSubscription,
+      ownerId: string,
+    ): Effect.fn.Return<void, BillingError | BillingOperationError, LicenseDependencies> {
+      const dependencies = yield* LicenseDependencies;
+      const item = subscriptionLicenseItem(subscription);
+      const ordered = item ? null : orderedLicense(subscription);
+      if ((!item && !ordered) || !subscriptionServerItem(subscription) || subscription.status !== "active") return;
+      const currency = subscription.currency.toLowerCase();
+      const periodEnd = subscriptionPeriodEnd(subscription);
+      const price = item
+        ? item.price
+        : ordered
+          ? yield* this.#price({ tier: ordered.tier, interval: ordered.interval, bundle: true })
+          : null;
+      if (!isBillingCurrency(currency) || periodEnd === null || !price) {
+        console.warn("billing: server order cannot be split", { subscriptionId: subscription.id });
+        return;
+      }
+      const nowSeconds = Math.floor(dependencies.now() / 1_000);
+      const anchorSeconds = ordered
+        ? Math.max(ordered.trialEndSeconds, nowSeconds + 3_600)
+        : Math.floor(periodEnd / 1_000);
+      const customerId = subscriptionCustomerId(subscription);
+      const vatTreatmentMark = subscription.metadata[VAT_METADATA.treatment];
+      const listed = yield* this.#stripeCall(() => dependencies.stripe.listCustomerSubscriptions(customerId));
+      const readAt = dependencies.now();
+      const made = listed.find(
+        (candidate) => candidate.metadata[LICENSE_METADATA.orderSubscription] === subscription.id,
+      );
+      const referralCouponId = made || !this.#referralCoupon ? null : yield* this.#referralCoupon(ownerId);
+      const license =
+        made ??
+        (yield* this.#stripeCall(() =>
+          dependencies.stripe
+            .createSubscription(
+              {
+                customerId,
+                priceId: price.id,
+                quantity: item ? (item.quantity ?? 1) : (ordered?.users ?? 1),
+                currency,
+                anchorSeconds,
+                trial: ordered !== null,
+                automaticTax: subscription.automatic_tax?.enabled === true,
+                taxRateIds: (subscription.default_tax_rates ?? []).map((rate) => rate.id),
+                paymentMethodId: subscriptionPaymentMethodId(subscription),
+                ...(referralCouponId ? { couponId: referralCouponId } : {}),
+                metadata: {
+                  [BILLING_METADATA.userId]: ownerId,
+                  ...licenseMetadata(licensePlanFromPrice(price)),
+                  [LICENSE_METADATA.orderSubscription]: subscription.id,
+                  ...(vatTreatmentMark === undefined ? {} : { [VAT_METADATA.treatment]: vatTreatmentMark }),
+                },
+              },
+              `license-split:${subscription.id}`,
+            )
+            .pipe(
+              Effect.catchIf(
+                (error) => error instanceof StripeRequestError && error.code === "idempotency_key_in_use",
+                () => Effect.succeed(null),
+              ),
+            ),
+        ));
+      if (!license) return;
+      if (item) yield* this.#stripeCall(() => dependencies.stripe.deleteSubscriptionItem(item.id));
+      else
+        yield* this.#stripeCall(() =>
+          dependencies.stripe.setSubscriptionMetadata(
+            subscription.id,
+            Object.fromEntries(Object.values(ORDER_METADATA).map((key) => [key, ""])),
+          ),
+        );
+      yield* this.sync(license, ownerId, readAt);
+    },
+    (operation) => operation.pipe(Effect.provide(this.#layer)),
+  ).bind(this);
+
+  readonly price = Effect.fn("LicenseService.planPrice")(
+    function* (
+      this: LicenseService,
+      plan: LicensePlan,
+    ): Effect.fn.Return<StripePrice | null, BillingError | BillingOperationError, LicenseDependencies> {
+      return yield* this.#price(plan);
+    },
+    (operation) => operation.pipe(Effect.provide(this.#layer)),
+  ).bind(this);
+
+  readonly assertCanOrder = Effect.fn("LicenseService.assertCanOrder")(
+    function* (
+      this: LicenseService,
+      userId: string,
+      users: number,
+    ): Effect.fn.Return<void, BillingError | BillingOperationError, LicenseDependencies> {
+      if (yield* this.hasLicense(userId)) return yield* licenseExists();
+      const { used } = yield* this.getState(userId);
+      if (users < used)
+        return yield* new BillingError(409, "license_users_in_use", sourceText("error.billing.licenseUsersInUse"));
+    },
+    (operation) => operation.pipe(Effect.provide(this.#layer)),
+  ).bind(this);
+
+  readonly keepOrderPage = Effect.fn("LicenseService.keepOrderPage")(
+    function* (
+      this: LicenseService,
+      customerId: string,
+      sessionId: string,
+    ): Effect.fn.Return<void, BillingError | BillingOperationError, LicenseDependencies> {
+      const dependencies = yield* LicenseDependencies;
+      const listed = yield* this.#stripeCall(() => dependencies.stripe.listOpenCheckoutSessions(customerId));
+      const created = listed.find((page) => page.id === sessionId)?.created ?? Math.floor(dependencies.now() / 1_000);
+      let paid = false;
+      let newer = false;
+      for (const page of listed) {
+        if (page.id === sessionId || !sellsLicense(page)) continue;
+        if ((page.created - created || page.id.localeCompare(sessionId)) > 0) {
+          newer = true;
+          continue;
+        }
+        const closed = yield* this.#stripeCall(() => dependencies.stripe.expireCheckoutSession(page.id));
+        if (closed.status === "complete") paid = true;
+      }
+      const subscriptions = yield* this.#stripeCall(() => dependencies.stripe.listCustomerSubscriptions(customerId));
+      const open = subscriptions.some(
+        (subscription) =>
+          isOneOf(BILLING_SUBSCRIPTION_STATUSES, subscription.status) &&
+          isOpenBillingStatus(subscription.status) &&
+          ordersLicense(subscription),
+      );
+      if (!paid && !open && !newer) return;
+      yield* this.#stripeCall(() => dependencies.stripe.expireCheckoutSession(sessionId));
+      return yield* licenseExists();
+    },
+    (operation) => operation.pipe(Effect.provide(this.#layer)),
+  ).bind(this);
+
+  readonly assertCurrency = Effect.fn("LicenseService.assertCurrency")(
+    function* (
+      this: LicenseService,
+      userId: string,
+      currency: BillingCurrency,
+    ): Effect.fn.Return<void, BillingError | BillingOperationError, LicenseDependencies> {
+      const locked = yield* this.#lockedCurrency(userId);
+      if (locked && locked !== currency)
+        return yield* new BillingError(409, "billing_currency", sourceText("error.billing.planCurrency"));
+    },
+    (operation) => operation.pipe(Effect.provide(this.#layer)),
+  ).bind(this);
+
+  readonly hasLicense = Effect.fn("LicenseService.hasLicense")(
+    function* (
+      this: LicenseService,
+      userId: string,
+    ): Effect.fn.Return<boolean, BillingError | BillingOperationError, LicenseDependencies> {
+      return (yield* this.#openLicense(userId)) !== null;
+    },
+    (operation) => operation.pipe(Effect.provide(this.#layer)),
+  ).bind(this);
+
+  readonly setRenewal = Effect.fn("LicenseService.setRenewal")(
+    function* (
+      this: LicenseService,
+      userId: string,
+      cancel: boolean,
+    ): Effect.fn.Return<LicenseState, BillingError | BillingOperationError, LicenseDependencies> {
+      const dependencies = yield* LicenseDependencies;
+      const license = yield* this.#openLicense(userId);
+      if (!license) return yield* noLicense();
+      const readAt = dependencies.now();
+      const updated = yield* this.#stripeCall(() =>
+        dependencies.stripe.setRenewal(license.stripe_subscription_id, cancel),
+      );
+      yield* this.sync(updated, userId, readAt);
+      return yield* this.getState(userId);
+    },
+    (operation) => operation.pipe(Effect.provide(this.#layer)),
+  ).bind(this);
+
+  readonly sync = Effect.fn("LicenseService.sync")(
+    function* (
+      this: LicenseService,
+      subscription: StripeSubscription,
+      ownerId: string,
+      readAt: number,
+    ): Effect.fn.Return<LicenseSync | null, BillingError | BillingOperationError, LicenseDependencies> {
+      const dependencies = yield* LicenseDependencies;
+      const currency = subscription.currency.toLowerCase();
+      const item = subscriptionLicenseItem(subscription);
+      const users = item?.quantity ?? 1;
+      const plan: LicensePlan = item
+        ? licensePlanFromPrice(item.price)
+        : { tier: "team", interval: "month", bundle: false };
+      if (
+        subscriptionServerItem(subscription) ||
+        !isBillingCurrency(currency) ||
+        !isOneOf(BILLING_SUBSCRIPTION_STATUSES, subscription.status) ||
+        !Number.isSafeInteger(users) ||
+        users < 1
+      ) {
+        console.warn("billing: subscription is not an OpenBot license", { subscriptionId: subscription.id });
+        return null;
+      }
+      const cancelAtPeriodEnd = subscription.cancel_at_period_end || typeof subscription.cancel_at === "number";
+      const periodEnd = subscriptionPeriodEnd(subscription);
+      const [before, written] = yield* billingCall(() =>
+        dependencies.database.batch<StoredLicense>([
+          dependencies.database
+            .prepare(
+              "SELECT users, status, current_period_end, cancel_at_period_end, tier, billing_interval, bundle, updated_at FROM licenses WHERE stripe_subscription_id = ?",
+            )
+            .bind(subscription.id),
+          dependencies.database
+            .prepare(
+              `INSERT INTO licenses(
+               stripe_subscription_id, user_id, stripe_customer_id, users, currency, status, current_period_end,
+               cancel_at_period_end, tier, billing_interval, bundle, updated_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(stripe_subscription_id) DO UPDATE SET
+               users = excluded.users,
+               tier = excluded.tier,
+               billing_interval = excluded.billing_interval,
+               bundle = excluded.bundle,
+               currency = excluded.currency,
+               status = excluded.status,
+               current_period_end = excluded.current_period_end,
+               cancel_at_period_end = excluded.cancel_at_period_end,
+               updated_at = excluded.updated_at
+             WHERE excluded.updated_at >= licenses.updated_at`,
+            )
+            .bind(
+              subscription.id,
+              ownerId,
+              subscriptionCustomerId(subscription),
+              users,
+              currency,
+              subscription.status,
+              periodEnd,
+              cancelAtPeriodEnd ? 1 : 0,
+              plan.tier,
+              plan.interval,
+              plan.bundle ? 1 : 0,
+              readAt,
+            ),
+        ]),
+      );
+      const previous = before?.results[0] ?? null;
+      const change =
+        written?.meta.changes === 1
+          ? licenseChange(previous, { users, status: subscription.status, cancelAtPeriodEnd, plan, currency })
+          : null;
+      const unpaidTrial =
+        previous !== null &&
+        UNPAID_STATUSES.has(previous.status) &&
+        inFirstPeriodAfterTrial(subscription, plan.interval, periodEnd);
+      const neverPaid = previous === null || BEFORE_FIRST_PAYMENT_STATUSES.has(previous.status) || unpaidTrial;
+      if (written?.meta.changes === 1 && subscription.status === "active" && neverPaid) {
+        yield* this.#sendEmail(ownerId, subscription.id, {
+          kind: "welcome",
+          plan,
+          users,
+          currency,
+          amount: subscriptionHasDiscount(subscription) ? null : licensePeriodAmount(plan, users, currency),
+          nextPaymentAt: cancelAtPeriodEnd ? null : periodEnd,
+        });
+      }
+      if (change?.endReason && !neverPaid) {
+        yield* this.#sendEmail(ownerId, subscription.id, { kind: "ended", plan, users, reason: change.endReason });
+      }
+      const others = yield* billingCall(() =>
+        dependencies.database
+          .prepare(
+            `SELECT stripe_subscription_id FROM licenses
+             WHERE user_id = ? AND stripe_subscription_id <> ? AND status IN ${OPEN_STATUSES_SQL}`,
+          )
+          .bind(ownerId, subscription.id)
+          .all<{ stripe_subscription_id: string }>(),
+      );
+      if (isOpenBillingStatus(subscription.status) && others.results.length > 0)
+        console.warn("billing: an account has more than one open license", {
+          subscriptionIds: [subscription.id, ...others.results.map((row) => row.stripe_subscription_id)],
+        });
+      if (change) {
+        const reactivated =
+          change.action !== "plan_started"
+            ? undefined
+            : others.results.length > 0
+              ? false
+              : yield* billingCall(() =>
+                  dependencies.database
+                    .prepare(
+                      "SELECT 1 AS ended FROM licenses WHERE user_id = ? AND stripe_subscription_id <> ? AND status = 'canceled' LIMIT 1",
+                    )
+                    .bind(ownerId, subscription.id)
+                    .first<{ ended: number }>(),
+                ).pipe(
+                  Effect.map(Boolean),
+                  Effect.catch(() => Effect.succeed(undefined)),
+                );
+        this.#analytics.track(ownerId, {
+          name: "billing_action",
+          action: change.action,
+          product: "license",
+          users,
+          interval: plan.interval,
+          currency,
+          amount: licensePeriodAmount(plan, users, currency),
+          ...(change.direction ? { direction: change.direction } : {}),
+          ...(reactivated === undefined ? {} : { reactivated }),
+          ...(change.endReason ? { endReason: change.endReason } : {}),
+        });
+        const event = purchaseEvent(change.action);
+        if (event) {
+          yield* reportPurchase(
+            { database: dependencies.database, now: dependencies.now, send: this.#onPurchase },
+            subscription.id,
+            ownerId,
+            {
+              event,
+              periodEnd: subscriptionEnd(subscription),
+              cancelRequest: subscription.canceled_at ?? null,
+              ...(change.endReason ? { endReason: change.endReason } : {}),
+              product: "license",
+              tier: plan.tier,
+              users,
+              bundle: plan.bundle,
+              interval: plan.interval,
+              currency,
+              amount: licensePeriodAmount(plan, users, currency),
+              trial: subscription.status === "trialing",
+            },
+          );
+        }
+      }
+      if (
+        this.#onLicenseChanged &&
+        written?.meta.changes === 1 &&
+        memberLimitView(previous, previous?.updated_at ?? readAt) !==
+          memberLimitView({ users, status: subscription.status, current_period_end: periodEnd }, readAt)
+      ) {
+        yield* this.#onLicenseChanged(ownerId).pipe(
+          Effect.catch(() =>
+            Effect.sync(() => {
+              console.warn("billing: license change notice failed", { subscriptionId: subscription.id });
+            }),
+          ),
+        );
+      }
+      return {
+        kind: "license",
+        userId: ownerId,
+        latestInvoiceId: subscriptionLatestInvoiceId(subscription),
+        plan,
+        users,
+        interval: plan.interval,
+        currency,
+        status: subscription.status,
+      };
+    },
+    (operation) => operation.pipe(Effect.provide(this.#layer)),
+  ).bind(this);
+
+  readonly paymentFailed = Effect.fn("LicenseService.paymentFailed")(
+    function* (
+      this: LicenseService,
+      synced: LicenseSync,
+      invoice: FailedLicenseInvoice,
+    ): Effect.fn.Return<void, BillingError | BillingOperationError, LicenseDependencies> {
+      if (!isOpenBillingStatus(synced.status)) return;
+      yield* this.#sendEmail(synced.userId, invoice.invoiceId, {
+        kind: "payment_failed",
+        plan: synced.plan,
+        users: synced.users,
+        currency: synced.currency,
+        amount: invoice.amountDue,
+        nextAttemptAt: invoice.nextAttemptAt,
+        invoiceUrl: invoice.invoiceUrl,
+      });
+    },
+    (operation) => operation.pipe(Effect.provide(this.#layer)),
+  ).bind(this);
+
+  readonly #sendEmail = Effect.fn("LicenseService.sendEmail")(
+    function* (
+      this: LicenseService,
+      userId: string,
+      claimId: string,
+      input: LicenseEmailInput,
+    ): Effect.fn.Return<void, BillingError | BillingOperationError, LicenseDependencies> {
+      const send = this.#onLicenseEmail;
+      if (!send) return;
+      const dependencies = yield* LicenseDependencies;
+      const claim = yield* billingCall(() =>
+        dependencies.database
+          .prepare("INSERT OR IGNORE INTO billing_webhook_events(event_id, type, received_at) VALUES (?, ?, ?)")
+          .bind(
+            `${LICENSE_EMAIL_CLAIM_PREFIXES[input.kind]}${claimId}`,
+            `license_email_${input.kind}`,
+            dependencies.now(),
+          )
+          .run(),
+      );
+      if (claim.meta.changes !== 1) return;
+      const account = yield* billingCall(() =>
+        dependencies.database.prepare("SELECT email FROM users WHERE id = ?").bind(userId).first<{ email: string }>(),
+      );
+      if (account) send({ ...input, email: account.email });
+    },
+    (operation) =>
+      operation.pipe(
+        Effect.catch(() => Effect.sync(() => console.warn("billing: license email skipped: the read failed"))),
+      ),
+  );
+
+  readonly storedOwner = Effect.fn("LicenseService.storedOwner")(
+    function* (
+      this: LicenseService,
+      subscriptionId: string,
+    ): Effect.fn.Return<string | null, BillingError | BillingOperationError, LicenseDependencies> {
+      const dependencies = yield* LicenseDependencies;
+      const row = yield* billingCall(() =>
+        dependencies.database
+          .prepare("SELECT user_id FROM licenses WHERE stripe_subscription_id = ?")
+          .bind(subscriptionId)
+          .first<{ user_id: string }>(),
+      );
+      return row?.user_id ?? null;
+    },
+    (operation) => operation.pipe(Effect.provide(this.#layer)),
+  ).bind(this);
+
+  readonly lapsed = Effect.fn("LicenseService.lapsed")(
+    function* (
+      this: LicenseService,
+      before: number,
+      readBefore: number,
+      limit: number,
+    ): Effect.fn.Return<string[], BillingError | BillingOperationError, LicenseDependencies> {
+      const dependencies = yield* LicenseDependencies;
+      const rows = yield* billingCall(() =>
+        dependencies.database
+          .prepare(
+            `SELECT stripe_subscription_id FROM licenses
+             WHERE status IN ${OPEN_STATUSES_SQL} AND current_period_end < ? AND updated_at < ?
+             ORDER BY updated_at LIMIT ?`,
+          )
+          .bind(before, readBefore, limit)
+          .all<{ stripe_subscription_id: string }>(),
+      );
+      return rows.results.map((row) => row.stripe_subscription_id);
+    },
+    (operation) => operation.pipe(Effect.provide(this.#layer)),
+  ).bind(this);
+
+  readonly #checkoutStarted = Effect.fn("LicenseService.checkoutStarted")(function* (
+    this: LicenseService,
+    userId: string,
+    sessionId: string,
+    plan: LicensePlan,
+    users: number,
+    currency: BillingCurrency,
+  ): Effect.fn.Return<void, never, LicenseDependencies> {
+    const dependencies = yield* LicenseDependencies;
+    const amount = licensePeriodAmount(plan, users, currency);
+    if (!this.#sales) {
+      this.#analytics.track(userId, {
+        name: "billing_action",
+        action: "checkout_started",
+        product: "license",
+        users,
+        interval: plan.interval,
+        currency,
+        amount,
+      });
+      return;
+    }
+    yield* this.#sales
+      .licenseCheckout({
+        sessionId,
+        userId,
+        users,
+        interval: plan.interval,
+        currency,
+        amount,
+        createdAt: dependencies.now(),
+      })
+      .pipe(Effect.catch(() => Effect.sync(() => console.warn("billing: license checkout fact was not saved"))));
+  });
+
+  readonly #openLicense = Effect.fn("LicenseService.openLicense")(function* (
+    this: LicenseService,
+    userId: string,
+  ): Effect.fn.Return<LicenseRow | null, BillingError | BillingOperationError, LicenseDependencies> {
+    const dependencies = yield* LicenseDependencies;
+    return yield* billingCall(() =>
+      dependencies.database
+        .prepare(
+          `SELECT ${LICENSE_ROW_COLUMNS}
+           FROM licenses WHERE user_id = ? AND status IN ${OPEN_STATUSES_SQL} ORDER BY updated_at DESC LIMIT 1`,
+        )
+        .bind(userId)
+        .first<LicenseRow>(),
+    );
+  });
+
+  readonly #latestLicense = Effect.fn("LicenseService.latestLicense")(function* (
+    this: LicenseService,
+    userId: string,
+  ): Effect.fn.Return<LicenseRow | null, BillingError | BillingOperationError, LicenseDependencies> {
+    const dependencies = yield* LicenseDependencies;
+    return yield* billingCall(() =>
+      dependencies.database
+        .prepare(
+          `SELECT ${LICENSE_ROW_COLUMNS}
+           FROM licenses WHERE user_id = ?
+           ORDER BY status IN ${OPEN_STATUSES_SQL} DESC, updated_at DESC LIMIT 1`,
+        )
+        .bind(userId)
+        .first<LicenseRow>(),
+    );
+  });
+
+  readonly #lockedCurrency = Effect.fn("LicenseService.lockedCurrency")(function* (
+    this: LicenseService,
+    userId: string,
+  ): Effect.fn.Return<BillingCurrency | null, BillingError | BillingOperationError, LicenseDependencies> {
+    const dependencies = yield* LicenseDependencies;
+    const row = yield* billingCall(() =>
+      dependencies.database
+        .prepare(
+          `SELECT currency FROM billing_subscriptions WHERE user_id = ?1 AND status IN ${OPEN_STATUSES_SQL}
+           UNION ALL
+           SELECT currency FROM licenses WHERE user_id = ?1 AND status IN ${OPEN_STATUSES_SQL}
+           LIMIT 1`,
+        )
+        .bind(userId)
+        .first<{ currency: string }>(),
+    );
+    return row && isBillingCurrency(row.currency) ? row.currency : null;
+  });
+
+  readonly #price = Effect.fn("LicenseService.price")(function* (
+    this: LicenseService,
+    plan: LicensePlan,
+  ): Effect.fn.Return<StripePrice | null, BillingError | BillingOperationError, LicenseDependencies> {
+    const dependencies = yield* LicenseDependencies;
+    const now = dependencies.now();
+    const lookupKey = licenseLookupKey(plan);
+    const cached = priceCache.get(this.#secretKey);
+    if (cached && cached.expiresAt > now) return cached.prices.get(lookupKey) ?? null;
+    const list = yield* this.#stripeCall(() => dependencies.stripe.listPricesByLookupKeys(LICENSE_LOOKUP_KEYS));
+    const prices = new Map<string, StripePrice>();
+    for (const price of list) {
+      const listed = LICENSE_PLANS.find((candidate) => licenseLookupKey(candidate) === price.lookup_key);
+      if (listed && samePlan(licensePlanFromPrice(price), listed)) prices.set(licenseLookupKey(listed), price);
+      else console.warn("billing: license price metadata does not match its lookup key", { priceId: price.id });
+    }
+    priceCache.set(this.#secretKey, { expiresAt: now + PRICE_TTL_MS, prices });
+    return prices.get(lookupKey) ?? null;
+  });
+
+  readonly #bundle = Effect.fn("LicenseService.bundle")(function* (
+    this: LicenseService,
+    userId: string,
+  ): Effect.fn.Return<boolean, BillingOperationError, LicenseDependencies> {
+    const dependencies = yield* LicenseDependencies;
+    return yield* accountHasServerPlan(dependencies.database, userId, dependencies.now()).pipe(
+      Effect.mapError(() => new BillingOperationError({})),
+    );
+  });
+
+  readonly #stripeCall = Effect.fn("LicenseService.stripeCall")(
+    <T>(call: () => Effect.Effect<T, StripeRequestError | StripeTransportError>) =>
+      stripeRequest(call).pipe(Effect.mapError(stripeFailure)),
+  );
+}
+
+function licenseUsers(ownerId: string, rows: readonly LicenseUserRow[]): LicenseUser[] {
+  const users = new Map<string, LicenseUser>();
+  for (const row of rows) {
+    const user = users.get(row.id) ?? { name: row.name, email: row.email, servers: [], owner: row.id === ownerId };
+    if (row.server_name !== null && !user.servers.includes(row.server_name)) user.servers.push(row.server_name);
+    users.set(row.id, user);
+  }
+  return [...users.values()].sort((left, right) => Number(right.owner) - Number(left.owner));
+}
+
+function rowPlan(row: { tier: string | null; billing_interval: string | null; bundle: number }): LicensePlan {
+  return {
+    tier: isOneOf(LICENSE_TIERS, row.tier) ? row.tier : "team",
+    interval: isOneOf(BILLING_INTERVALS, row.billing_interval) ? row.billing_interval : "month",
+    bundle: row.bundle === 1,
+  };
+}
+
+function samePlan(left: LicensePlan, right: LicensePlan): boolean {
+  return left.tier === right.tier && left.interval === right.interval && left.bundle === right.bundle;
+}
+
+function licenseMetadata(plan: LicensePlan): Record<string, string> {
+  return {
+    [LICENSE_METADATA.kind]: LICENSE_METADATA_KIND,
+    [LICENSE_METADATA.tier]: plan.tier,
+    [LICENSE_METADATA.interval]: plan.interval,
+    [LICENSE_METADATA.bundle]: String(plan.bundle),
+  };
+}
+
+function isUpgrade(from: LicensePlan, to: LicensePlan): boolean {
+  if (to.tier !== "team") return false;
+  if (from.tier !== "team") return from.interval === "month" || to.interval === "year";
+  return from.interval === "month" && to.interval === "year";
+}
+
+function licenseFromRow(row: LicenseRow): License | null {
+  if (!isBillingCurrency(row.currency) || !isOneOf(BILLING_SUBSCRIPTION_STATUSES, row.status)) return null;
+  const status: BillingSubscriptionStatus = row.status;
+  const plan = rowPlan(row);
+  return {
+    subscriptionId: row.stripe_subscription_id,
+    users: row.users,
+    currency: row.currency,
+    amount: licenseMonthlyAmount(plan, row.users, row.currency),
+    tier: plan.tier,
+    interval: plan.interval,
+    bundle: plan.bundle,
+    status,
+    currentPeriodEnd: row.current_period_end,
+    cancelAtPeriodEnd: row.cancel_at_period_end === 1 && isOpenBillingStatus(status),
+  };
+}
+
+function licenseChange(
+  previous: StoredLicense | null,
+  current: {
+    users: number;
+    status: BillingSubscriptionStatus;
+    cancelAtPeriodEnd: boolean;
+    plan: LicensePlan;
+    currency: BillingCurrency;
+  },
+): { action: BillingAction; direction?: PlanChangeDirection; endReason?: PlanEndReason } | null {
+  const wasOpen =
+    previous !== null &&
+    isOneOf(BILLING_SUBSCRIPTION_STATUSES, previous.status) &&
+    isOpenBillingStatus(previous.status);
+  const isOpen = isOpenBillingStatus(current.status);
+  if (!previous || !wasOpen) return isOpen ? { action: "plan_started" } : null;
+  if (!isOpen)
+    return {
+      action: "plan_ended",
+      endReason: previous.status === "past_due" || previous.status === "unpaid" ? "unpaid" : "canceled",
+    };
+  const previousPlan = rowPlan(previous);
+  if (previous.users !== current.users || !samePlan(previousPlan, current.plan)) {
+    const before = licenseMonthlyAmount(previousPlan, previous.users, current.currency);
+    const after = licenseMonthlyAmount(current.plan, current.users, current.currency);
+    const up = after > before || (previousPlan.interval === "month" && current.plan.interval === "year");
+    return { action: "plan_changed", direction: up ? "up" : "down" };
+  }
+  const wasCancelling = previous.cancel_at_period_end === 1;
+  if (wasCancelling === current.cancelAtPeriodEnd) return null;
+  return { action: current.cancelAtPeriodEnd ? "cancel_scheduled" : "cancel_withdrawn" };
+}
+
+function licenseReturnUrl(origin: string, target: LicenseReturnTarget): string {
+  if (target === "web") return `${origin}/app?billing=license`;
+  return `${origin}/billing/return?kind=license`;
+}
+
+const LICENSE_TRIAL_MARGIN_MS = 49 * 60 * 60_000;
+
+function orderedLicense(
+  subscription: StripeSubscription,
+): { tier: LicensePlan["tier"]; interval: BillingInterval; users: number; trialEndSeconds: number } | null {
+  const metadata = subscription.metadata;
+  const tier = metadata[ORDER_METADATA.licenseTier];
+  const interval = metadata[ORDER_METADATA.licenseInterval];
+  const users = Number(metadata[ORDER_METADATA.licenseUsers]);
+  const trialEndSeconds = Number(metadata[ORDER_METADATA.licenseTrialEnd]);
+  if (
+    !isOneOf(LICENSE_TIERS, tier) ||
+    !isOneOf(BILLING_INTERVALS, interval) ||
+    !Number.isSafeInteger(users) ||
+    users < 1 ||
+    !Number.isSafeInteger(trialEndSeconds)
+  )
+    return null;
+  return { tier, interval, users, trialEndSeconds };
+}
+
+export function ordersLicense(subscription: StripeSubscription): boolean {
+  return subscriptionLicenseItem(subscription) !== null || orderedLicense(subscription) !== null;
+}
+
+export function parseLicenseTrialEnd(value: string | undefined): number | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  const time = Date.parse(trimmed);
+  return Number.isFinite(time) ? time : null;
+}
+
+function sellsLicense(page: { metadata: Readonly<Record<string, string>> }): boolean {
+  return (
+    page.metadata[LICENSE_METADATA.kind] === LICENSE_METADATA_KIND ||
+    page.metadata[ORDER_METADATA.licenseTier] !== undefined
+  );
+}
+
+function memberLimitView(
+  license: { users: number; status: string; current_period_end: number | null } | null,
+  at: number,
+): string {
+  const status = license?.status;
+  if (!license || !isOneOf(BILLING_SUBSCRIPTION_STATUSES, status) || !isOpenBillingStatus(status)) return "closed";
+  return `${license.users}:${licenseEntitled(license, at)}`;
+}
+
+function licenseExists(): BillingError {
+  return new BillingError(409, "license_exists", sourceText("error.billing.licenseExists"));
+}
+
+function licenseUnavailable(): BillingError {
+  return new BillingError(503, "license_unavailable", sourceText("error.billing.licenseUnavailable"));
+}
+
+function licenseOneUser(): BillingError {
+  return new BillingError(409, "license_one_user", sourceText("error.billing.licenseOneUser"));
+}
+
+function licensePlanChange(): BillingError {
+  return new BillingError(409, "license_plan_change", sourceText("error.billing.licensePlanChange"));
+}
+
+function noLicense(): BillingError {
+  return new BillingError(404, "no_license", sourceText("error.billing.noLicense"));
+}
+
+function inFirstPeriodAfterTrial(
+  subscription: StripeSubscription,
+  interval: BillingInterval,
+  periodEnd: number | null,
+): boolean {
+  const trialEnd = subscription.trial_end;
+  if (typeof trialEnd !== "number" || periodEnd === null) return false;
+  return periodEnd <= trialEnd * 1_000 + FIRST_PERIOD_AFTER_TRIAL_MS[interval];
+}
+
+function subscriptionHasDiscount(subscription: StripeSubscription): boolean {
+  return (
+    (subscription.discounts?.length ?? 0) > 0 ||
+    subscription.items.data.some((item) => (item.discounts?.length ?? 0) > 0)
+  );
+}

@@ -1,0 +1,101 @@
+import { CHANNEL_CHATS_CAPABILITY, CHANNEL_TASK_CANCEL_CAPABILITY } from "@openbot/contracts/ipc";
+import { CHANNEL_BROWSER_CAPABILITY } from "@openbot/contracts/team-protocol/channel-browser-v1";
+import { CHANNEL_ISOLATION_CAPABILITY } from "@openbot/contracts/team-protocol/channel-isolation-v1";
+import { CHANNEL_PICTURE_CAPABILITY } from "@openbot/contracts/team-protocol/channel-picture-v1";
+import { CHAT_HISTORY_CAPABILITY } from "@openbot/contracts/team-protocol/chat-history-v1";
+import { MESSAGE_DELETE_CAPABILITY } from "@openbot/contracts/team-protocol/message-delete-v1";
+import { createContext, type ParentProps, untrack, useContext } from "solid-js";
+import { noteAgentRequest } from "../../agent-requests";
+import { useAuth } from "../account/account-context";
+import { useAgents } from "../agents/agents-context";
+import { useDirectMessages } from "../conversation/direct-messages-context";
+import { saveRemoteFrameChannels } from "../servers/remote-workspace-frame";
+import { serverRoleCanAdminister } from "../servers/server-capabilities";
+import { useServers } from "../servers/servers-context";
+import { useWindowPage } from "../window/window-page-context";
+import { readChannelSelection, writeChannelSelection } from "./channel-selection";
+import { type ChannelsController, createChannelsController } from "./channels-controller";
+import { type ChannelsPort, channelsPort } from "./channels-port";
+
+const ChannelsContext = createContext<ChannelsController>(undefined, { name: "Channels" });
+
+export function useChannels(): ChannelsController {
+  try {
+    return useContext(ChannelsContext);
+  } catch (cause) {
+    throw new Error("Channels is unavailable outside its provider.", { cause });
+  }
+}
+
+export function ChannelsControllerProvider(props: ParentProps<{ controller: ChannelsController }>) {
+  return <ChannelsContext value={props.controller}>{props.children}</ChannelsContext>;
+}
+
+export function ChannelsProvider(props: ParentProps) {
+  const { activeServer, activeServerId, activeServerSupportsCapability } = useServers();
+  const { agentList, setAgentSetupOpen } = useAgents();
+  const { clearDirectSelection, setDirectTyping } = useDirectMessages();
+  const windowPage = useWindowPage();
+  const { centralAuth } = useAuth();
+  const selectionServerId = untrack(activeServerId);
+  const accountKey = () => {
+    const auth = centralAuth();
+    return auth.status === "signed_in" ? auth.user.id : auth.status;
+  };
+  const port = (): ChannelsPort => {
+    const base = channelsPort();
+    return {
+      ...base,
+      agent: {
+        ...base.agent,
+        channelCommand: (command) => {
+          const page = controller.state.page;
+          if (command.type === "send" && page?.channel.id === command.channelId) {
+            for (const member of page.channel.members) noteAgentRequest(selectionServerId, member.agentId);
+          }
+          return base.agent.channelCommand(command);
+        },
+      },
+    };
+  };
+  const controller = createChannelsController({
+    port,
+    agents: agentList,
+    scopeKey: accountKey,
+    readSelection: (account) =>
+      account === "loading" || account === "error"
+        ? null
+        : (readChannelSelection()[account]?.[selectionServerId] ?? null),
+    writeSelection: (channelId) => {
+      const status = centralAuth().status;
+      if (status === "signed_in" || status === "signed_out") {
+        writeChannelSelection(accountKey(), selectionServerId, channelId);
+      }
+    },
+    supported: () => activeServerSupportsCapability(CHANNEL_CHATS_CAPABILITY),
+    deletionSupported: () => activeServer()?.kind !== "remote" || serverRoleCanAdminister(activeServer()),
+    taskCancelSupported: () => activeServerSupportsCapability(CHANNEL_TASK_CANCEL_CAPABILITY),
+    isolationSupported: () => activeServerSupportsCapability(CHANNEL_ISOLATION_CAPABILITY),
+    browserSupported: () => activeServerSupportsCapability(CHANNEL_BROWSER_CAPABILITY),
+    messageDeletionSupported: () => activeServerSupportsCapability(MESSAGE_DELETE_CAPABILITY),
+    deletesAnyMessage: () => activeServer()?.kind === "local" || serverRoleCanAdminister(activeServer()),
+    pictureSupported: () =>
+      activeServer()?.kind === "local" || activeServerSupportsCapability(CHANNEL_PICTURE_CAPABILITY),
+    contextActionsSupported: () =>
+      activeServer() !== undefined && activeServerSupportsCapability(CHAT_HISTORY_CAPABILITY),
+    beforeOpen: () => {
+      setAgentSetupOpen(false);
+      setDirectTyping(false);
+      clearDirectSelection();
+      windowPage.showAgents();
+    },
+    canMarkRead: () => document.hasFocus() && !windowPage.conversationCovered(),
+    onList: (channels) => {
+      const server = activeServer();
+      const auth = centralAuth();
+      if (server?.kind === "remote" && auth.status === "signed_in")
+        saveRemoteFrameChannels(auth.user.id, server.id, channels);
+    },
+  });
+  return <ChannelsControllerProvider controller={controller}>{props.children}</ChannelsControllerProvider>;
+}

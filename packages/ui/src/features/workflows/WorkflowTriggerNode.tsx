@@ -1,0 +1,260 @@
+import type { AppTranslate } from "@openbot/i18n";
+import {
+  type RoutineScheduleDraft,
+  routineScheduleFromDraft,
+  routineScheduleToDraft,
+} from "@openbot/team-client/routine-schedule-draft";
+import {
+  Button,
+  CalendarClock,
+  CopyButton,
+  MessageSquare,
+  MousePointerClick,
+  Play,
+  toast,
+  Webhook,
+  Zap,
+} from "@openbot/ui";
+import { createSignal, Show, untrack } from "solid-js";
+import { useText } from "../../text";
+import { RoutineSchedulePicker } from "../conversation/RoutineSchedulePicker";
+import { RoutineWebhookSecretField } from "../conversation/RoutineWebhookEndpoint";
+import { useBoard } from "./workflow-board";
+import { DISCORD_TRIGGER_DEFAULTS, DiscordIcon, DiscordTriggerRows } from "./workflow-discord-parts";
+import { GITHUB_TRIGGER_DEFAULTS, GitHubIcon, GitHubTriggerRows, useGitHubTriggerReady } from "./workflow-github-parts";
+import { newTriggerSchedule, stableJson } from "./workflow-history";
+import { type Choice, NodeShell, NodeToolbar, oneOf, useField, useLocked, useStepRun } from "./workflow-node-parts";
+import { PlaceRow, SettingRow, SettingRows, SettingsFoot, StaticRow } from "./workflow-setting-rows";
+import { SLACK_TRIGGER_DEFAULTS, SlackIcon, SlackTriggerRows } from "./workflow-slack-parts";
+import { TELEGRAM_TRIGGER_DEFAULTS, TelegramIcon, TelegramTriggerRows } from "./workflow-telegram-parts";
+
+type TriggerType = "schedule" | "manual" | "webhook" | "message" | "github" | "discord" | "telegram" | "slack";
+
+const TRIGGERS = (t: AppTranslate): readonly Choice<TriggerType>[] => [
+  {
+    value: "schedule",
+    label: t("workflow.trigger.type.schedule"),
+    icon: () => <CalendarClock aria-hidden="true" />,
+  },
+  {
+    value: "manual",
+    label: t("workflow.trigger.type.manual"),
+    icon: () => <MousePointerClick aria-hidden="true" />,
+  },
+  { value: "webhook", label: t("workflow.trigger.type.webhook"), icon: () => <Webhook aria-hidden="true" /> },
+  {
+    value: "message",
+    label: t("workflow.trigger.type.message"),
+    icon: () => <MessageSquare aria-hidden="true" />,
+  },
+  { value: "github", label: t("workflow.trigger.type.github"), icon: () => <GitHubIcon /> },
+  { value: "discord", label: t("workflow.trigger.type.discord"), icon: () => <DiscordIcon /> },
+  { value: "telegram", label: t("workflow.trigger.type.telegram"), icon: () => <TelegramIcon /> },
+  { value: "slack", label: t("workflow.trigger.type.slack"), icon: () => <SlackIcon /> },
+];
+
+const TRIGGER_TYPES: readonly TriggerType[] = [
+  "schedule",
+  "manual",
+  "webhook",
+  "message",
+  "github",
+  "discord",
+  "telegram",
+  "slack",
+];
+
+const HOST_TYPES: readonly TriggerType[] = ["github", "discord", "telegram", "slack"];
+
+const TRIGGER_DEFAULTS: Partial<Record<TriggerType, Record<string, string>>> = {
+  github: GITHUB_TRIGGER_DEFAULTS,
+  discord: DISCORD_TRIGGER_DEFAULTS,
+  telegram: TELEGRAM_TRIGGER_DEFAULTS,
+  slack: SLACK_TRIGGER_DEFAULTS,
+};
+
+export function TriggerNode(props: {
+  id: string;
+  trigger?: TriggerType;
+  connectionId?: string;
+  placeId?: string;
+  webhookUrl?: string | undefined;
+  nextRun?: string | undefined;
+}) {
+  const board = useBoard();
+  const { t, format, errorMessage } = useText();
+  const [trigger, setTrigger] = useField<TriggerType>(
+    () => props.id,
+    "trigger",
+    untrack(() => props.trigger ?? "schedule"),
+    oneOf(TRIGGER_TYPES),
+  );
+  const chooseTrigger = (value: TriggerType) => {
+    const defaults = TRIGGER_DEFAULTS[value];
+    const fromOther = trigger() !== value && HOST_TYPES.includes(trigger());
+    if (!defaults || (board.field(props.id, "event") !== undefined && !fromOther)) return setTrigger(value);
+    board.setFields(props.id, { trigger: value, ...defaults });
+  };
+  const offered = (type: TriggerType) => {
+    const triggers = board.features()?.triggers;
+    if (type === trigger()) return true;
+    return HOST_TYPES.includes(type) ? triggers?.includes(type) === true : (triggers?.includes(type) ?? true);
+  };
+  const [edited, setEdited] = createSignal<RoutineScheduleDraft>();
+  const schedule = () => {
+    const saved = board.schedule(props.id) ?? newTriggerSchedule();
+    const draft = edited();
+    return draft && stableJson(routineScheduleFromDraft(draft)) === stableJson(saved)
+      ? draft
+      : routineScheduleToDraft(saved);
+  };
+  const changeSchedule = (draft: RoutineScheduleDraft) => {
+    setEdited(draft);
+    board.setSchedule(props.id, routineScheduleFromDraft(draft));
+  };
+  const [secret, setSecret] = createSignal<string | null>(null);
+  const [creating, setCreating] = createSignal(false);
+  const rotate = async () => {
+    const make = board.rotateWebhookSecret;
+    if (make) setSecret(await make(props.id));
+  };
+  const create = () => {
+    setCreating(true);
+    rotate()
+      .catch((cause: unknown) => toast.error(errorMessage(cause, t("routine.webhook.regenerateFailed"))))
+      .finally(() => setCreating(false));
+  };
+  const [locked, setLocked] = useLocked(() => props.id);
+  const run = useStepRun(untrack(() => props.id));
+  const githubReady = useGitHubTriggerReady(() => props.id);
+  const isGitHub = () => trigger() === "github";
+  const runLabel = () => {
+    if (isGitHub()) return t("workflow.trigger.runLastEvent");
+    return trigger() === "manual" ? t("workflow.trigger.runWorkflow") : t("workflow.trigger.runNow");
+  };
+  const start = () => {
+    if (isGitHub()) return board.github()?.runLastEvent(props.id);
+    return board.runFrom ? board.runFrom(props.id) : run.start();
+  };
+  const nextRun = () =>
+    props.nextRun
+      ? format.date(new Date(props.nextRun), {
+          weekday: "short",
+          day: "numeric",
+          month: "short",
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : undefined;
+  return (
+    <NodeShell
+      action={
+        <Button
+          class="wfn-run"
+          fullWidth
+          loading={run.running()}
+          loadingLabel={t("workflow.node.running")}
+          disabled={locked() || board.running() || (isGitHub() && !githubReady())}
+          onClick={start}
+        >
+          {runLabel()}
+          <Play aria-hidden="true" />
+        </Button>
+      }
+      id={props.id}
+      label={t("workflow.trigger.title")}
+      icon={<Zap aria-hidden="true" />}
+      kind="trigger"
+      output="text"
+      style={{ "--wfn-width": "320px" }}
+      toolbar={<NodeToolbar id={props.id} name={t("workflow.trigger.name")} locked={locked()} onLock={setLocked} />}
+    >
+      <SettingRows
+        head={
+          <SettingRow
+            name={t("workflow.trigger.type")}
+            value={trigger()}
+            choices={TRIGGERS(t).filter((choice) => offered(choice.value))}
+            disabled={locked()}
+            onChange={chooseTrigger}
+          />
+        }
+      >
+        <Show when={trigger() === "schedule"}>
+          <div class="wfn-settings-block">
+            <RoutineSchedulePicker
+              schedule={schedule()}
+              density="card"
+              disabled={locked()}
+              onChange={changeSchedule}
+              onEditEnd={board.endScheduleEdit}
+            />
+          </div>
+          <Show when={nextRun()}>
+            {(time) => (
+              <SettingsFoot>
+                <StaticRow name={t("workflow.trigger.nextRunName")}>
+                  <span class="wfn-row-text">{time()}</span>
+                </StaticRow>
+              </SettingsFoot>
+            )}
+          </Show>
+        </Show>
+        <Show when={trigger() === "webhook" ? props.webhookUrl : undefined}>
+          {(url) => (
+            <div class="wfn-row" data-static="">
+              <span class="wfn-row-name">{t("workflow.trigger.webhook.address")}</span>
+              <code class="wfn-row-value wfn-row-code">{url()}</code>
+              <CopyButton value={url()} iconOnly label={t("workflow.trigger.copyWebhook")} />
+            </div>
+          )}
+        </Show>
+        <Show when={trigger() === "webhook" && board.rotateWebhookSecret}>
+          <Show
+            when={props.webhookUrl || secret()}
+            fallback={
+              <Button
+                size="sm"
+                variant="secondary"
+                loading={creating()}
+                loadingLabel={t("workflow.trigger.webhook.creating")}
+                disabled={locked()}
+                onClick={create}
+              >
+                {t("workflow.trigger.webhook.create")}
+              </Button>
+            }
+          >
+            <div class="wfn-settings-block">
+              <RoutineWebhookSecretField
+                secret={secret()}
+                onSecretDismiss={() => setSecret(null)}
+                onRegenerateSecret={rotate}
+              />
+            </div>
+          </Show>
+        </Show>
+        <Show when={trigger() === "message"}>
+          <PlaceRow
+            id={props.id}
+            connectionId={untrack(() => props.connectionId)}
+            placeId={untrack(() => props.placeId)}
+            disabled={locked()}
+          />
+        </Show>
+        <Show when={isGitHub()}>
+          <GitHubTriggerRows id={props.id} locked={locked()} />
+        </Show>
+        <Show when={trigger() === "discord"}>
+          <DiscordTriggerRows id={props.id} locked={locked()} />
+        </Show>
+        <Show when={trigger() === "telegram"}>
+          <TelegramTriggerRows id={props.id} locked={locked()} />
+        </Show>
+        <Show when={trigger() === "slack"}>
+          <SlackTriggerRows id={props.id} locked={locked()} />
+        </Show>
+      </SettingRows>
+    </NodeShell>
+  );
+}

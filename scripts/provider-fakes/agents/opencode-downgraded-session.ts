@@ -1,0 +1,53 @@
+import { type AcpHandler, logEntry, serveFakeAcpAgent } from "../acp-agent";
+
+const MODEL = "opencode/minimax-m3.1-flash-free";
+const setup = (sessionId: string | undefined) => ({
+  sessionId,
+  models: { availableModels: [{ modelId: MODEL, name: "MiniMax" }], currentModelId: MODEL },
+});
+
+const reopen: AcpHandler = (request, peer) => {
+  const { sessionId = "", cwd } = request.params;
+  logEntry({ event: request.method, sessionId });
+  if (/^(?:v2|kept)-/.test(sessionId)) {
+    peer.fail(request, {
+      code: -32603,
+      message: "Internal error: OpenCode service failure",
+      data: { service: "session" },
+    });
+  } else if (sessionId.startsWith("v1only-")) {
+    peer.fail(request, {
+      code: -32602,
+      message: `Invalid params: session not found: ${sessionId}`,
+      data: { sessionId },
+    });
+  } else if (sessionId.startsWith("othercwd-")) {
+    peer.fail(request, {
+      code: -32602,
+      message: `Invalid params: session ${sessionId} does not belong to cwd: ${cwd}`,
+      data: { sessionId, cwd },
+    });
+  } else {
+    peer.reply(request, setup(sessionId));
+  }
+};
+
+let count = 0;
+serveFakeAcpAgent({
+  initialize: (request, peer) =>
+    peer.reply(request, {
+      protocolVersion: 1,
+      authMethods: [],
+      agentCapabilities: { loadSession: true, sessionCapabilities: { close: {}, fork: {}, list: {}, resume: {} } },
+    }),
+  "session/new": (request, peer) => {
+    count += 1;
+    peer.reply(request, setup(`s-${process.pid}-${count}`));
+  },
+  "session/resume": reopen,
+  "session/load": reopen,
+  "session/list": (request, peer) => {
+    logEntry({ event: "session/list" });
+    peer.reply(request, { sessions: [{ sessionId: "kept-1", cwd: request.params.cwd }] });
+  },
+});

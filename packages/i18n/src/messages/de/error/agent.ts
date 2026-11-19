@@ -1,0 +1,222 @@
+import type { PartialTranslation } from "../../../message";
+import type { messages as source } from "../../en/error/agent";
+
+export const messages = {
+  "error.agent.historyUnavailable":
+    "Der Verlauf ist für diese Anfrage nicht verfügbar. Lies den aktuellen Verlauf erneut oder verwende channel_history für Arbeit in Kanälen.",
+  "error.agent.historyArgumentsInvalid":
+    "Ungültige Verlaufsargumente: {detail} Korrigiere die Argumente und versuche es erneut. openbot.tool_describe liefert das Schema.",
+  "error.agent.toolRequestInvalid":
+    "Ungültige Argumente für die Werkzeugsuche. Verwende das deklarierte Schema und einen originalen qualifizierten Werkzeugnamen.",
+  "error.agent.toolCallArgumentsNotObject":
+    "Das Werkzeug wurde nicht ausgeführt. In tool_call muss arguments ein JSON-Objekt sein, kein Text. Sende den Aufruf erneut mit arguments als Objekt.",
+  "error.agent.toolCallDiscoveryTool":
+    "Das Werkzeug wurde nicht ausgeführt. tool_call kann openbot.tool_search und openbot.tool_describe nicht ausführen. Rufe sie direkt mit denselben Argumenten auf.",
+  "error.agent.toolCallEnvelopeKeys":
+    "Das Werkzeug wurde nicht ausgeführt. tool_call nimmt nur name und arguments an. Gib die Argumente des Werkzeugs in arguments als Objekt an und sende den Aufruf erneut.",
+  "error.agent.toolCallMissingName":
+    "Das Werkzeug wurde nicht ausgeführt. Der tool_call hat keinen name. Gib in name den qualifizierten Namen aus tool_search an, zum Beispiel openbot.history_read, und sende den Aufruf erneut.",
+  "error.agent.toolCallUnknownTool":
+    "Das Werkzeug wurde nicht ausgeführt. tool_call hat kein Werkzeug mit diesem Namen gefunden. Verwende den genauen qualifizierten Namen aus tool_search, zum Beispiel openbot_browser.snapshot.",
+  "error.agent.toolCallUnknownToolSuggest":
+    "Das Werkzeug wurde nicht ausgeführt. tool_call hat kein Werkzeug mit diesem Namen gefunden. Der qualifizierte Name ist möglicherweise {name}. Wenn ja, sende den Aufruf mit diesem Namen erneut.",
+  "error.agent.toolDescribeUnknownNames":
+    "tool_describe hat kein OpenBot-Werkzeug mit dem Namen {names} gefunden. Es beschreibt nur die OpenBot- und Browser-Werkzeuge, die openbot.tool_search auflistet, keine MCP-Werkzeuge.",
+  "error.agent.toolDescribeDiscoveryNames":
+    "Rufe {names} direkt auf. tool_describe beschreibt die Suchwerkzeuge nicht.",
+  "error.agent.routineScheduleArgumentsInvalid":
+    "Der Zeitplan der Routine ist ungültig: {detail} Korrigiere den Zeitplan und versuche es erneut. openbot.tool_describe liefert das Schema.",
+  "error.agent.approvalWhileDeleting": "Während der Agent gelöscht wird, kann keine Genehmigung erteilt werden.",
+  "error.agent.accessLocalOnly":
+    "Der Agentenzugriff kann nur auf dem Computer geändert werden, auf dem der Agent läuft.",
+  "error.agent.duplicateCleanupFailed":
+    "Der Agent konnte nicht dupliziert und die unvollständige Kopie nicht entfernt werden.",
+  "error.agent.commitEffectsFailed":
+    "Die Transaktion wurde bestätigt, aber ihre gespeicherten Effekte sind fehlgeschlagen.",
+  "error.agent.settingsLocalOnly":
+    "Die Agenteneinstellungen können nur auf dem Computer geändert werden, auf dem der Agent läuft.",
+  "error.agent.skillsLocalOnly": "Fähigkeiten können nur auf dem Computer geändert werden, auf dem der Agent läuft.",
+  "error.agent.addLocalOnly": "Agenten können nur auf dem Computer hinzugefügt werden, auf dem sie laufen.",
+  "error.agent.joinedServerUpdate":
+    "Ein Agent auf einem Server, dem du beigetreten bist, kann hier nicht aktualisiert werden.",
+  "error.agent.searchQueryRequired": "Eine Suchanfrage ist erforderlich.",
+  "error.agent.messageTooLong": "Die Nachricht ist zu lang.",
+  "error.agent.messageOrAttachmentRequired": "Eine Nachricht oder ein Anhang ist erforderlich.",
+  "error.agent.promptAnswersTooLong": "Die Antworten auf die Fragen sind zu lang.",
+  "error.agent.gone": "Dieser Agent existiert nicht mehr.",
+  "error.agent.instructionsTooLarge":
+    "Die Anweisungsdatei ist zu groß, um sie hier zu öffnen. Kürze sie in einem Texteditor.",
+  "error.agent.instructionsOutside":
+    "Die Anweisungsdatei verweist auf einen Ort außerhalb des Arbeitsbereichs des Agenten, daher öffnet OpenBot sie nicht.",
+  "error.agent.instructionsReadFailed": "Die Anweisungsdatei konnte nicht gelesen werden.",
+  "error.agent.instructionsSaveFailed": "Die Anweisungsdatei konnte nicht gespeichert werden.",
+  "error.agent.profileGenerationBusy": "Die Profilerstellung ist ausgelastet. Versuche es gleich noch einmal.",
+  "error.agent.instructionsChanged":
+    "Der Agent hat die Anweisungsdatei geändert. Ihre letzte Änderung wurde nicht gespeichert. Nehmen Sie sie erneut vor.",
+  "error.agent.initialMessageRequired": "Eine erste Nachricht ist erforderlich.",
+  "error.agent.initialMessageTooLong": "Die erste Nachricht ist zu lang.",
+  "error.agent.setupCleanupFailed":
+    "Der Agent konnte nicht eingerichtet und der unvollständige Agent nicht entfernt werden.",
+  "error.agent.modelUnavailable": "Das gewählte Agentenmodell ist nicht verfügbar.",
+  "error.agent.modelProviderNotConnected":
+    "Das gewählte Agentenmodell „{model}“ ist nicht verfügbar: {provider} ist nicht verbunden.",
+  "error.agent.modelListEmpty":
+    "Das gewählte Agentenmodell „{model}“ ist nicht verfügbar: {provider} hat keine Modelle aufgeführt. Letzter Fehler: {detail}",
+  "error.agent.modelListEmptyNoError":
+    "Das gewählte Agentenmodell „{model}“ ist nicht verfügbar: {provider} hat keine Modelle aufgeführt.",
+  "error.agent.modelNotInProviderList":
+    "Das gewählte Agentenmodell „{model}“ ist nicht verfügbar: {provider} führt es nicht auf.",
+  "error.agent.modelVariantNotListed":
+    "Das gewählte Agentenmodell „{model}“ ist nicht verfügbar: {provider} führt es nicht auf. Nutze einen dieser Werte, die {provider} für dieses Modell aufführt: {models}.",
+  "error.agent.modelProviderMismatch": "Das gewählte Modell gehört nicht zu diesem Anbieter.",
+  "error.agent.modelNotListed": "Das Modell „{model}“ ist nicht verfügbar. Verfügbare Modelle: {models}.",
+  "error.agent.providerNotListed":
+    "Derzeit ist kein Modell von {provider} verfügbar. Rufe list_models auf, um die verfügbaren Modelle zu sehen.",
+  "error.agent.creatorModelNotListed":
+    "Dein Modell „{model}“ ist gerade nicht in der Modellliste, daher kann der neue Agent nicht damit starten. Versuche es in ein paar Sekunden erneut, oder setze provider und model auf ein Modell, das list_models zeigt.",
+  "error.agent.reasoningEffortUnsupported":
+    "Das Modell „{model}“ unterstützt den Denkaufwand „{effort}“ nicht. Unterstützte Stufen: {efforts}.",
+  "error.agent.reasoningEffortNotConfigurable":
+    "Das Modell „{model}“ hat keine Einstellung für den Denkaufwand. Du kannst ihn deshalb nicht ändern.",
+  "error.agent.noStartingModelInSettings":
+    "{provider} hat kein verfügbares Modell, und kein anderer angemeldeter Anbieter hat eines. Melde dich bei einem Anbieter an oder ändere den Standardanbieter unter Servereinstellungen → Anbieter.",
+  "error.agent.noStartingModel":
+    "{provider} hat kein verfügbares Modell. Auch kein anderer angemeldeter Anbieter hat eines. Melde dich bei einem Anbieter an oder ändere den Standardanbieter unter Anbieter und Berechtigungen.",
+  "error.agent.waitBeforeProviderChange":
+    "Warte, bis der aktive Durchlauf und die Warteschlange abgeschlossen sind, bevor du den Anbieter wechselst.",
+  "error.agent.waitForTasksBeforeProviderChange":
+    "Aufgaben dieses Agenten laufen. Warte, bis sie abgeschlossen sind, oder stoppe sie, bevor du den Anbieter wechselst.",
+  "error.agent.waitBeforeClearContext":
+    "Warte, bis der aktive Durchlauf und die Warteschlange abgeschlossen sind, bevor du einen neuen Chat beginnst.",
+  "error.agent.waitBeforeCompactContext":
+    "Warte, bis der aktive Durchlauf und die Warteschlange fertig sind, bevor du den Kontext komprimierst.",
+  "error.agent.waitBeforeDeleteHistory":
+    "Warte, bis der aktive Durchlauf und die Warteschlange abgeschlossen sind, bevor du den Verlauf löschst.",
+  "error.agent.compactContextUnavailable": "Dieser Agent kann seinen Kontext jetzt nicht komprimieren.",
+  "error.agent.unknown": "Unbekannter Agent: {id}",
+  "error.agent.onlyUserWidensSettings":
+    "Nur der Benutzer kann einem Agenten „Voller Zugriff“ geben oder die Computersteuerung aktivieren. Bitte den Benutzer, dies in den Agenteneinstellungen zu ändern.",
+  "error.agent.queuedMessageCreateFailed": "Die Nachricht konnte nicht in die Warteschlange aufgenommen werden.",
+  "error.agent.messageUnavailable": "Die Nachricht ist nicht mehr verfügbar.",
+  "error.agent.hostLimit": "Ein Host kann bis zu {limit} Agenten haben.",
+  "error.agent.changedWhileDuplicating": "Der Agent wurde während des Duplizierens geändert. Versuche es erneut.",
+  "error.agent.duplicatedAgentGone": "Der duplizierte Agent existiert nicht mehr.",
+  "error.agent.stateCorrupt":
+    "Der Agentenzustand ist beschädigt oder stammt aus einer neueren OpenBot-Version. Er wird nicht überschrieben.",
+  "error.agent.oldRoleField":
+    "Gespeicherte Agentenprofile verwenden das alte Feld role. Aktualisiere die Daten, bevor du OpenBot startest.",
+  "error.agent.duplicateIds": "Der Agentenzustand enthält doppelte Agenten-IDs. Er wird nicht überschrieben.",
+  "error.agent.copyNameFailed": "OpenBot konnte keinen eindeutigen Namen für die Agentenkopie erstellen.",
+  "error.agent.endpointRemoved":
+    "Der von diesem Agenten verwendete Endpunkt wurde entfernt. Wähle ein anderes Modell für ihn.",
+  "error.agent.turnStalled":
+    "{provider} reagiert nicht mehr, daher hat OpenBot diesen Durchlauf beendet. Sende die Nachricht erneut oder wähle ein anderes Modell.",
+  "error.agent.promptCancelled":
+    "{provider} hat diese Nachricht abgebrochen, bevor sie begann. Sende die Nachricht erneut.",
+  "error.agent.toolLoopStopped":
+    "{provider} hat einen fehlgeschlagenen Schritt viele Male wiederholt, daher hat OpenBot diesen Durchgang beendet. Sende die Nachricht erneut oder wähle ein anderes Modell.",
+  "error.agent.answerCutOff":
+    "Der Agent hat angehalten, bevor er seine Antwort beendet hat, daher ist die Antwort nicht vollständig. Sende die Nachricht erneut.",
+  "error.agent.compactionConnectionLost":
+    "Die Verbindung brach ab, während der Agent seinen Kontext komprimierte. Daher wurde die Aufgabe angehalten. Prüfe deine Internetverbindung und sende dann eine Nachricht, um fortzufahren.",
+  "error.agent.compactionConnectionLostAddress":
+    "Die Verbindung brach ab, während der Agent seinen Kontext komprimierte. Daher wurde die Aufgabe angehalten. Prüfe deine Internetverbindung und ob {variable} unter Variablen in den {provider}-Einstellungen die API-Adresse deines Modelldienstes ist (oft mit /v1 am Ende). Sende dann eine Nachricht.",
+  "error.agent.compactionLoopStopped":
+    "{provider} hat den Kontext immer wieder komprimiert, und jedes Mal blieb er zu voll, um weiterzumachen. Daher hat OpenBot diesen Durchlauf angehalten. Schalte die MCP-Server oder die Computersteuerung aus, die dieser Agent nicht braucht, und sende dann eine Nachricht. Wenn du oder der Agent geändert habt, wann {provider} komprimiert, mach diese Änderung rückgängig.",
+  "error.agent.selectedGone": "Der gewählte Agent existiert nicht mehr.",
+  "error.agent.profileEndpointsChanged":
+    "Die benutzerdefinierten Endpunkte wurden während der Erstellung geändert. Versuche es erneut.",
+  "error.agent.profileInvalid":
+    "Der Anbieter hat ein ungültiges Profil zurückgegeben. Versuche, deine Anweisung zu ändern.",
+  "error.agent.profileSectionUnavailable":
+    "Der erstellte Abschnitt ist nicht verfügbar. Versuche es erneut oder wähle einen Abschnitt manuell.",
+  "error.agent.profileTimedOut": "Die Zeit für die Profilerstellung ist abgelaufen. Versuche es erneut.",
+  "error.agent.profileDisconnected": "Der Anbieter hat während der Profilerstellung die Verbindung getrennt.",
+  "error.agent.profileToolUse":
+    "Der Anbieter hat versucht, ein Werkzeug zu verwenden. Versuche, deine Anweisung zu ändern.",
+  "error.agent.profileFailed": "Der Anbieter konnte kein Profil erstellen. Versuche es erneut.",
+  "error.agent.profileTooLarge": "Das erstellte Profil ist zu groß. Versuche eine kürzere Anweisung.",
+  "error.agent.profileNotStarted": "Der Anbieter konnte die Profilerstellung nicht starten.",
+  "error.agent.deletionBusy": "Der Agent wird bereits gelöscht.",
+  "error.agent.stopBeforeDelete":
+    "Stoppe den Agenten und storniere seine Nachrichten in der Warteschlange, bevor du ihn löschst.",
+  "error.agent.deleteIncomplete":
+    "Die Agentendaten konnten nicht vollständig entfernt werden. Versuche erneut, den Agenten zu löschen.",
+  "error.agent.deleteFolderInUse":
+    "Die Arbeit eines anderen Agenten nutzt noch den Ordner dieses Agenten. Lösche den Agenten erneut, wenn diese Arbeit endet, oder nach einem Neustart von OpenBot.",
+  "error.agent.deleteWhenFolderFree":
+    "Die Arbeit eines anderen Agenten nutzt noch den Ordner dieses Agenten. OpenBot löscht diesen Agenten, wenn diese Arbeit endet.",
+  "error.agent.duplicationBusy": "Dieser Agent wird bereits dupliziert.",
+  "error.agent.waitBeforeDuplicate":
+    "Warte, bis der Agent fertig ist, und leere seine Warteschlange, bevor du ihn duplizierst.",
+  "error.agent.saveOtherAgent": "Dieser Speichervorgang gehört zu einem anderen Agenten.",
+  "error.agent.savedGone": "Der gespeicherte Agent existiert nicht mehr.",
+  "error.agent.storedProfileUnreadable":
+    "Ein gespeichertes Agentenprofil hat einen unlesbaren Wert „{field}“. Aktualisiere die Daten, bevor du OpenBot startest.",
+  "error.agent.storedProfileUnreadableId":
+    "Das gespeicherte Agentenprofil {id} hat einen unlesbaren Wert „{field}“. Aktualisiere die Daten, bevor du OpenBot startest.",
+  "error.agent.queueEditRejected": "Änderung der Warteschlange abgelehnt: {reason}",
+  "error.agent.computerUseLocalOnly":
+    "Die Computersteuerung kann nur auf dem Computer geändert werden, auf dem der Agent läuft.",
+  "error.agent.automationLocalOnly":
+    "Lokale Skripte können nur auf dem Computer erlaubt werden, auf dem der Agent läuft.",
+  "error.agent.newChatLocalOnly": "Nur der Computer, auf dem der Agent läuft, kann ihm neue Chats erlauben.",
+  "error.agent.quickAcknowledgementLocalOnly":
+    "Nur der Computer, auf dem der Agent läuft, kann diese Einstellung ändern.",
+  "error.agent.sideQuestionBusy": "Es laufen zu viele Nebenfragen. Versuche es gleich noch einmal.",
+  "error.agent.sideQuestionFailed": "Der Agent konnte die Nebenfrage nicht beantworten. Versuche es erneut.",
+  "error.agent.webSearchSignIn": "Die Websuche braucht eine Codex-Anmeldung mit einem ChatGPT-Konto.",
+  "error.agent.webSearchBusy": "Es laufen zu viele Suchen und Nebenfragen. Versuche es gleich noch einmal.",
+  "error.agent.webSearchFailed": "Die Websuche wurde nicht abgeschlossen. Versuche es erneut.",
+  "error.agent.busyMessageModeLocalOnly":
+    "Das Verhalten von Nachrichten während der Arbeit des Agenten kann nur auf dem Computer eingestellt werden, auf dem der Agent läuft.",
+  "error.agent.backupModelsLocalOnly":
+    "Ersatzmodelle können nur auf dem Computer eingestellt werden, auf dem der Agent läuft.",
+  "error.agent.taskLimitLocalOnly":
+    "Das Aufgabenlimit lässt sich nur auf dem Computer festlegen, auf dem der Agent läuft.",
+  "error.agent.localScriptsOff": "Dieser Agent erlaubt keine lokalen Skripte.",
+  "error.agent.localScriptsRateLimited":
+    "Lokale Skripte haben diesem Agenten in der letzten Stunde {limit} Nachrichten- oder Routinenanfragen gesendet. Versuche es später erneut.",
+  "error.agent.automationOff": "Dieser Agent erlaubt lokalen Skripten nicht, seine Routinen auszuführen.",
+  "error.agent.automationPayloadTooLong": "Die Nutzdaten sind länger als {limit} Zeichen.",
+  "error.agent.automationRateLimited":
+    "Lokale Skripte haben die Routinen dieses Agenten in der letzten Stunde {limit}-mal ausgeführt. Versuche es später erneut.",
+  "error.agent.workspaceOnlyMacOnly":
+    "„Nur Arbeitsbereich“ ist für diesen Anbieter nur unter macOS verfügbar. Wähle „Voller Zugriff“ in den Agenteneinstellungen.",
+  "error.agent.lowMemory":
+    "Dieser Server hat wenig freien Arbeitsspeicher. Deine Nachricht wartet in der Warteschlange und startet, wenn Speicher frei ist. Ein größerer Tarif gibt dem Server mehr Arbeitsspeicher.",
+  "error.agent.lowMemoryServer":
+    "Dieser Server hat wenig freien Arbeitsspeicher. Deine Nachricht wartet in der Warteschlange und startet, wenn Speicher frei ist.",
+  "error.agent.workspaceOnlyToolMissing":
+    "„Nur Arbeitsbereich“ benötigt {tool}, das OpenBot nicht gefunden hat. Installiere es oder wähle „Voller Zugriff“ in den Agenteneinstellungen.",
+  "error.agent.codexSandboxUnavailable":
+    "„Nur Arbeitsbereich“ braucht die Codex-Sandbox, die Codex auf diesem Computer nicht starten kann. Deshalb schlagen die Befehle des Agenten fehl. Wähle „Erst fragen“ oder „Voller Zugriff“ in den Agenteneinstellungen.",
+  "error.agent.claudeSandboxUnavailable":
+    "„Nur Arbeitsbereich“ braucht die Claude-Sandbox, die Claude auf diesem Computer nicht starten kann: {reason}. Wähle „Voller Zugriff“ oder einen anderen Anbieter in den Agenteneinstellungen.",
+  "error.agent.claudeNoSandbox":
+    "Claude kann auf diesem Computer keine Sandbox nutzen, daher funktioniert „Nur Arbeitsbereich“ damit nicht. Wähle „Voller Zugriff“ oder einen anderen Anbieter in den Agenteneinstellungen.",
+  "error.agent.claudeSandboxBlocked":
+    "„Nur Arbeitsbereich“ braucht die Claude-Sandbox, die Claude auf diesem Computer nicht starten kann. Deshalb schlagen die Befehle des Agenten fehl. Wähle „Voller Zugriff“ oder einen anderen Anbieter in den Agenteneinstellungen.",
+  "error.agent.screenCaptureOff":
+    "Die Bildschirmaufnahme ist für diesen Agenten deaktiviert. Der Benutzer kann die Computersteuerung in den Agenteneinstellungen aktivieren.",
+  "error.agent.screenCaptureUnavailable": "Die Bildschirmaufnahme ist auf diesem Computer nicht verfügbar.",
+  "error.agent.screenCaptureShared":
+    "Die Bildschirmaufnahme funktioniert nicht in einer Slack-, Discord- oder Telegram-Unterhaltung, da andere Personen ihre Dateien erhalten.",
+  "error.agent.screenCaptureDeclined":
+    "Der Benutzer hat diese Bildschirmaufnahme nicht erlaubt. Es wurde nichts aufgenommen.",
+  "error.agent.mcpToolDeclined":
+    "Der Benutzer hat diesen MCP-Toolaufruf nicht erlaubt. Das Tool wurde nicht ausgeführt.",
+  "error.agent.screenCaptureWindowMissing":
+    "Dieses Fenster ist gerade nicht geöffnet. Rufe list_capture_sources auf, um die aktuellen Fenster-IDs zu erhalten.",
+  "error.agent.screenCaptureDisplayMissing":
+    "Dieser Bildschirm ist gerade nicht verbunden. Rufe list_capture_sources auf, um die aktuellen Bildschirm-IDs zu erhalten.",
+  "error.agent.screenCaptureRegionOutside":
+    "Der Bereich liegt nicht innerhalb eines Bildschirms. Verwende Desktop-Punkte innerhalb der Grenzen eines Bildschirms aus list_capture_sources.",
+  "error.agent.screenCapturePermissionMissing":
+    "OpenBot hat keine Berechtigung zur Bildschirmaufnahme. Bitte den Benutzer, Systemeinstellungen → Datenschutz & Sicherheit → Bildschirm- & Systemaudioaufnahme zu öffnen, OpenBot zu aktivieren und OpenBot dann zu beenden und neu zu öffnen.",
+  "error.agent.screenCaptureListPermission":
+    "OpenBot hat noch keine Berechtigung zur Bildschirmaufnahme und kann die Fenster daher nicht auflisten. Um einen Bildschirm aufzunehmen, rufe capture_screen mit target screen auf. Der Benutzer erlaubt die Aufnahme zuerst, danach kann macOS den Benutzer um die Berechtigung bitten.",
+  "error.agent.screenCaptureEmptyWindows":
+    "Windows hat ein leeres Bild geliefert. Bitte den Benutzer, den Computer zu entsperren und geschützte Inhalte zu schließen. Auch eine Richtlinie der Organisation kann die Bildschirmaufnahme verhindern.",
+  "error.agent.screenCaptureFailed": "Die Bildschirmaufnahme ist fehlgeschlagen. Versuche es erneut.",
+} as const satisfies PartialTranslation<typeof source>;

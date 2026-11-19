@@ -1,0 +1,348 @@
+import { type AgentStep, AgentStepsDisclosure } from "@openbot/ui/features/conversation/AgentSteps";
+import { ChatMessageRow } from "@openbot/ui/features/conversation/ChatMessageRow";
+import { MessageActions, MessageMenuItems } from "@openbot/ui/features/conversation/MessageRendering";
+import { type TraceSpan, TraceWaterfall } from "@openbot/ui/features/conversation/TraceWaterfall";
+import { createMemo, createSignal, onSettled } from "solid-js";
+import { fn } from "storybook/test";
+import type { Meta, StoryObj } from "storybook-solidjs-vite";
+import { STORY_AGENTS } from "./fixtures";
+
+interface FixtureSpan extends Omit<TraceSpan, "start" | "end"> {
+  from: number;
+  to: number;
+}
+
+const TURN: readonly FixtureSpan[] = [
+  {
+    id: "agent",
+    icon: "agent",
+    parentId: null,
+    name: "Mira",
+    detail: "Sonnet 5.5",
+    kind: "model",
+    from: 0,
+    to: 38_600,
+  },
+  {
+    id: "think-1",
+    icon: "thinking",
+    parentId: "agent",
+    name: "Thinking",
+    detail: "Sonnet 5.5",
+    kind: "model",
+    from: 0,
+    to: 3_200,
+    tokens: 1_840,
+    costUsd: 0.011,
+  },
+  {
+    id: "read-1",
+    icon: "read",
+    parentId: "agent",
+    name: "read",
+    detail: "turn-steps.ts",
+    kind: "tool",
+    from: 3_300,
+    to: 3_900,
+  },
+  {
+    id: "search-1",
+    icon: "search",
+    parentId: "agent",
+    name: "search",
+    detail: "itemCreatedAt",
+    kind: "tool",
+    from: 3_900,
+    to: 5_100,
+  },
+  {
+    id: "think-2",
+    icon: "thinking",
+    parentId: "agent",
+    name: "Thinking",
+    detail: "Sonnet 5.5",
+    kind: "model",
+    from: 5_200,
+    to: 8_400,
+    tokens: 2_210,
+    costUsd: 0.014,
+  },
+  { id: "handoff", parentId: "agent", name: "Start 2 subagents", kind: "handoff", from: 8_500, to: 9_000 },
+  {
+    id: "explore",
+    icon: "agent",
+    parentId: "agent",
+    name: "Explore",
+    detail: "Haiku 5.5",
+    kind: "model",
+    from: 9_000,
+    to: 21_400,
+  },
+  {
+    id: "explore-think",
+    icon: "thinking",
+    parentId: "explore",
+    name: "Thinking",
+    detail: "Haiku 5.5",
+    kind: "model",
+    from: 9_100,
+    to: 10_900,
+    tokens: 960,
+    costUsd: 0.001,
+  },
+  {
+    id: "explore-search",
+    icon: "search",
+    parentId: "explore",
+    name: "search",
+    detail: "AgentSteps",
+    kind: "tool",
+    from: 11_000,
+    to: 13_400,
+  },
+  {
+    id: "explore-read-1",
+    icon: "read",
+    parentId: "explore",
+    name: "read",
+    detail: "AgentSteps.tsx",
+    kind: "tool",
+    from: 13_500,
+    to: 14_100,
+  },
+  {
+    id: "explore-read-2",
+    icon: "read",
+    parentId: "explore",
+    name: "read",
+    detail: "Subagents.tsx",
+    kind: "tool",
+    failed: true,
+    error: "ENOENT: no such file or directory, open 'src/renderer/src/Subagents.tsx'",
+    from: 14_100,
+    to: 14_800,
+  },
+  {
+    id: "explore-summary",
+    icon: "text",
+    parentId: "explore",
+    name: "Summary",
+    detail: "Haiku 5.5",
+    kind: "model",
+    from: 14_900,
+    to: 21_400,
+    tokens: 2_480,
+    costUsd: 0.004,
+  },
+  {
+    id: "review",
+    icon: "agent",
+    parentId: "agent",
+    name: "Review",
+    detail: "Sonnet 5.5",
+    kind: "model",
+    from: 9_000,
+    to: 31_000,
+  },
+  {
+    id: "review-command",
+    icon: "command",
+    parentId: "review",
+    name: "command",
+    detail: "bun run typecheck:renderer",
+    kind: "tool",
+    from: 9_600,
+    to: 26_800,
+  },
+  {
+    id: "review-web",
+    icon: "web",
+    parentId: "review",
+    name: "web",
+    detail: "docs.solidjs.com",
+    kind: "tool",
+    failed: true,
+    error: "GET https://docs.solidjs.com/reference/stores failed: 503 Service Unavailable",
+    from: 26_900,
+    to: 28_300,
+  },
+  {
+    id: "review-summary",
+    icon: "text",
+    parentId: "review",
+    name: "Summary",
+    detail: "Sonnet 5.5",
+    kind: "model",
+    from: 28_400,
+    to: 31_000,
+    tokens: 1_720,
+    costUsd: 0.012,
+  },
+  { id: "wait", parentId: "agent", name: "Wait for subagents", kind: "waiting", from: 9_000, to: 31_000 },
+  {
+    id: "answer",
+    icon: "text",
+    parentId: "agent",
+    name: "Answer",
+    detail: "Sonnet 5.5",
+    kind: "model",
+    from: 31_200,
+    to: 38_600,
+    tokens: 3_900,
+    costUsd: 0.031,
+  },
+];
+
+const TURN_LENGTH = 38_600;
+
+function spansAt(origin: number, elapsed: number): TraceSpan[] {
+  return TURN.filter((span) => span.from <= elapsed).map(({ from, to, ...span }) => ({
+    ...span,
+    start: origin + from,
+    end: to <= elapsed ? origin + to : null,
+  }));
+}
+
+const ORIGIN = Date.UTC(2026, 9, 24, 9, 30);
+const FINISHED = spansAt(ORIGIN, TURN_LENGTH);
+const FINISHED_NOW = ORIGIN + TURN_LENGTH;
+
+function createStoryClock() {
+  const [now, setNow] = createSignal(Date.now());
+  onSettled(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  });
+  return now;
+}
+
+const meta = {
+  title: "Conversation/TraceWaterfall",
+  parameters: { layout: "padded" },
+} satisfies Meta;
+
+export default meta;
+type Story = StoryObj<typeof meta>;
+
+export const Finished: Story = {
+  render: () => (
+    <div style={{ width: "1000px", height: "640px", display: "flex" }}>
+      <TraceWaterfall spans={FINISHED} now={FINISHED_NOW} keyboard="mac" />
+    </div>
+  ),
+};
+
+export const Live: Story = {
+  render: () => {
+    const now = createStoryClock();
+    const origin = Date.now() - 12_000;
+    const elapsed = () => (now() - origin) % (TURN_LENGTH + 4_000);
+    const spans = createMemo(() => spansAt(now() - elapsed(), elapsed()));
+    return (
+      <div style={{ width: "1000px", height: "640px", display: "flex" }}>
+        <TraceWaterfall spans={spans()} now={now()} keyboard="mac" />
+      </div>
+    );
+  },
+};
+
+export const NoMatches: Story = {
+  render: () => (
+    <div style={{ width: "1000px", height: "520px", display: "flex" }}>
+      <TraceWaterfall spans={FINISHED} now={FINISHED_NOW} keyboard="pc" defaultQuery="deploy" />
+    </div>
+  ),
+};
+
+export const Narrow: Story = {
+  render: () => (
+    <div style={{ width: "420px", height: "640px", display: "flex" }}>
+      <TraceWaterfall spans={FINISHED} now={FINISHED_NOW} keyboard="mac" />
+    </div>
+  ),
+};
+
+const STEPS: AgentStep[] = TURN.filter((span) => span.parentId === "agent" && span.icon !== "agent").flatMap(
+  (span): AgentStep[] => {
+    if (span.icon === "thinking") return [{ id: span.id, kind: "thinking", text: span.name }];
+    if (span.kind === "tool") return [{ id: span.id, kind: "progress", text: `${span.name} ${span.detail ?? ""}` }];
+    return [];
+  },
+);
+
+export const FromStepsRow: Story = {
+  render: () => (
+    <div style={{ width: "640px" }}>
+      <AgentStepsDisclosure
+        steps={STEPS}
+        defaultOpen={false}
+        trace={{ spans: () => FINISHED, keyboard: "mac" }}
+        facts={{ durationMs: TURN_LENGTH, failed: FINISHED.filter((span) => span.failed).length }}
+      />
+    </div>
+  ),
+};
+
+function ChannelAnswer(props: { id: string; agent: number; body: string; first: boolean }) {
+  const agent = STORY_AGENTS[props.agent];
+  const message = { id: props.id, author: "agent" as const, body: props.body, time: "09:31", kind: "text" as const };
+  return (
+    <div class="virtual-chat-list-static">
+      <div class="virtual-chat-row" data-grouped={props.first ? undefined : "sender"}>
+        <ChatMessageRow
+          message={message}
+          author={{ kind: "agent", name: agent?.name ?? "", agent }}
+          showAuthor={props.first}
+          actionsBeside
+          showTime={props.first}
+          agents={STORY_AGENTS}
+          actions={
+            <MessageActions
+              message={message}
+              authorName={agent?.name}
+              reactions={false}
+              pickerOpen={false}
+              expandedEmoji={false}
+              onTogglePicker={fn()}
+              onExpandEmoji={fn()}
+              onReact={fn()}
+              onReply={fn()}
+              menu={() => (
+                <MessageMenuItems message={message} reactions={false} onReact={fn()} onReply={fn()} onCopy={fn()} />
+              )}
+            />
+          }
+          steps={
+            <AgentStepsDisclosure
+              steps={STEPS}
+              defaultOpen={false}
+              list={false}
+              trace={{ spans: () => FINISHED, keyboard: "mac" }}
+              facts={{ durationMs: TURN_LENGTH, failed: FINISHED.filter((span) => span.failed).length }}
+            />
+          }
+          onSelectAgent={fn()}
+          onOpenLink={fn()}
+          onPreview={fn()}
+          onAttachmentAction={fn()}
+        />
+      </div>
+    </div>
+  );
+}
+
+export const FromChannelAnswer: Story = {
+  render: () => (
+    <div style={{ width: "720px" }}>
+      <ChannelAnswer id="a1" agent={1} first body="Yes. The ping run is at packet 112." />
+      <ChannelAnswer id="a2" agent={1} first={false} body="I stopped it. The process is gone." />
+      <ChannelAnswer id="a3" agent={0} first body="The ping run is cancelled. Nothing else is in progress." />
+      <ChannelAnswer
+        id="a4"
+        agent={0}
+        first={false}
+        body="I checked the other agents too. Research has no open runs, the browser session closed when the ping run stopped, and no file in the shared workspace is still being written."
+      />
+    </div>
+  ),
+};

@@ -1,0 +1,137 @@
+import type {
+  ChannelRoutine,
+  ChannelRoutineRun,
+  ChannelRoutineRunStatus,
+  CreateChannelRoutineInput,
+  UpdateChannelRoutineInput,
+} from "@openbot/contracts/ipc";
+import type { OpenBotDatabase } from "./openbot-database";
+import {
+  type DueRoutine,
+  type ImportedRoutineRun,
+  type OwnedRoutine,
+  type OwnedRoutineRun,
+  type ReceivedWebhookEvent,
+  type RoutineRunStart,
+  RoutineStore,
+  type WebhookReceiveResult,
+} from "./routine-store";
+import { ROUTINE_TABLES } from "./routine-tables";
+
+export interface DueChannelRoutine {
+  routine: ChannelRoutine;
+  triggerId: string;
+  nextRunAt: string;
+  schedule: DueRoutine["schedule"];
+}
+
+export class ChannelRoutineStore extends RoutineStore {
+  constructor(database: OpenBotDatabase) {
+    super(database, ROUTINE_TABLES.channel);
+  }
+
+  list(channelId: string): ChannelRoutine[] {
+    return this.listRoutines(channelId).map(toChannelRoutine);
+  }
+
+  get(channelId: string, routineId: string): ChannelRoutine | null {
+    const routine = this.getRoutine(channelId, routineId);
+    return routine ? toChannelRoutine(routine) : null;
+  }
+
+  create(input: CreateChannelRoutineInput, now = new Date()): ChannelRoutine {
+    const { channelId, ...fields } = input;
+    return toChannelRoutine(this.createRoutine(channelId, fields, now));
+  }
+
+  update(input: UpdateChannelRoutineInput, now = new Date()): ChannelRoutine {
+    const { channelId, ...fields } = input;
+    return toChannelRoutine(this.updateRoutine(channelId, fields, now));
+  }
+
+  importRuns(channelId: string, routineId: string, runs: readonly ImportedRoutineRun[]): string[] {
+    return this.importRunRows(routineId, channelId, runs);
+  }
+
+  listRuns(channelId: string, routineId: string, limit = 50, withSkipped = false): ChannelRoutineRun[] {
+    return this.listRunRows(channelId, routineId, limit, withSkipped).map(toChannelRun);
+  }
+
+  pendingRuns(): ChannelRoutineRun[] {
+    return this.queuedRunRows().map(toChannelRun);
+  }
+
+  activeRuns(channelId: string, routineId: string): ChannelRoutineRun[] {
+    return this.activeRunRows(channelId, routineId).map(toChannelRun);
+  }
+
+  due(now = new Date(), excludedChannelIds: ReadonlySet<string> = new Set()): DueChannelRoutine[] {
+    return this.dueRoutines(now, excludedChannelIds).map((entry) => ({
+      routine: toChannelRoutine(entry.routine),
+      triggerId: entry.triggerId,
+      nextRunAt: entry.nextRunAt,
+      schedule: entry.schedule,
+    }));
+  }
+
+  createRun(
+    routine: Pick<ChannelRoutine, "id" | "channelId" | "name" | "instruction">,
+    triggerId: string | null,
+    start: RoutineRunStart,
+    scheduledFor: string,
+  ): ChannelRoutineRun {
+    return toChannelRun(this.createRunRow(runSource(routine), triggerId, start, scheduledFor));
+  }
+
+  receiveWebhook(
+    channelId: string,
+    routineId: string,
+    event: ReceivedWebhookEvent,
+  ): WebhookReceiveResult<ChannelRoutineRun> {
+    const result = this.receiveWebhookRow(channelId, routineId, event);
+    return result.kind === "started" ? { kind: "started", run: toChannelRun(result.run) } : result;
+  }
+
+  attachRequest(runId: string, requestMessageId: string): ChannelRoutineRun {
+    return toChannelRun(this.attachHandleRow(runId, requestMessageId));
+  }
+
+  updateRunStatus(runId: string, status: ChannelRoutineRunStatus, error: string | null = null): ChannelRoutineRun {
+    return toChannelRun(this.updateRunRow(runId, status, error));
+  }
+
+  openRuns(channelId: string): ChannelRoutineRun[] {
+    return this.openRunRows(channelId).map(toChannelRun);
+  }
+
+  failedRunsForRequests(channelId: string, requestMessageIds: readonly string[]): ChannelRoutineRun[] {
+    return this.failedRunRowsForHandles(channelId, requestMessageIds).map(toChannelRun);
+  }
+
+  channelsWithOpenRuns(): string[] {
+    return this.ownersWithOpenRuns();
+  }
+
+  runForRequest(requestMessageId: string): ChannelRoutineRun | null {
+    const run = this.runForHandleRow(requestMessageId);
+    return run ? toChannelRun(run) : null;
+  }
+}
+
+function toChannelRoutine({ ownerId, ...fields }: OwnedRoutine): ChannelRoutine {
+  return { ...fields, channelId: ownerId };
+}
+
+function runSource({
+  id,
+  channelId,
+  name,
+  instruction,
+}: Pick<ChannelRoutine, "id" | "channelId" | "name" | "instruction">) {
+  return { id, ownerId: channelId, name, instruction };
+}
+
+function toChannelRun({ ownerId, handleId, status, ...fields }: OwnedRoutineRun): ChannelRoutineRun {
+  if (status === "interrupted") throw new Error("The stored channel routine run status is invalid.");
+  return { ...fields, channelId: ownerId, requestMessageId: handleId, status };
+}

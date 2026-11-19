@@ -1,0 +1,14 @@
+#!/bin/bash
+set -euo pipefail
+umask 077
+
+[[ ${OPENBOT_HOSTED_HOST_ID:-} =~ ^[0-9a-fA-F-]{36}$ ]] || { echo "OPENBOT_HOSTED_HOST_ID is missing." >&2; exit 1; }
+[ -n "${OPENBOT_HOSTED_CLAIM:-}" ] || { echo "OPENBOT_HOSTED_CLAIM is missing." >&2; exit 1; }
+[[ $OPENBOT_HOSTED_CLAIM =~ ^[A-Za-z0-9_-]+$ ]] || { echo "OPENBOT_HOSTED_CLAIM is not valid." >&2; exit 1; }
+
+directory="$HOME/.config/openbot-hosted"
+mkdir -p "$directory"
+chmod 0700 "$directory"
+temporary=$(mktemp "$directory/env.XXXXXX")
+printf 'OPENBOT_HOSTED_HOST_ID=%s\nOPENBOT_HOSTED_CLAIM=%s\n' "$OPENBOT_HOSTED_HOST_ID" "$OPENBOT_HOSTED_CLAIM" >"$temporary"
+mv -f "$temporary" "$directory/env"

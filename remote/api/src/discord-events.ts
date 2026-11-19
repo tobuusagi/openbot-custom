@@ -1,0 +1,461 @@
+import {
+  DISCORD_ATTACHMENTS_LIMIT,
+  DISCORD_CUSTOM_ID_PREFIX,
+  DISCORD_EMBED_TEXT_LIMIT,
+  DISCORD_EMBEDS_LIMIT,
+  DISCORD_QUOTE_TEXT_LIMIT,
+  DISCORD_ROLES_LIMIT,
+  type DiscordDelivery,
+  type DiscordInboundAttachment,
+  type DiscordInboundInteraction,
+  type DiscordInboundMessage,
+  type DiscordInboundQuote,
+} from "@openbot/contracts/signal-protocol/discord-api";
+import {
+  GatewayDispatchEvents,
+  type GatewayDispatchPayload,
+  InteractionType,
+  MessageReferenceType,
+} from "discord-api-types/v10";
+
+export const DISCORD_DIRECT_MESSAGE_REPLY = "OpenBot answers in Discord servers. Mention @OpenBot in a server channel.";
+
+const INTERACTION_TOKEN_TTL_MILLISECONDS = 15 * 60_000;
+const MAXIMUM_INTERACTIONS = 10_000;
+const DIRECT_REPLY_INTERVAL_MILLISECONDS = 60 * 60_000;
+const MAXIMUM_DIRECT_REPLIES = 10_000;
+const ATTACHMENT_HOSTS = new Set(["cdn.discordapp.com", "media.discordapp.net"]);
+
+type DiscordAttachmentData = {
+  id: string;
+  filename: string;
+  content_type?: string | undefined;
+  size: number;
+  url: string;
+};
+
+type DiscordEmbedData = {
+  title?: string | undefined;
+  description?: string | undefined;
+  url?: string | undefined;
+  author?: { name?: string | undefined; url?: string | undefined } | undefined;
+  fields?: { name: string; value: string }[] | undefined;
+  footer?: { text?: string | undefined } | undefined;
+  image?: { url?: string | undefined } | undefined;
+  thumbnail?: { url?: string | undefined } | undefined;
+  video?: { url?: string | undefined } | undefined;
+};
+
+type DiscordBodyData = {
+  content?: string | undefined;
+  attachments?: DiscordAttachmentData[] | undefined;
+  embeds?: DiscordEmbedData[] | undefined;
+  message_reference?: { type?: number | undefined; message_id?: string | undefined } | undefined;
+  message_snapshots?:
+    | {
+        message: {
+          content?: string | undefined;
+          attachments?: DiscordAttachmentData[] | undefined;
+          embeds?: DiscordEmbedData[] | undefined;
+        };
+      }[]
+    | undefined;
+};
+
+export interface DiscordMessageData {
+  id: string;
+  channel_id: string;
+  guild_id?: string;
+  content: string;
+  timestamp: string;
+  webhook_id?: string;
+  author: { id: string; username: string; global_name?: string | null; bot?: boolean };
+  member?: { nick?: string | null; roles?: string[] };
+  mentions: { id: string }[];
+  mention_roles?: string[];
+  message_reference?: { type?: number; message_id?: string };
+  referenced_message?:
+    | (DiscordBodyData & {
+        id: string;
+        timestamp?: string;
+        author: { id: string; username?: string; global_name?: string | null };
+      })
+    | null;
+  attachments: DiscordAttachmentData[];
+}
+
+export type DiscordAction =
+  | { type: "deliver"; guildId: string; delivery: DiscordDelivery }
+  | { type: "acknowledge"; interactionId: string; interactionToken: string }
+  | { type: "direct-reply"; channelId: string }
+  | { type: "reconcile" };
+
+interface StoredInteraction {
+  token: string;
+  guildId: string;
+  expiresAt: number;
+}
+
+export function discordAuthorName(message: {
+  author: { username: string; global_name?: string | null | undefined };
+  member?: { nick?: string | null | undefined } | undefined;
+}): string {
+  return message.member?.nick ?? message.author.global_name ?? message.author.username;
+}
+
+function stripBotMention(content: string, botUserId: string | null, botRoleId: string | null = null): string {
+  const mentions = [
+    ...(botUserId ? [`<@${botUserId}>`, `<@!${botUserId}>`] : []),
+    ...(botRoleId ? [`<@&${botRoleId}>`] : []),
+  ];
+  return mentions.reduce((text, mention) => text.split(mention).join(""), content).trim();
+}
+
+function normalizeGuildMessage(
+  message: DiscordMessageData,
+  botUserId: string,
+  botRoleId: string | null,
+): DiscordInboundMessage | null {
+  if (!message.guild_id || message.author.bot === true || message.webhook_id) return null;
+  const mentioned =
+    message.mentions.some((user) => user.id === botUserId) ||
+    (botRoleId !== null && (message.mention_roles ?? []).includes(botRoleId));
+  if (!mentioned) return null;
+  const reference = message.message_reference;
+  let replyTo: DiscordInboundMessage["replyTo"] = null;
+  const repliedId = message.referenced_message?.id ?? reference?.message_id;
+  if (reference && (reference.type ?? MessageReferenceType.Default) === MessageReferenceType.Default && repliedId) {
+    const referenced = message.referenced_message;
+    const authorIsBot = referenced?.author.id === botUserId;
+    replyTo = {
+      messageId: repliedId,
+      authorIsBot,
+      rootId: authorIsBot ? (referenced?.message_reference?.message_id ?? null) : null,
+      quote: authorIsBot || !referenced ? null : quoteOf(referenced, botUserId, botRoleId),
+    };
+  }
+  return {
+    id: message.id,
+    channelId: message.channel_id,
+    authorId: message.author.id,
+    authorName: discordAuthorName(message),
+    authorRoleIds: message.member?.roles?.slice(0, DISCORD_ROLES_LIMIT) ?? null,
+    content: stripBotMention(message.content, botUserId, botRoleId),
+    replyTo,
+    attachments: attachmentsOf(message.attachments),
+    sentAt: message.timestamp,
+  };
+}
+
+function attachmentsOf(list: DiscordAttachmentData[]): DiscordInboundAttachment[] {
+  const attachments: DiscordInboundAttachment[] = [];
+  for (const attachment of list) {
+    if (attachments.length >= DISCORD_ATTACHMENTS_LIMIT) break;
+    if (!isDiscordCdnUrl(attachment.url)) continue;
+    attachments.push({
+      id: attachment.id,
+      filename: attachment.filename,
+      contentType: attachment.content_type ?? null,
+      size: attachment.size,
+      url: attachment.url,
+    });
+  }
+  return attachments;
+}
+
+function embedsOf(list: DiscordEmbedData[]): string[] {
+  const embeds: string[] = [];
+  let remaining = DISCORD_EMBED_TEXT_LIMIT;
+  for (const embed of list.slice(0, DISCORD_EMBEDS_LIMIT)) {
+    if (remaining <= 0) break;
+    const fields = (embed.fields ?? []).map((field) =>
+      [embedPart(field.name), embedPart(field.value)].filter(Boolean).join(": "),
+    );
+    const text = [
+      labelled("Author", embed.author?.name),
+      embedPart(embed.title),
+      labelled("Link", embed.url),
+      embedPart(embed.description),
+      ...fields,
+      labelled("Footer", embed.footer?.text),
+      labelled("Image", embed.image?.url),
+      labelled("Thumbnail", embed.thumbnail?.url),
+      labelled("Video", embed.video?.url),
+    ]
+      .filter(Boolean)
+      .join("\n");
+    if (!text) continue;
+    embeds.push(text.slice(0, remaining));
+    remaining -= text.length;
+  }
+  return embeds;
+}
+
+function embedPart(value: string | undefined): string {
+  return (value ?? "").replaceAll("\u200b", "").trim();
+}
+
+function labelled(label: string, value: string | undefined): string {
+  const part = embedPart(value);
+  return part ? `${label}: ${part}` : "";
+}
+
+export function messageBody(
+  message: DiscordBodyData,
+  botUserId: string | null,
+  botRoleId: string | null = null,
+): { content: string; attachments: DiscordInboundAttachment[]; embeds: string[]; forwarded: boolean } {
+  const forwarded = message.message_reference?.type === MessageReferenceType.Forward;
+  const body = forwarded ? (message.message_snapshots?.[0]?.message ?? {}) : message;
+  return {
+    content: stripBotMention(body.content ?? "", botUserId, botRoleId),
+    attachments: attachmentsOf(body.attachments ?? []),
+    embeds: embedsOf(body.embeds ?? []),
+    forwarded,
+  };
+}
+
+function quoteOf(
+  referenced: NonNullable<DiscordMessageData["referenced_message"]>,
+  botUserId: string,
+  botRoleId: string | null,
+): DiscordInboundQuote | null {
+  const { content, attachments, embeds, forwarded } = messageBody(referenced, botUserId, botRoleId);
+  if ((!content && attachments.length === 0 && embeds.length === 0 && !forwarded) || !referenced.timestamp) return null;
+  return {
+    authorId: referenced.author.id,
+    authorName: referenced.author.global_name ?? referenced.author.username ?? referenced.author.id,
+    content: content.slice(0, DISCORD_QUOTE_TEXT_LIMIT),
+    sentAt: referenced.timestamp,
+    attachments,
+    embeds,
+    forwarded,
+  };
+}
+
+function isDiscordCdnUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && ATTACHMENT_HOSTS.has(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+export class DiscordState {
+  readonly #configuredApplicationId: string;
+  #applicationId: string | null = null;
+  #botUserId: string | null = null;
+  readonly #guilds = new Map<string, string>();
+  readonly #shardGuilds = new Map<number, Set<string>>();
+  #shardCount: number | null = null;
+  readonly #closedShards = new Set<number>();
+  readonly #channels = new Map<string, { guildId: string; name: string }>();
+  readonly #botRoles = new Map<string, string>();
+  readonly #interactions = new Map<string, StoredInteraction>();
+  readonly #directReplies = new Map<string, number>();
+
+  constructor(applicationId: string) {
+    this.#configuredApplicationId = applicationId;
+  }
+
+  isMember(guildId: string): boolean | null {
+    return this.memberGuildIds() === null
+      ? null
+      : (this.#shardGuilds.get(this.#shardOf(guildId))?.has(guildId) ?? false);
+  }
+
+  memberGuildIds(): string[] | null {
+    const count = this.#shardCount;
+    if (count === null || this.#shardGuilds.size < count || this.#closedShards.size > 0) return null;
+    return [...this.#shardGuilds.values()].flatMap((guilds) => [...guilds]);
+  }
+
+  shardClosed(shard: number): void {
+    this.#closedShards.add(shard);
+  }
+
+  shardResumed(shard: number): DiscordAction[] {
+    this.#closedShards.delete(shard);
+    return this.memberGuildIds() === null ? [] : [{ type: "reconcile" }];
+  }
+
+  #shardOf(guildId: string): number {
+    return Number((BigInt(guildId) >> 22n) % BigInt(this.#shardCount ?? 1));
+  }
+
+  get botUserId(): string | null {
+    return this.#botUserId;
+  }
+
+  get applicationId(): string {
+    return this.#applicationId ?? this.#configuredApplicationId;
+  }
+
+  botRoleId(guildId: string): string | null {
+    return this.#botRoles.get(guildId) ?? null;
+  }
+
+  #rememberRole(guildId: string, role: { id: string; tags?: { bot_id?: string } | undefined }): void {
+    if (role.tags?.bot_id === (this.#botUserId ?? this.applicationId)) this.#botRoles.set(guildId, role.id);
+    else if (this.#botRoles.get(guildId) === role.id) this.#botRoles.delete(guildId);
+  }
+
+  channel(channelId: string): { guildId: string; name: string } | null {
+    return this.#channels.get(channelId) ?? null;
+  }
+
+  rememberChannel(channelId: string, guildId: string, name: string): void {
+    if (this.#guilds.has(guildId)) this.#channels.set(channelId, { guildId, name });
+  }
+
+  interactionToken(interactionId: string, guildId: string, now = Date.now()): string | null {
+    const stored = this.#interactions.get(interactionId);
+    if (!stored || stored.guildId !== guildId || stored.expiresAt <= now) return null;
+    return stored.token;
+  }
+
+  handle(payload: GatewayDispatchPayload, now = Date.now()): DiscordAction[] {
+    switch (payload.t) {
+      case GatewayDispatchEvents.Ready:
+        this.#botUserId = payload.d.user.id;
+        this.#applicationId = payload.d.application.id;
+        {
+          const [shard, count] = payload.d.shard ?? [0, 1];
+          if (this.#shardCount !== count) {
+            this.#shardGuilds.clear();
+            this.#closedShards.clear();
+          }
+          this.#shardCount = count;
+          this.#shardGuilds.set(shard, new Set(payload.d.guilds.map((guild) => guild.id)));
+          this.#closedShards.delete(shard);
+        }
+        return this.memberGuildIds() === null ? [] : [{ type: "reconcile" }];
+      case GatewayDispatchEvents.GuildCreate:
+      case GatewayDispatchEvents.GuildUpdate: {
+        const guild = payload.d;
+        this.#guilds.set(guild.id, guild.name);
+        if (this.#shardCount !== null) this.#shardGuilds.get(this.#shardOf(guild.id))?.add(guild.id);
+        for (const role of guild.roles ?? []) this.#rememberRole(guild.id, role);
+        if (payload.t === GatewayDispatchEvents.GuildCreate) {
+          for (const channel of [...(payload.d.channels ?? []), ...(payload.d.threads ?? [])]) {
+            this.#channels.set(channel.id, { guildId: guild.id, name: channel.name ?? "" });
+          }
+        }
+        return [];
+      }
+      case GatewayDispatchEvents.GuildDelete: {
+        if (payload.d.unavailable === true) return [];
+        this.#forgetGuild(payload.d.id);
+        return [{ type: "deliver", guildId: payload.d.id, delivery: { kind: "removed" } }];
+      }
+      case GatewayDispatchEvents.GuildRoleCreate:
+      case GatewayDispatchEvents.GuildRoleUpdate:
+        this.#rememberRole(payload.d.guild_id, payload.d.role);
+        return [];
+      case GatewayDispatchEvents.GuildRoleDelete:
+        if (this.#botRoles.get(payload.d.guild_id) === payload.d.role_id) this.#botRoles.delete(payload.d.guild_id);
+        return [];
+      case GatewayDispatchEvents.ChannelCreate:
+      case GatewayDispatchEvents.ChannelUpdate:
+      case GatewayDispatchEvents.ThreadCreate:
+      case GatewayDispatchEvents.ThreadUpdate: {
+        const channel = payload.d;
+        if ("guild_id" in channel && channel.guild_id) {
+          this.#channels.set(channel.id, { guildId: channel.guild_id, name: channel.name ?? "" });
+        }
+        return [];
+      }
+      case GatewayDispatchEvents.ChannelDelete:
+      case GatewayDispatchEvents.ThreadDelete:
+        this.#channels.delete(payload.d.id);
+        return [];
+      case GatewayDispatchEvents.ThreadListSync:
+        for (const thread of payload.d.threads) {
+          this.#channels.set(thread.id, { guildId: payload.d.guild_id, name: thread.name ?? "" });
+        }
+        return [];
+      case GatewayDispatchEvents.MessageCreate:
+        return this.#message(payload.d, now);
+      case GatewayDispatchEvents.InteractionCreate:
+        return this.#interaction(payload.d, now);
+      default:
+        return [];
+    }
+  }
+
+  #message(message: DiscordMessageData, now: number): DiscordAction[] {
+    if (!message.guild_id) return this.#directMessage(message, now);
+    if (!this.#botUserId) return [];
+    const normalized = normalizeGuildMessage(message, this.#botUserId, this.botRoleId(message.guild_id));
+    return normalized
+      ? [{ type: "deliver", guildId: message.guild_id, delivery: { kind: "message", message: normalized } }]
+      : [];
+  }
+
+  #directMessage(message: DiscordMessageData, now: number): DiscordAction[] {
+    if (message.author.bot === true || message.webhook_id) return [];
+    const last = this.#directReplies.get(message.author.id);
+    if (last !== undefined && now - last < DIRECT_REPLY_INTERVAL_MILLISECONDS) return [];
+    for (const [userId, repliedAt] of this.#directReplies) {
+      if (now - repliedAt >= DIRECT_REPLY_INTERVAL_MILLISECONDS) this.#directReplies.delete(userId);
+    }
+    this.#directReplies.delete(message.author.id);
+    if (this.#directReplies.size >= MAXIMUM_DIRECT_REPLIES) return [];
+    this.#directReplies.set(message.author.id, now);
+    return [{ type: "direct-reply", channelId: message.channel_id }];
+  }
+
+  #interaction(
+    interaction: Extract<GatewayDispatchPayload, { t: GatewayDispatchEvents.InteractionCreate }>["d"],
+    now: number,
+  ): DiscordAction[] {
+    if (interaction.type !== InteractionType.MessageComponent) return [];
+    const guildId = interaction.guild_id;
+    const userId = interaction.member?.user.id;
+    const customId = interaction.data.custom_id;
+    const channelId = interaction.channel?.id ?? interaction.channel_id;
+    if (!guildId || !userId || !channelId || !customId.startsWith(DISCORD_CUSTOM_ID_PREFIX)) return [];
+    this.#rememberInteraction(
+      interaction.id,
+      { token: interaction.token, guildId, expiresAt: now + INTERACTION_TOKEN_TTL_MILLISECONDS },
+      now,
+    );
+    const pressed: DiscordInboundInteraction = {
+      id: interaction.id,
+      channelId,
+      messageId: interaction.message.id,
+      replyToId: interaction.message.message_reference?.message_id ?? null,
+      userId,
+      customId,
+    };
+    return [
+      { type: "acknowledge", interactionId: interaction.id, interactionToken: interaction.token },
+      { type: "deliver", guildId, delivery: { kind: "interaction", interaction: pressed } },
+    ];
+  }
+
+  #rememberInteraction(id: string, stored: StoredInteraction, now: number): void {
+    for (const [key, value] of this.#interactions) {
+      if (value.expiresAt <= now) this.#interactions.delete(key);
+    }
+    while (this.#interactions.size >= MAXIMUM_INTERACTIONS) {
+      const oldest = this.#interactions.keys().next().value;
+      if (oldest === undefined) break;
+      this.#interactions.delete(oldest);
+    }
+    this.#interactions.set(id, stored);
+  }
+
+  #forgetGuild(guildId: string): void {
+    this.#guilds.delete(guildId);
+    this.#botRoles.delete(guildId);
+    if (this.#shardCount !== null) this.#shardGuilds.get(this.#shardOf(guildId))?.delete(guildId);
+    for (const [channelId, channel] of this.#channels) {
+      if (channel.guildId === guildId) this.#channels.delete(channelId);
+    }
+    for (const [interactionId, interaction] of this.#interactions) {
+      if (interaction.guildId === guildId) this.#interactions.delete(interactionId);
+    }
+  }
+}

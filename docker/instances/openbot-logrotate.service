@@ -1,0 +1,6 @@
+[Unit]
+Description=Rotate the container logs of the OpenBot instances
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/logrotate --state /var/lib/logrotate/openbot-docker.status /etc/openbot-docker/logrotate.conf

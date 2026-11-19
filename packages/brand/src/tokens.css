@@ -1,0 +1,407 @@
+:root {
+  --openbot-provider-current: currentcolor;
+
+  --openbot-bg-native-canvas: #141414;
+  --openbot-bg-native-sidebar: #141414;
+  --openbot-bg-sheet: #141414;
+  --openbot-bg-grouped: #212121;
+  --openbot-text-grouped-secondary: #96969b;
+  --openbot-border-grouped: #333335;
+  --openbot-radius-grouped: 16px;
+  --openbot-bg-chrome-glass: rgba(38, 38, 40, 0.96);
+  --openbot-border-chrome-glass: rgba(255, 255, 255, 0.08);
+
+  --openbot-bg-canvas: #1a1a1a;
+  --openbot-bg-frame: #0d0d0d;
+  --openbot-bg-sheet-inset: #101010;
+  --openbot-bg-canvas-clear: rgba(26, 26, 26, 0);
+  --openbot-bg-sidebar: #1a1a1a;
+  --openbot-marketplace-detail-bg: #111111;
+  --openbot-bg-surface: #212121;
+  --openbot-bg-surface-raised: #242424;
+  --openbot-bg-control: #212121;
+  --openbot-bg-control-hover: #242424;
+  --openbot-bg-control-active: #2a2a2a;
+  --openbot-tabs-bar-bg: #212121;
+  --openbot-tabs-pill-bg: #2a2a2a;
+  --openbot-bg-overlay: rgba(26, 26, 26, 0.92);
+  --openbot-dialog-overlay: rgba(0, 0, 0, 0.1);
+  --openbot-dialog-ring: rgba(255, 255, 255, 0.1);
+  --openbot-bg-glass: rgba(33, 33, 33, 0.76);
+
+  --openbot-glass-surface: rgba(255, 255, 255, 0.07);
+  --openbot-glass-surface-hover: rgba(255, 255, 255, 0.11);
+  --openbot-glass-border: rgba(255, 255, 255, 0.18);
+  --openbot-glass-highlight: rgba(255, 255, 255, 0.12);
+  --openbot-glass-shadow: rgba(0, 0, 0, 0.28);
+  --openbot-hero-grid-line: rgba(214, 173, 242, 0.09);
+
+  --openbot-price-metal-high: #4c4c4c;
+  --openbot-price-metal-core: #1f1f1f;
+  --openbot-price-metal-low: #343434;
+  --openbot-price-sheen-cool: rgba(150, 196, 255, 0.92);
+  --openbot-price-sheen-light: rgba(240, 244, 250, 0.98);
+  --openbot-price-sheen-warm: rgba(255, 184, 132, 0.94);
+
+  --openbot-price-sheen-cool-soft: rgba(150, 196, 255, 0.26);
+  --openbot-price-sheen-warm-soft: rgba(255, 184, 132, 0.28);
+  --openbot-price-sheen-cool-clear: rgba(150, 196, 255, 0);
+  --openbot-price-sheen-warm-clear: rgba(255, 184, 132, 0);
+  --openbot-price-rim: rgba(255, 255, 255, 0.28);
+  --openbot-price-rim-under: rgba(255, 255, 255, 0.1);
+
+  --openbot-price-accent: #ec4899;
+  --openbot-price-glow: rgba(180, 200, 255, 0.22);
+  --openbot-bg-host-inset: #101216;
+  --openbot-bg-notch: #000000;
+  --openbot-mask-solid: #000000;
+  --openbot-transparent: rgba(0, 0, 0, 0);
+
+  --openbot-wash-front: linear-gradient(
+    to top,
+    rgba(111, 255, 196, 0),
+    #6fffc4 20%,
+    #6db8ff 38%,
+    #bb66ff 56%,
+    #ff66c0 74%,
+    #ffb875 88%,
+    rgba(255, 184, 117, 0)
+  );
+
+  --openbot-color-picker-light: #ffffff;
+  --openbot-color-picker-dark: #000000;
+  --openbot-color-picker-spectrum: linear-gradient(
+    to right,
+    #ff0000,
+    #ffff00,
+    #00ff00,
+    #00ffff,
+    #0000ff,
+    #ff00ff,
+    #ff0000
+  );
+  --openbot-drawer-scrim: #000000;
+  --openbot-scroll-edge-overlay: rgba(0, 0, 0, 0.72);
+  --openbot-queue-surface: var(--openbot-bg-surface);
+  --openbot-queue-border: var(--openbot-border-strong);
+  --openbot-queue-text: var(--openbot-text-primary);
+  --openbot-queue-action: var(--openbot-text-muted);
+  --openbot-border: rgba(255, 255, 255, 0.035);
+  --openbot-border-strong: rgba(255, 255, 255, 0.045);
+  --openbot-image-outline: rgba(255, 255, 255, 0.1);
+  --openbot-border-focus: var(--openbot-text-muted);
+  --openbot-text-primary: #ffffff;
+  --openbot-text-on-light: #141414;
+  --openbot-surface-light: #f0f0f0;
+
+  --openbot-action: #f0f0f0;
+  --openbot-action-foreground: #141414;
+  --openbot-qr-background: #ffffff;
+
+  --openbot-paper: #f0f0f0;
+  --openbot-paper-text: #141414;
+  --openbot-paper-text-muted: rgba(20, 20, 20, 0.52);
+  --openbot-paper-text-dim: rgba(20, 20, 20, 0.36);
+  --openbot-paper-border: rgba(20, 20, 20, 0.14);
+  --openbot-onboarding-desktop-mist: #dbe9ff;
+  --openbot-onboarding-desktop-blue: #7eb4f2;
+  --openbot-onboarding-desktop-indigo: #6f7de8;
+  --openbot-onboarding-window: #f3f5f8;
+  --openbot-text-secondary: #dcdcdc;
+  --openbot-text-muted: #979797;
+  --openbot-text-dim: #6a6a6a;
+  --openbot-text-readable: rgba(255, 255, 255, 0.52);
+  --openbot-text-muted-on-light: rgba(20, 20, 20, 0.52);
+  --openbot-text-dim-on-light: rgba(20, 20, 20, 0.36);
+  --openbot-download-card-muted: rgba(20, 20, 20, 0.68);
+  --openbot-download-card-chip: rgba(20, 20, 20, 0.1);
+  --openbot-download-card-border: rgba(20, 20, 20, 0.16);
+  --openbot-download-card-focus: rgba(242, 242, 242, 0.86);
+  --openbot-text-placeholder: #bfbfbf;
+  --openbot-text-on-accent: #ffffff;
+  --openbot-text-on-status: #07130c;
+
+  --openbot-accent: #007cf7;
+  --openbot-accent-hover: #1f8fff;
+  --openbot-accent-text: #42a0ff;
+  --openbot-accent-soft: rgba(0, 124, 247, 0.16);
+  --openbot-accent-strong: rgba(0, 124, 247, 0.34);
+  --openbot-settings-text-muted: rgba(255, 255, 255, 0.59);
+  --openbot-provider-codex: var(--openbot-text-primary);
+  --openbot-provider-claude: #d97757;
+  --openbot-provider-grok: var(--openbot-text-primary);
+  --openbot-provider-antigravity: #8e75b2;
+
+  --openbot-chart-series-codex: #d6adf2;
+  --openbot-chart-series-claude: var(--openbot-provider-claude);
+  --openbot-chart-series-grok: #6bc7d9;
+  --openbot-chart-series-other: var(--openbot-text-muted);
+
+  --openbot-chart-storage-workspaces: #3987e5;
+  --openbot-chart-storage-files: #d95926;
+  --openbot-chart-storage-chats: #199e70;
+  --openbot-chart-storage-downloads: #9085e9;
+  --openbot-chart-storage-runtimes: #c98500;
+  --openbot-chart-storage-app: var(--openbot-text-dim);
+
+  --openbot-felt-plum-top: rgb(112 80 131);
+  --openbot-felt-plum-bottom: rgb(74 40 92);
+  --openbot-felt-raspberry-top: rgb(245 32 112);
+  --openbot-felt-raspberry-bottom: rgb(180 6 65);
+  --openbot-felt-amber-top: rgb(255 149 17);
+  --openbot-felt-amber-bottom: rgb(203 104 12);
+  --openbot-felt-cream: #f6efe2;
+  --openbot-felt-cream-stroke: #efe4d2;
+  --openbot-logo-production: #d6adf2;
+  --openbot-logo-eye: #040007;
+
+  --openbot-logo-production-eye: var(--openbot-logo-eye);
+
+  --openbot-logo-dev: #e3b866;
+  --openbot-logo-preview: #61c985;
+  --openbot-unread-surface: #74b9ff;
+  --openbot-unread-text: #07131f;
+
+  --openbot-success: #31cf76;
+  --openbot-success-text: #31cf76;
+  --openbot-warning-text: #ff9412;
+  --openbot-danger-text: #ff6069;
+  --openbot-success-soft: rgba(49, 207, 118, 0.12);
+  --openbot-success-wash: rgba(49, 207, 118, 0.045);
+
+  --openbot-warning: #ff9412;
+  --openbot-warning-soft: rgba(255, 148, 18, 0.12);
+  --openbot-question-option: #6bc7d9;
+  --openbot-question-option-soft: rgba(107, 199, 217, 0.14);
+  --openbot-question-option-hover: rgba(107, 199, 217, 0.2);
+  --openbot-question-option-pressed: rgba(107, 199, 217, 0.26);
+  --openbot-island-identity-name: var(--openbot-text-primary);
+  --openbot-question-badge-text: #8bdee8;
+  --openbot-question-badge-soft: rgba(107, 199, 217, 0.16);
+  --openbot-message-badge-text: #91c8ff;
+  --openbot-message-badge-soft: rgba(116, 185, 255, 0.16);
+
+  --openbot-badge-new: #ff1e5e;
+  --openbot-badge-new-soft: rgba(255, 30, 94, 0.16);
+
+  --openbot-star: #facc15;
+  --openbot-star-edge: #ca8a04;
+
+  --openbot-media-control-text: #ffffff;
+  --openbot-media-control-muted: rgba(255, 255, 255, 0.78);
+  --openbot-media-control-track: rgba(255, 255, 255, 0.3);
+  --openbot-media-control-hover: rgba(255, 255, 255, 0.16);
+  --openbot-media-control-surface: rgba(0, 0, 0, 0.5);
+  --openbot-media-control-surface-hover: rgba(0, 0, 0, 0.64);
+  --openbot-media-control-scrim: rgba(0, 0, 0, 0.55);
+  --openbot-beam-teal: var(--openbot-file-teal);
+  --openbot-beam-blue: var(--openbot-accent-text);
+  --openbot-beam-pink: var(--openbot-file-pink);
+  --openbot-approval-badge-soft: rgba(255, 148, 18, 0.18);
+
+  --openbot-danger: #fd2f3b;
+  --openbot-danger-hover: #fd5d67;
+  --openbot-danger-soft: rgba(253, 47, 59, 0.16);
+  --openbot-danger-soft-hover: rgba(253, 47, 59, 0.28);
+  --openbot-danger-focus: rgba(253, 47, 59, 0.4);
+  --openbot-danger-border: rgba(253, 47, 59, 0.5);
+
+  --openbot-file-blue: #74b9ff;
+  --openbot-file-blue-soft: rgba(116, 185, 255, 0.14);
+  --openbot-file-yellow: #ff9412;
+  --openbot-file-yellow-soft: rgba(255, 148, 18, 0.12);
+  --openbot-file-orange: #f0a06a;
+  --openbot-file-orange-soft: rgba(240, 160, 106, 0.14);
+  --openbot-file-teal: #6bc7d9;
+  --openbot-file-teal-soft: rgba(107, 199, 217, 0.14);
+  --openbot-file-green: #31cf76;
+  --openbot-file-green-soft: rgba(49, 207, 118, 0.12);
+  --openbot-file-red: #fd2f3b;
+  --openbot-file-red-soft: rgba(253, 47, 59, 0.16);
+  --openbot-file-pink: #d98ac9;
+  --openbot-file-pink-soft: rgba(217, 138, 201, 0.14);
+  --openbot-file-default: #42a0ff;
+  --openbot-file-default-soft: rgba(0, 124, 247, 0.14);
+  --openbot-data-table-border: #303030;
+  --openbot-data-table-header-text: #a1a1a1;
+  --openbot-data-table-text: #f5f5f5;
+  --openbot-data-table-outer-border: rgba(255, 255, 255, 0);
+  --openbot-data-table-ring: rgba(255, 255, 255, 0.12);
+  --openbot-shadow-popover-ambient: rgba(0, 0, 0, 0.1);
+  --openbot-shadow-dialog: rgba(0, 0, 0, 0.48);
+  --openbot-shadow-menu: rgba(0, 0, 0, 0.45);
+  --openbot-shadow-dynamic-island: rgba(0, 0, 0, 0.6);
+  --openbot-shadow-ring: rgba(228, 228, 228, 0.04);
+  --openbot-border-on-light: rgba(20, 20, 20, 0.14);
+  --openbot-hover: rgba(255, 255, 255, 0.06);
+
+  --openbot-font-sans-default:
+    -apple-system, BlinkMacSystemFont, "Inter Variable", "Segoe UI", "Noto Sans Arabic", sans-serif;
+  --openbot-font-mono-default: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace;
+  --openbot-font-sans: var(--openbot-font-sans-default);
+  --openbot-font-mono: var(--openbot-font-mono-default);
+
+  --openbot-text-sm: 13px;
+  --openbot-text-md: 14px;
+  --openbot-text-lg: 15px;
+  --openbot-text-xl: 16px;
+  --openbot-text-2xl: 18px;
+  --openbot-text-3xl: 24px;
+  --openbot-leading-sm: 18px;
+  --openbot-leading-md: 20px;
+  --openbot-leading-lg: 22px;
+  --openbot-leading-xl: 22px;
+  --openbot-leading-2xl: 24px;
+  --openbot-leading-3xl: 30px;
+
+  --openbot-text-display: 32px;
+  --openbot-text-usage-total: clamp(2rem, 3.5cqi, 2.75rem);
+  --openbot-leading-display: 38px;
+  --openbot-text-hero: clamp(3rem, 8vw, 6.5rem);
+
+  --openbot-glyph-xs: 7px;
+  --openbot-glyph-sm: 8px;
+
+  --openbot-weight-regular: 400;
+  --openbot-weight-medium: 500;
+  --openbot-weight-semibold: 600;
+  --openbot-weight-bold: 700;
+  --openbot-tracking-tight: -0.1px;
+  --openbot-tracking-normal: 0;
+  --openbot-tracking-wide: 0.02em;
+  --openbot-space-0-5: 2px;
+  --openbot-space-1: 4px;
+  --openbot-space-1-5: 6px;
+  --openbot-space-2: 8px;
+  --openbot-space-3: 12px;
+  --openbot-space-4: 16px;
+  --openbot-space-6: 24px;
+  --openbot-space-8: 32px;
+  --openbot-scrollbar-size: 8px;
+  --openbot-radius-xs: 4px;
+  --openbot-radius-sm: 6px;
+  --openbot-radius-md: 8px;
+  --openbot-radius-lg: 12px;
+  --openbot-radius-card: 14px;
+  --openbot-radius-xl: 20px;
+  --openbot-radius-bubble: 22px;
+  --openbot-radius-bubble-inset: calc(var(--openbot-radius-bubble) - var(--openbot-space-3) - 1px);
+  --openbot-radius-modal: 30px;
+  --openbot-radius-media-preview: calc(var(--openbot-radius-lg) - 1px);
+  --openbot-radius-pill: 999px;
+  --openbot-radius-logo: 20%;
+  --openbot-control-xs: 24px;
+  --openbot-control-sm: 28px;
+  --openbot-control-md: 32px;
+  --openbot-control-lg: 36px;
+  --openbot-control-xl: 40px;
+
+  --openbot-switch-width: 36px;
+  --openbot-switch-height: 20px;
+  --openbot-switch-thumb: 16px;
+  --openbot-switch-inset: 2px;
+  --openbot-switch-sm-width: 24px;
+  --openbot-switch-sm-height: 14px;
+  --openbot-switch-sm-thumb: 12px;
+  --openbot-switch-sm-inset: 1px;
+
+  --openbot-icon-stroke: 2;
+  --openbot-icon-stroke-lg: 1.5;
+  --openbot-icon-xs: 12px;
+  --openbot-icon-sm: 14px;
+  --openbot-icon-md: 16px;
+  --openbot-icon-lg: 20px;
+  --openbot-chat-entry-gap: var(--openbot-space-3);
+  --openbot-chat-marker-gap: var(--openbot-space-1);
+  --openbot-chat-marker-height: var(--openbot-control-xs);
+  --openbot-chat-marker-avatar: var(--openbot-icon-md);
+  --openbot-chat-marker-width: 680px;
+  --openbot-duration-fast: 120ms;
+  --openbot-duration-hover: 0ms;
+  --openbot-duration-dialog: 100ms;
+  --openbot-duration-normal: 160ms;
+  --openbot-duration-slow: 200ms;
+  --openbot-duration-overlay: 240ms;
+  --openbot-duration-toast-enter: 340ms;
+  --openbot-duration-toast-exit: 220ms;
+  --openbot-duration-island-content: 340ms;
+  --openbot-duration-island-content-exit: 220ms;
+
+  --openbot-agent-activity-show-delay: 750ms;
+  --openbot-agent-activity-exit-delay: 500ms;
+  --openbot-loading-indicator-delay: 400ms;
+  --openbot-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --openbot-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --openbot-shadow-raised: 0 12px 32px var(--openbot-shadow-popover-ambient);
+  --openbot-shadow-card: 0 0 0 transparent;
+  --openbot-shadow-overlay: 0 12px 32px rgba(0, 0, 0, 0.48);
+  --openbot-focus-ring: 0 0 0 1px var(--openbot-border-focus);
+  --openbot-layer-dropdown: 40;
+  --openbot-layer-popover: 60;
+  --openbot-layer-dialog: 100;
+
+  --openbot-layer-dialog-host: calc(var(--openbot-layer-dialog) + var(--openbot-layer-popover));
+  --openbot-layer-toast: 120;
+
+  --openbot-layer-tooltip: 240;
+}
+
+[data-provider] {
+  --openbot-provider-current: currentcolor;
+}
+
+[data-provider="codex"] {
+  --openbot-provider-current: var(--openbot-provider-codex);
+}
+
+[data-provider="claude"] {
+  --openbot-provider-current: var(--openbot-provider-claude);
+}
+
+[data-provider="grok"] {
+  --openbot-provider-current: var(--openbot-provider-grok);
+}
+
+[data-provider="opencode"] {
+  --openbot-provider-current: var(--openbot-text-primary);
+}
+
+[data-provider="antigravity"] {
+  --openbot-provider-current: var(--openbot-provider-antigravity);
+}
+
+[data-provider="cursor"] {
+  --openbot-provider-current: var(--openbot-text-primary);
+}
+
+[data-provider="cline"] {
+  --openbot-provider-current: var(--openbot-text-primary);
+}
+
+[data-provider="kimi"] {
+  --openbot-provider-current: var(--openbot-text-primary);
+}
+
+[data-provider="devin"] {
+  --openbot-provider-current: var(--openbot-text-primary);
+}
+
+[data-provider="copilot"] {
+  --openbot-provider-current: var(--openbot-text-primary);
+}
+
+[data-provider="mistral"] {
+  --openbot-provider-current: var(--openbot-text-primary);
+}
+
+[data-provider="acp"] {
+  --openbot-provider-current: var(--openbot-text-primary);
+}
+
+[data-provider="sunra"] {
+  --openbot-provider-current: var(--openbot-text-primary);
+}
+
+[data-provider="higgsfield"] {
+  --openbot-provider-current: var(--openbot-text-primary);
+}

@@ -1,0 +1,755 @@
+import { type CodexLiveVoice, cloudSpeechModel, SPEECH_SPEEDS, type SpeechVoice } from "@openbot/contracts/ipc";
+import { shortVoiceServerModel, voiceServerHost } from "@openbot/contracts/voice-server";
+import type { MobileTextKey, MobileTranslate } from "@openbot/i18n/mobile";
+import { isRunningInExpoGo } from "expo";
+import { router } from "expo-router";
+import { Button, Typography } from "heroui-native";
+import Check from "lucide-react-native/icons/check";
+import { useEffect, useRef, useState } from "react";
+import { Alert, View } from "react-native";
+import { useCSSVariable, useUniwind } from "uniwind";
+import { UsageSegments } from "@/features/agents/components/usage-segments";
+import { modelCaptureAvailable } from "@/features/chat/components/use-model-dictation";
+import {
+  SettingsContent,
+  SettingsNote,
+  SettingsRow,
+  SettingsSection,
+} from "@/features/settings/components/settings-content";
+import { SettingsSwitch } from "@/features/settings/components/settings-controls";
+import { haptics } from "@/shared/lib/haptics";
+import { currentText, useText } from "@/shared/lib/text";
+import { DictationLanguageSection } from "../components/dictation-language-section";
+import { GptLiveServerRows } from "../components/gpt-live-servers";
+import { PauseSlider } from "../components/pause-slider";
+import { useVoicePreview } from "../components/use-voice-preview";
+import { elevenLabsVoiceParts } from "../model/elevenlabs";
+import { clearElevenLabsVoices, loadElevenLabsVoices, useElevenLabsVoices } from "../model/elevenlabs-voices";
+import { liveVoiceWebRtc } from "../model/live-voice-webrtc";
+import type { ModelDownload, ModelState } from "../model/model-download";
+import {
+  checkRecognitionModels,
+  isLocalRecognition,
+  type LocalRecognition,
+  localModelOf,
+  localRecognitionInBinary,
+  localRecognitionSupported,
+  useParakeetModel,
+  useParakeetUnifiedModel,
+  useQwenModel,
+} from "../model/recognition-models";
+import { canChangeReplySpeed } from "../model/reply-voice";
+import { speechNative } from "../model/speech-native";
+import { supertonicModel, useSupertonicModel } from "../model/supertonic-model";
+import { useVoiceServer } from "../model/voice-server";
+import {
+  ELEVENLABS_SPEECH_MODEL_IDS,
+  type ElevenLabsSpeechModelId,
+  type RecognitionEngine,
+  removeElevenLabsKey,
+  saveVoiceSettings,
+  TURN_PAUSE_LIMITS,
+  turnPauseMs,
+  useVoiceSettings,
+  type VoiceEngine,
+} from "../model/voice-settings";
+
+export function supertonicVoiceLabel(voice: SpeechVoice, t: MobileTranslate): string {
+  const number = voice.slice(1);
+  return voice.startsWith("F")
+    ? t("mobile.settings.voice.supertonic.female", { number })
+    : t("mobile.settings.voice.supertonic.male", { number });
+}
+
+export function gptLiveVoiceLabel(voice: CodexLiveVoice | null, t: MobileTranslate): string {
+  return voice ? voice.charAt(0).toUpperCase() + voice.slice(1) : t("mobile.settings.voice.gptLive.automatic");
+}
+
+const layoutPreview = __DEV__ && isRunningInExpoGo();
+
+function downloadStatus(model: ModelState, t: MobileTranslate, percent: (value: number) => string): string | null {
+  if (model.phase === "downloading")
+    return t("mobile.settings.voice.supertonic.downloading", { percent: percent(model.progress) });
+  if (model.phase === "error")
+    return t(
+      model.failure === "verify"
+        ? "mobile.settings.voice.supertonic.verifyFailed"
+        : "mobile.settings.voice.supertonic.downloadFailed",
+    );
+  return null;
+}
+
+function useSupertonicStatus(): string {
+  const { t, format } = useText();
+  const model = useSupertonicModel();
+  const voice = useVoiceSettings((state) => state.supertonicVoice);
+  if (model.phase === "ready")
+    return t("mobile.settings.voice.engine.supertonicReady", { voice: supertonicVoiceLabel(voice, t) });
+  return (
+    downloadStatus(model, t, format.percent) ??
+    t("mobile.settings.voice.engine.supertonicMissing", { size: format.fileSize(supertonicModel.bytes) })
+  );
+}
+
+export function ChoiceRow({
+  checked,
+  disabled,
+  supportingText,
+  label,
+  onPress,
+}: {
+  checked: boolean;
+  disabled?: boolean;
+  supportingText?: string;
+  label: string;
+  onPress: () => void;
+}) {
+  const accent = String(useCSSVariable("--openbot-accent"));
+  return (
+    <SettingsRow
+      checked={checked}
+      disclosure={false}
+      disabled={disabled}
+      supportingText={supportingText}
+      trailing={checked ? <Check size={18} color={accent} strokeWidth={2} /> : null}
+      onPress={onPress}
+    >
+      <Typography.Paragraph>{label}</Typography.Paragraph>
+    </SettingsRow>
+  );
+}
+
+const LOCAL_RECOGNITION_TEXT = {
+  parakeet: {
+    name: "mobile.settings.voice.recognition.parakeet",
+    ready: "mobile.settings.voice.recognition.parakeetReady",
+    footer: "mobile.settings.voice.recognition.parakeetFooter",
+  },
+  "parakeet-unified": {
+    name: "mobile.settings.voice.recognition.parakeetUnified",
+    ready: "mobile.settings.voice.recognition.parakeetUnifiedReady",
+    footer: "mobile.settings.voice.recognition.parakeetUnifiedFooter",
+  },
+  "qwen3-asr": {
+    name: "mobile.settings.voice.recognition.qwen",
+    ready: "mobile.settings.voice.recognition.qwenReady",
+    footer: "mobile.settings.voice.recognition.qwenFooter",
+  },
+} as const satisfies Record<LocalRecognition, Record<"name" | "ready" | "footer", MobileTextKey>>;
+
+function useLocalModelStatus(engine: LocalRecognition): string {
+  const { t, format } = useText();
+  const models = {
+    parakeet: useParakeetModel(),
+    "parakeet-unified": useParakeetUnifiedModel(),
+    "qwen3-asr": useQwenModel(),
+  };
+  const model = models[engine];
+  if (!localRecognitionSupported(engine)) return t("mobile.settings.voice.recognition.parakeetUnsupported");
+  if (model.phase === "ready") return t(LOCAL_RECOGNITION_TEXT[engine].ready);
+  return (
+    downloadStatus(model, t, format.percent) ??
+    t("mobile.settings.voice.engine.supertonicMissing", { size: format.fileSize(localModelOf(engine).bytes) })
+  );
+}
+
+function RecognitionSection({ onError }: { onError: (message: string) => void }) {
+  const { t } = useText();
+  const settings = useVoiceSettings();
+  const statuses = {
+    parakeet: useLocalModelStatus("parakeet"),
+    "parakeet-unified": useLocalModelStatus("parakeet-unified"),
+    "qwen3-asr": useLocalModelStatus("qwen3-asr"),
+  };
+  const localEngines = (["parakeet", "parakeet-unified", "qwen3-asr"] as const).filter(
+    (engine) => localRecognitionInBinary(engine) || layoutPreview,
+  );
+  const server = useVoiceServer((state) => state.server);
+  const choose = (recognition: RecognitionEngine) => {
+    if (recognition === "elevenlabs" && !settings.hasElevenLabsKey) {
+      router.push({ pathname: "/settings/elevenlabs-key", params: { use: "recognition" } });
+      return;
+    }
+    if (recognition === "voice-server" && !server?.routes.dictation) {
+      router.push("/settings/voice-server");
+      return;
+    }
+    if (recognition === settings.recognition) return;
+    void haptics.selection();
+    void saveVoiceSettings({ recognition }).catch(() => onError(t("mobile.settings.saveFailed")));
+  };
+  return (
+    <SettingsSection
+      title={t("mobile.settings.voice.recognition.title")}
+      footer={t("mobile.settings.voice.recognition.footer")}
+    >
+      <ChoiceRow
+        checked={settings.recognition === "system"}
+        disabled={!settings.ready}
+        supportingText={t("mobile.settings.voice.recognition.systemHint")}
+        label={t("mobile.settings.voice.recognition.system")}
+        onPress={() => choose("system")}
+      />
+      {localEngines.map((engine) => (
+        <ChoiceRow
+          key={engine}
+          checked={settings.recognition === engine}
+          disabled={!settings.ready || (!localRecognitionSupported(engine) && !layoutPreview)}
+          supportingText={statuses[engine]}
+          label={t(LOCAL_RECOGNITION_TEXT[engine].name)}
+          onPress={() => choose(engine)}
+        />
+      ))}
+      <ChoiceRow
+        checked={settings.recognition === "elevenlabs"}
+        disabled={!settings.ready}
+        supportingText={t(
+          settings.hasElevenLabsKey
+            ? "mobile.settings.voice.recognition.elevenLabsHint"
+            : "mobile.settings.voice.engine.elevenLabsNoKey",
+        )}
+        label={t("mobile.settings.voice.recognition.elevenLabs")}
+        onPress={() => choose("elevenlabs")}
+      />
+      <ChoiceRow
+        checked={settings.recognition === "voice-server"}
+        disabled={!settings.ready}
+        supportingText={
+          server?.routes.dictation
+            ? t("mobile.settings.voice.server.dictationReady", {
+                model: shortVoiceServerModel(server.routes.transcriptionModel),
+              })
+            : t("mobile.settings.voice.server.dictationOff")
+        }
+        label={t("mobile.settings.voice.server.choice")}
+        onPress={() => choose("voice-server")}
+      />
+    </SettingsSection>
+  );
+}
+
+function VoiceServerSection({ preview }: { preview?: ReturnType<typeof useVoicePreview> }) {
+  const { t } = useText();
+  const server = useVoiceServer((state) => state.server);
+  const voice = server?.routes.speech ? server.routes.voice : null;
+  return (
+    <SettingsSection title={t("mobile.settings.voice.server.title")} footer={t("mobile.settings.voice.server.footer")}>
+      <SettingsRow
+        supportingText={server ? voiceServerHost(server.address) : t("mobile.settings.voice.server.notSetUp")}
+        onPress={() => router.push("/settings/voice-server")}
+      >
+        <Typography.Paragraph>{t("mobile.settings.voice.server.row")}</Typography.Paragraph>
+      </SettingsRow>
+      {preview && voice ? (
+        <ListenRow
+          enabled
+          playing={preview.playing === "settings"}
+          onPress={() => preview.toggle("settings", { engine: "voice-server", voice })}
+        />
+      ) : null}
+    </SettingsSection>
+  );
+}
+
+function ModelRow({
+  model,
+  label,
+  removeTitle,
+  removeBody,
+  onRemove,
+  onError,
+}: {
+  model: ModelDownload;
+  label: string;
+  removeTitle: string;
+  removeBody: string;
+  onRemove?: () => void;
+  onError: (message: string) => void;
+}) {
+  const { t, format } = useText();
+  const state = model.useModel();
+  const size = format.fileSize(model.bytes);
+  const status =
+    state.phase === "ready"
+      ? t("mobile.settings.voice.supertonic.ready", { size })
+      : (downloadStatus(state, t, format.percent) ?? t("mobile.settings.voice.supertonic.missing", { size }));
+  const remove = () =>
+    Alert.alert(removeTitle, removeBody, [
+      { text: t("common.cancel"), style: "cancel" },
+      {
+        text: t("mobile.settings.voice.supertonic.remove"),
+        style: "destructive",
+        onPress: () => {
+          onRemove?.();
+          void model.remove().catch(() => onError(currentText().t("mobile.settings.voice.removeFailed")));
+        },
+      },
+    ]);
+  const action =
+    state.phase === "downloading" ? (
+      <Button size="sm" variant="secondary" onPress={model.cancel}>
+        <Button.Label>{t("common.cancel")}</Button.Label>
+      </Button>
+    ) : state.phase === "ready" ? (
+      <Button size="sm" variant="secondary" onPress={remove}>
+        <Button.Label className="text-danger-text">{t("mobile.settings.voice.supertonic.remove")}</Button.Label>
+      </Button>
+    ) : (
+      <Button
+        size="sm"
+        variant="secondary"
+        isDisabled={state.phase === "unknown"}
+        onPress={() => void model.download()}
+      >
+        <Button.Label>{t("mobile.settings.voice.supertonic.download")}</Button.Label>
+      </Button>
+    );
+  return (
+    <SettingsRow supportingText={status} trailing={action}>
+      <Typography.Paragraph>{label}</Typography.Paragraph>
+    </SettingsRow>
+  );
+}
+
+function TurnPauseSection({ onError }: { onError: (message: string) => void }) {
+  const { t, format } = useText();
+  const ready = useVoiceSettings((state) => state.ready);
+  const saved = useVoiceSettings((state) => state.turnPauseMs);
+  const [dragged, setDragged] = useState<number | null>(null);
+  const shown = dragged ?? saved;
+  const lastStep = useRef(shown);
+  const seconds = (milliseconds: number) =>
+    t("mobile.settings.voice.pause.seconds", { seconds: format.number(milliseconds / 1_000) });
+  return (
+    <SettingsSection title={t("mobile.settings.voice.pause.title")} footer={t("mobile.settings.voice.pause.footer")}>
+      <View className="gap-3 px-4 py-3">
+        <View className="flex-row items-center justify-between">
+          <Typography.Paragraph>{t("mobile.settings.voice.pause.label")}</Typography.Paragraph>
+          <Typography.Paragraph className="text-grouped-secondary">{seconds(shown)}</Typography.Paragraph>
+        </View>
+        <PauseSlider
+          value={shown}
+          minimum={TURN_PAUSE_LIMITS.minimum}
+          maximum={TURN_PAUSE_LIMITS.maximum}
+          step={TURN_PAUSE_LIMITS.step}
+          disabled={!ready}
+          label={t("mobile.settings.voice.pause.label")}
+          onChange={(value) => {
+            const next = turnPauseMs(value);
+            if (next === lastStep.current) return;
+            lastStep.current = next;
+            void haptics.selection();
+            setDragged(next);
+          }}
+          onChangeEnd={(value) => {
+            const next = turnPauseMs(value);
+            lastStep.current = next;
+            setDragged(null);
+            if (next === saved) return;
+            void saveVoiceSettings({ turnPauseMs: next }).catch(() => onError(t("mobile.settings.saveFailed")));
+          }}
+        />
+      </View>
+    </SettingsSection>
+  );
+}
+
+function ReplySpeedSection({ onError }: { onError: (message: string) => void }) {
+  const { t, format } = useText();
+  const ready = useVoiceSettings((state) => state.ready);
+  const speed = useVoiceSettings((state) => state.speed);
+  const title = t("mobile.settings.voice.speed.title");
+  return (
+    <View className="gap-2">
+      <Typography type="body-xs" className="px-4 text-grouped-secondary">
+        {title}
+      </Typography>
+      <UsageSegments
+        options={SPEECH_SPEEDS.map((value) => ({
+          value: String(value),
+          label: t("mobile.settings.voice.speed.value", { speed: format.number(value) }),
+        }))}
+        value={String(speed)}
+        disabled={!ready}
+        accessibilityLabel={title}
+        onChange={(next) => {
+          const chosen = SPEECH_SPEEDS.find((value) => String(value) === next);
+          if (chosen === undefined) return;
+          void saveVoiceSettings({ speed: chosen }).catch(() => onError(t("mobile.settings.saveFailed")));
+        }}
+      />
+      <Typography.Paragraph type="body-xs" className="px-4 text-grouped-secondary">
+        {t("mobile.settings.voice.speed.footer")}
+      </Typography.Paragraph>
+    </View>
+  );
+}
+
+function LocalModelSection({ engine, onError }: { engine: LocalRecognition; onError: (message: string) => void }) {
+  const { t } = useText();
+  return (
+    <SettingsSection title={t(LOCAL_RECOGNITION_TEXT[engine].name)} footer={t(LOCAL_RECOGNITION_TEXT[engine].footer)}>
+      <ModelRow
+        key={engine}
+        model={localModelOf(engine)}
+        label={t("mobile.settings.voice.recognition.model")}
+        removeTitle={t("mobile.settings.voice.recognition.removeTitle")}
+        removeBody={t("mobile.settings.voice.recognition.removeBody")}
+        onError={onError}
+      />
+    </SettingsSection>
+  );
+}
+
+function EngineSection({ onError }: { onError: (message: string) => void }) {
+  const { t } = useText();
+  const settings = useVoiceSettings();
+  const supertonicStatus = useSupertonicStatus();
+  const server = useVoiceServer((state) => state.server);
+  const elevenLabsStatus = !settings.hasElevenLabsKey
+    ? t("mobile.settings.voice.engine.elevenLabsNoKey")
+    : settings.elevenLabsVoice
+      ? elevenLabsVoiceParts(settings.elevenLabsVoice.name).title
+      : t("mobile.settings.voice.elevenLabs.chooseVoice");
+  const choose = (engine: VoiceEngine) => {
+    if (engine === "elevenlabs" && !settings.hasElevenLabsKey) {
+      router.push("/settings/elevenlabs-key");
+      return;
+    }
+    if (engine === "voice-server" && !server?.routes.speech) {
+      router.push("/settings/voice-server");
+      return;
+    }
+    if (engine === settings.engine) return;
+    void haptics.selection();
+    void saveVoiceSettings({ engine }).catch(() => onError(t("mobile.settings.saveFailed")));
+  };
+  return (
+    <SettingsSection title={t("mobile.settings.voice.engine.title")} footer={t("mobile.settings.voice.engine.footer")}>
+      <ChoiceRow
+        checked={settings.engine === "supertonic"}
+        disabled={!settings.ready}
+        supportingText={supertonicStatus}
+        label={t("mobile.settings.voice.engine.supertonic")}
+        onPress={() => choose("supertonic")}
+      />
+      <ChoiceRow
+        checked={settings.engine === "elevenlabs"}
+        disabled={!settings.ready}
+        supportingText={elevenLabsStatus}
+        label={t("mobile.settings.voice.engine.elevenLabs")}
+        onPress={() => choose("elevenlabs")}
+      />
+      <ChoiceRow
+        checked={settings.engine === "voice-server"}
+        disabled={!settings.ready}
+        supportingText={
+          server?.routes.speech
+            ? t("mobile.settings.voice.server.speechReady", {
+                model: shortVoiceServerModel(server.routes.speechModel),
+                voice: server.routes.voice ?? "",
+              })
+            : t("mobile.settings.voice.server.speechOff")
+        }
+        label={t("mobile.settings.voice.server.choice")}
+        onPress={() => choose("voice-server")}
+      />
+    </SettingsSection>
+  );
+}
+
+function ListenRow({ enabled, playing, onPress }: { enabled: boolean; playing: boolean; onPress: () => void }) {
+  const { t } = useText();
+  return (
+    <SettingsRow disclosure={false} disabled={!enabled} onPress={onPress}>
+      <Typography.Paragraph className="text-accent">
+        {t(playing ? "mobile.settings.voice.stop" : "mobile.settings.voice.listen")}
+      </Typography.Paragraph>
+    </SettingsRow>
+  );
+}
+
+function SupertonicSection({
+  preview,
+  onError,
+}: {
+  preview: ReturnType<typeof useVoicePreview>;
+  onError: (message: string) => void;
+}) {
+  const { t } = useText();
+  const modelReady = useSupertonicModel((state) => state.phase === "ready");
+  const voice = useVoiceSettings((state) => state.supertonicVoice);
+  return (
+    <SettingsSection
+      title={t("mobile.settings.voice.supertonic.title")}
+      footer={t("mobile.settings.voice.supertonic.footer")}
+    >
+      <ModelRow
+        model={supertonicModel}
+        label={t("mobile.settings.voice.supertonic.model")}
+        removeTitle={t("mobile.settings.voice.supertonic.removeTitle")}
+        removeBody={t("mobile.settings.voice.supertonic.removeBody")}
+        onRemove={preview.stop}
+        onError={onError}
+      />
+      <SettingsRow
+        supportingText={supertonicVoiceLabel(voice, t)}
+        onPress={() => router.push({ pathname: "/settings/voice-choice", params: { engine: "supertonic" } })}
+      >
+        <Typography.Paragraph>{t("mobile.settings.voice.voice")}</Typography.Paragraph>
+      </SettingsRow>
+      <ListenRow
+        enabled={modelReady}
+        playing={preview.playing === "settings"}
+        onPress={() => preview.toggle("settings", { engine: "supertonic", supertonicVoice: voice })}
+      />
+    </SettingsSection>
+  );
+}
+
+function ElevenLabsSection({
+  preview,
+  readsReplies,
+  onError,
+}: {
+  preview: ReturnType<typeof useVoicePreview>;
+  readsReplies: boolean;
+  onError: (message: string) => void;
+}) {
+  const { t } = useText();
+  const voice = useVoiceSettings((state) => state.elevenLabsVoice);
+  const remove = () =>
+    Alert.alert(t("mobile.settings.voice.elevenLabs.removeTitle"), t("mobile.settings.voice.elevenLabs.removeBody"), [
+      { text: t("common.cancel"), style: "cancel" },
+      {
+        text: t("mobile.settings.voice.elevenLabs.removeKey"),
+        style: "destructive",
+        onPress: () => {
+          preview.stop();
+          clearElevenLabsVoices();
+          void removeElevenLabsKey().catch(() => onError(currentText().t("mobile.settings.voice.removeFailed")));
+        },
+      },
+    ]);
+  return (
+    <SettingsSection
+      title={t("mobile.settings.voice.elevenLabs.title")}
+      footer={t(
+        readsReplies ? "mobile.settings.voice.elevenLabs.footer" : "mobile.settings.voice.elevenLabs.recognitionFooter",
+      )}
+    >
+      <SettingsRow
+        supportingText={t("mobile.settings.voice.elevenLabs.keySaved")}
+        onPress={() => router.push("/settings/elevenlabs-key")}
+      >
+        <Typography.Paragraph>{t("mobile.settings.voice.elevenLabs.key")}</Typography.Paragraph>
+      </SettingsRow>
+      {readsReplies ? (
+        <>
+          <SettingsRow
+            supportingText={
+              voice ? elevenLabsVoiceParts(voice.name).title : t("mobile.settings.voice.elevenLabs.chooseVoice")
+            }
+            onPress={() => router.push({ pathname: "/settings/voice-choice", params: { engine: "elevenlabs" } })}
+          >
+            <Typography.Paragraph>{t("mobile.settings.voice.voice")}</Typography.Paragraph>
+          </SettingsRow>
+          <ListenRow
+            enabled={voice !== null}
+            playing={preview.playing === "settings"}
+            onPress={() => {
+              if (voice) preview.toggle("settings", { engine: "elevenlabs", elevenLabsVoice: voice });
+            }}
+          />
+        </>
+      ) : null}
+      <SettingsRow disclosure={false} onPress={remove}>
+        <Typography.Paragraph className="text-danger-text">
+          {t("mobile.settings.voice.elevenLabs.removeKey")}
+        </Typography.Paragraph>
+      </SettingsRow>
+    </SettingsSection>
+  );
+}
+
+const ELEVENLABS_MODEL_HINT = {
+  "elevenlabs-flash-v2.5": "mobile.settings.voice.elevenLabs.model.flash",
+  "elevenlabs-multilingual-v2": "mobile.settings.voice.elevenLabs.model.multilingual",
+  "elevenlabs-v3": "mobile.settings.voice.elevenLabs.model.v3",
+  "elevenlabs-v4-turbo": "mobile.settings.voice.elevenLabs.model.v4Turbo",
+  "elevenlabs-v4": "mobile.settings.voice.elevenLabs.model.v4",
+} as const satisfies Record<ElevenLabsSpeechModelId, MobileTextKey>;
+
+function ElevenLabsModelSection({ onChange, onError }: { onChange: () => void; onError: (message: string) => void }) {
+  const { t } = useText();
+  const ready = useVoiceSettings((state) => state.ready);
+  const chosen = useVoiceSettings((state) => state.elevenLabsModel);
+  const choose = (elevenLabsModel: ElevenLabsSpeechModelId) => {
+    if (elevenLabsModel === chosen) return;
+    void haptics.selection();
+    onChange();
+    void saveVoiceSettings({ elevenLabsModel }).catch(() => onError(t("mobile.settings.saveFailed")));
+  };
+  return (
+    <SettingsSection
+      title={t("mobile.settings.voice.elevenLabs.model.title")}
+      footer={t("mobile.settings.voice.elevenLabs.model.footer")}
+    >
+      {ELEVENLABS_SPEECH_MODEL_IDS.map((id) => (
+        <ChoiceRow
+          key={id}
+          checked={chosen === id}
+          disabled={!ready}
+          supportingText={t(ELEVENLABS_MODEL_HINT[id])}
+          label={cloudSpeechModel(id)?.name ?? id}
+          onPress={() => choose(id)}
+        />
+      ))}
+    </SettingsSection>
+  );
+}
+
+function GptLiveSection({ onError }: { onError: (message: string) => void }) {
+  const { t } = useText();
+  const { theme } = useUniwind();
+  const ready = useVoiceSettings((state) => state.ready);
+  const enabled = useVoiceSettings((state) => state.gptLive);
+  const voice = useVoiceSettings((state) => state.gptLiveVoice);
+  return (
+    <>
+      <SettingsSection footer={t("mobile.settings.voice.gptLive.footer")}>
+        <SettingsRow>
+          <SettingsSwitch
+            value={enabled}
+            disabled={!ready}
+            label={t("mobile.settings.voice.gptLive.title")}
+            dark={theme === "dark"}
+            onValueChange={(gptLive) =>
+              void saveVoiceSettings({ gptLive }).catch(() => onError(t("mobile.settings.saveFailed")))
+            }
+          />
+        </SettingsRow>
+      </SettingsSection>
+      {enabled ? (
+        <>
+          <SettingsSection>
+            <SettingsRow
+              supportingText={gptLiveVoiceLabel(voice, t)}
+              onPress={() => router.push({ pathname: "/settings/voice-choice", params: { engine: "gpt-live" } })}
+            >
+              <Typography.Paragraph>{t("mobile.settings.voice.voice")}</Typography.Paragraph>
+            </SettingsRow>
+          </SettingsSection>
+          <SettingsSection
+            title={t("mobile.settings.voice.gptLive.serversTitle")}
+            footer={t("mobile.settings.voice.gptLive.serversFooter")}
+          >
+            <GptLiveServerRows />
+          </SettingsSection>
+        </>
+      ) : null}
+    </>
+  );
+}
+
+export function VoiceSettingsScreen() {
+  const { t } = useText();
+  const preview = useVoicePreview();
+  const engine = useVoiceSettings((state) => state.engine);
+  const recognition = useVoiceSettings((state) => state.recognition);
+  const hasKey = useVoiceSettings((state) => state.hasElevenLabsKey);
+  const serverSpeaks = useVoiceServer((state) => state.server?.routes.speech === true);
+  const canRecognize = modelCaptureAvailable() || layoutPreview;
+  const [tab, setTab] = useState<"listening" | "speaking" | "gptLive">("listening");
+  const [error, setError] = useState<string | null>(null);
+  const showError = useRef((message: string) => {
+    setError(message);
+    void haptics.notification("error");
+  }).current;
+  useEffect(() => {
+    checkRecognitionModels();
+  }, []);
+  useEffect(() => {
+    if (hasKey && useElevenLabsVoices.getState().phase === "idle") void loadElevenLabsVoices();
+  }, [hasKey]);
+  const stopPreview = useRef(preview.stop);
+  stopPreview.current = preview.stop;
+  const shownEngine = useRef(engine);
+  useEffect(() => {
+    if (shownEngine.current === engine) return;
+    shownEngine.current = engine;
+    stopPreview.current();
+  }, [engine]);
+  if (!speechNative && !layoutPreview)
+    return (
+      <SettingsContent>
+        <SettingsNote>{t("mobile.settings.voice.unavailable")}</SettingsNote>
+      </SettingsContent>
+    );
+  const speaking = (
+    <>
+      <EngineSection onError={showError} />
+      {engine === "elevenlabs" && hasKey ? (
+        <>
+          <ElevenLabsSection preview={preview} readsReplies onError={showError} />
+          <ElevenLabsModelSection onChange={preview.stop} onError={showError} />
+        </>
+      ) : engine === "voice-server" && serverSpeaks ? (
+        <VoiceServerSection preview={preview} />
+      ) : (
+        <SupertonicSection preview={preview} onError={showError} />
+      )}
+      {engine === "voice-server" && serverSpeaks ? null : <VoiceServerSection />}
+      {canChangeReplySpeed || layoutPreview ? <ReplySpeedSection onError={showError} /> : null}
+    </>
+  );
+  const gptLive = liveVoiceWebRtc || layoutPreview ? <GptLiveSection onError={showError} /> : null;
+  if (!canRecognize)
+    return (
+      <SettingsContent>
+        {speaking}
+        <DictationLanguageSection />
+        <TurnPauseSection onError={showError} />
+        {gptLive}
+      </SettingsContent>
+    );
+  return (
+    <SettingsContent>
+      <UsageSegments
+        options={[
+          { value: "listening", label: t("mobile.settings.voice.tab.listening") },
+          { value: "speaking", label: t("mobile.settings.voice.tab.speaking") },
+          ...(gptLive ? [{ value: "gptLive" as const, label: t("mobile.settings.voice.tab.gptLive") }] : []),
+        ]}
+        value={tab}
+        onChange={(next) => {
+          preview.stop();
+          setTab(next);
+        }}
+      />
+      {tab === "listening" ? (
+        <>
+          <RecognitionSection onError={showError} />
+          {recognition === "system" ? <DictationLanguageSection /> : null}
+          {isLocalRecognition(recognition) && (localRecognitionSupported(recognition) || layoutPreview) ? (
+            <LocalModelSection engine={recognition} onError={showError} />
+          ) : null}
+          {recognition === "elevenlabs" && hasKey ? (
+            <ElevenLabsSection preview={preview} readsReplies={false} onError={showError} />
+          ) : null}
+          <VoiceServerSection />
+          <TurnPauseSection onError={showError} />
+        </>
+      ) : tab === "speaking" ? (
+        speaking
+      ) : (
+        gptLive
+      )}
+      {error || preview.error ? (
+        <Typography.Paragraph accessibilityRole="alert" type="body-xs" className="px-4 text-danger-text">
+          {error ?? preview.error}
+        </Typography.Paragraph>
+      ) : null}
+    </SettingsContent>
+  );
+}

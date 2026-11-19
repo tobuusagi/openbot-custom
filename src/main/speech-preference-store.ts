@@ -1,0 +1,88 @@
+import {
+  DEFAULT_SPEECH_SETTINGS,
+  isCodexLiveVoice,
+  isElevenLabsSpeechVoice,
+  isSpeechModelId,
+  isSpeechSpeed,
+  isSpeechVoice,
+  isVoiceTurnPause,
+  isXaiSpeechVoice,
+  type SpeechSettings,
+} from "@openbot/contracts/ipc";
+import { isDynamicRecord } from "@openbot/contracts/runtime-values";
+import { Effect, Result, Semaphore } from "effect";
+import { isMissingFileError } from "../backend/file-errors";
+import { type PreferenceFileFailure, readPreferenceFile, writePreferenceFile } from "./preference-file";
+
+export class SpeechPreferenceStore {
+  readonly #path: string;
+  #settings: SpeechSettings = { ...DEFAULT_SPEECH_SETTINGS };
+  #writes = Semaphore.makeUnsafe(1);
+
+  constructor(path: string) {
+    this.#path = path;
+  }
+
+  load(): Effect.Effect<void, PreferenceFileFailure> {
+    return Effect.gen({ self: this }, function* () {
+      const loaded = yield* Effect.result(
+        readPreferenceFile(this.#path, (parsed): SpeechSettings | null =>
+          isDynamicRecord(parsed) &&
+          parsed.version === 1 &&
+          typeof parsed.readReplies === "boolean" &&
+          isSpeechVoice(parsed.voice)
+            ? {
+                readReplies: parsed.readReplies,
+                modelId: isSpeechModelId(parsed.modelId) ? parsed.modelId : DEFAULT_SPEECH_SETTINGS.modelId,
+                voice: parsed.voice,
+                elevenLabsVoice: isElevenLabsSpeechVoice(parsed.elevenLabsVoice)
+                  ? parsed.elevenLabsVoice
+                  : DEFAULT_SPEECH_SETTINGS.elevenLabsVoice,
+                xaiVoice: isXaiSpeechVoice(parsed.xaiVoice) ? parsed.xaiVoice : DEFAULT_SPEECH_SETTINGS.xaiVoice,
+                speed: isSpeechSpeed(parsed.speed) ? parsed.speed : DEFAULT_SPEECH_SETTINGS.speed,
+                codexLive: parsed.codexLive === true,
+                codexLiveVoice: isCodexLiveVoice(parsed.codexLiveVoice) ? parsed.codexLiveVoice : null,
+                turnPauseMs: isVoiceTurnPause(parsed.turnPauseMs)
+                  ? parsed.turnPauseMs
+                  : DEFAULT_SPEECH_SETTINGS.turnPauseMs,
+              }
+            : null,
+        ),
+      );
+      if (Result.isSuccess(loaded)) {
+        if (loaded.success) this.#settings = loaded.success;
+      } else if (!isMissingFileError(loaded.failure.cause) && !(loaded.failure.cause instanceof SyntaxError))
+        return yield* loaded.failure;
+    });
+  }
+
+  get(): SpeechSettings {
+    return { ...this.#settings };
+  }
+
+  readonly set = Effect.fn("SpeechPreference.set")(function* (this: SpeechPreferenceStore, input: SpeechSettings) {
+    const settings: SpeechSettings = {
+      readReplies: input.readReplies,
+      modelId: input.modelId,
+      voice: input.voice,
+      elevenLabsVoice: input.elevenLabsVoice,
+      xaiVoice: input.xaiVoice,
+      speed: input.speed,
+      codexLive: input.codexLive,
+      codexLiveVoice: input.codexLiveVoice,
+      turnPauseMs: input.turnPauseMs,
+    };
+    yield* this.#writes.withPermit(
+      Effect.uninterruptible(
+        writePreferenceFile(this.#path, { version: 1, ...settings }).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              this.#settings = settings;
+            }),
+          ),
+        ),
+      ),
+    );
+    return this.get();
+  });
+}

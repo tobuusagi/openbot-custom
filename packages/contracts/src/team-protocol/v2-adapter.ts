@@ -1,0 +1,142 @@
+import type { AgentEvent } from "../ipc-agent-events";
+import type { TeamRealtimeEvent } from "../ipc-team-host";
+import { isDynamicRecord, isString } from "../runtime-values";
+import {
+  decodeTeamProtocolV1CurrentEvent,
+  decodeTeamProtocolV1CurrentHttpRequest,
+  decodeTeamProtocolV1CurrentHttpResponse,
+  encodeTeamProtocolV1CurrentEvent,
+  encodeTeamProtocolV1CurrentHttpRequest,
+  encodeTeamProtocolV1CurrentHttpResponse,
+} from "./v1-adapter";
+import { isTeamWebRtcNoBodyRoute, isTeamWebRtcRemoteViewerRoute } from "./webrtc-bodyless-requests";
+import {
+  decodeTeamProtocolV2EventFrame,
+  decodeTeamProtocolV2Json,
+  decodeTeamProtocolV2RpcFrame,
+  type TeamProtocolV2EventFrame,
+  type TeamProtocolV2Json,
+  type TeamProtocolV2RpcFrame,
+} from "./webrtc-framing";
+
+export function createTeamProtocolV2Request(
+  requestId: string,
+  operation: string,
+  payload: unknown,
+): TeamProtocolV2RpcFrame {
+  return decodeTeamProtocolV2RpcFrame({
+    version: 2,
+    type: "request",
+    requestId,
+    operation,
+    payload: wireJson(payload),
+  });
+}
+
+export function createTeamProtocolV2Response(requestId: string, result: unknown): TeamProtocolV2RpcFrame {
+  return decodeTeamProtocolV2RpcFrame({ version: 2, type: "response", requestId, result: wireJson(result) });
+}
+
+export function createTeamProtocolV2Event(
+  sequence: number,
+  event: unknown,
+  options: { preserveSemanticTags?: boolean } = {},
+): TeamProtocolV2EventFrame {
+  const current = decodeTeamProtocolV1CurrentEvent(event);
+  if (current.kind !== "known") throw new Error("The event is not supported by Team protocol v2.");
+  const encoded = encodeTeamProtocolV1CurrentEvent(current.event, options);
+  if (!encoded) throw new Error("The event is not supported by Team protocol v2.");
+  return decodeTeamProtocolV2EventFrame({
+    version: 2,
+    type: "event",
+    sequence,
+    payload: wireJson(JSON.parse(encoded)),
+  });
+}
+
+export function encodeTeamProtocolV2CurrentHttpRequest(
+  method: string,
+  path: string,
+  value: unknown,
+  options: { preserveSemanticTags?: boolean } = {},
+): TeamProtocolV2Json {
+  const normalized = normalizeV2HttpRequest(method, path, value);
+  if (normalized.done) return normalized.value;
+  return wireJson(JSON.parse(encodeTeamProtocolV1CurrentHttpRequest(method, path, normalized.value, options)));
+}
+
+export function decodeTeamProtocolV2CurrentHttpRequest(
+  method: string,
+  path: string,
+  value: unknown,
+  options: { preserveSemanticTags?: boolean } = {},
+): TeamProtocolV2Json {
+  const normalized = normalizeV2HttpRequest(method, path, value);
+  if (normalized.done) return normalized.value;
+  if (options.preserveSemanticTags) {
+    return wireJson(decodeTeamProtocolV1CurrentHttpRequest(method, path, normalized.value));
+  }
+  const expanded = JSON.parse(encodeTeamProtocolV1CurrentHttpRequest(method, path, normalized.value));
+  return wireJson(decodeTeamProtocolV1CurrentHttpRequest(method, path, expanded));
+}
+
+function normalizeV2HttpRequest(
+  method: string,
+  path: string,
+  value: unknown,
+): { done: true; value: TeamProtocolV2Json } | { done: false; value: TeamProtocolV2Json } {
+  const normalized = value === undefined ? null : wireJson(value);
+  if (isTeamWebRtcRemoteViewerRoute(path)) return { done: true, value: isEmptyRequest(normalized) ? {} : normalized };
+  if (isEmptyRequest(normalized) && isTeamWebRtcNoBodyRoute(method, path)) return { done: true, value: {} };
+  return { done: false, value: normalized };
+}
+
+function isEmptyRequest(value: unknown): boolean {
+  return value === null || (isDynamicRecord(value) && Object.keys(value).length === 0);
+}
+
+export function encodeTeamProtocolV2CurrentHttpResponse(
+  method: string,
+  path: string,
+  status: number,
+  value: unknown,
+  options: { preserveSemanticTags?: boolean } = {},
+): TeamProtocolV2Json {
+  if (status === 204) return {};
+  if (isTeamWebRtcRemoteViewerRoute(path)) return wireJson(value === undefined ? null : value);
+  return wireJson(
+    JSON.parse(
+      encodeTeamProtocolV1CurrentHttpResponse(method, path, status, value === undefined ? null : value, options),
+    ),
+  );
+}
+
+export function decodeTeamProtocolV2CurrentHttpResponse(
+  method: string,
+  path: string,
+  status: number,
+  value: unknown,
+): TeamProtocolV2Json {
+  if (status === 204) return {};
+  if (isTeamWebRtcRemoteViewerRoute(path)) return wireJson(value === undefined ? null : value);
+  return wireJson(decodeTeamProtocolV1CurrentHttpResponse(method, path, status, value === undefined ? null : value));
+}
+
+export function decodeTeamProtocolV2CurrentEvent(
+  frame: TeamProtocolV2EventFrame,
+): { status: "known"; event: AgentEvent | TeamRealtimeEvent } | { status: "unknown" } | { status: "invalid" } {
+  const decoded = decodeTeamProtocolV2EventFrame(frame);
+  if (decoded.type !== "event") return { status: "invalid" };
+  const event = decodeTeamProtocolV1CurrentEvent(decoded.payload);
+  if (event.kind === "known") return { status: "known", event: event.event };
+  if (event.kind === "invalid" && !(isDynamicRecord(decoded.payload) && isString(decoded.payload.type))) {
+    return { status: "unknown" };
+  }
+  return { status: event.kind };
+}
+
+function wireJson(value: unknown): TeamProtocolV2Json {
+  const encoded = JSON.stringify(value);
+  if (encoded === undefined) throw new Error("The Team protocol value is not serializable.");
+  return decodeTeamProtocolV2Json(JSON.parse(encoded));
+}

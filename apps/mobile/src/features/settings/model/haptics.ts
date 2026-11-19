@@ -1,0 +1,46 @@
+import * as SecureStore from "expo-secure-store";
+import { create } from "zustand";
+
+const key = "openbot.mobile.haptics.v1";
+const repliesKey = "openbot.mobile.haptics.replies.v1";
+
+export const useHapticsPreference = create<{ enabled: boolean; replies: boolean; ready: boolean; saving: boolean }>(
+  () => ({
+    enabled: false,
+    replies: false,
+    ready: false,
+    saving: false,
+  }),
+);
+
+export type HapticsSetting = "enabled" | "replies";
+
+export async function loadHapticsPreference(): Promise<void> {
+  if (useHapticsPreference.getState().ready) return;
+  try {
+    const [stored, storedReplies] = await Promise.all([
+      SecureStore.getItemAsync(key),
+      SecureStore.getItemAsync(repliesKey).catch(() => null),
+    ]);
+    if (!useHapticsPreference.getState().ready) {
+      useHapticsPreference.setState({
+        enabled: stored === null || stored === "true",
+        replies: storedReplies === null || storedReplies === "true",
+      });
+    }
+  } finally {
+    useHapticsPreference.setState({ ready: true });
+  }
+}
+
+export async function saveHapticsPreference(setting: HapticsSetting, value: boolean): Promise<void> {
+  if (!useHapticsPreference.getState().ready || useHapticsPreference.getState().saving) return;
+  useHapticsPreference.setState(
+    setting === "enabled" ? { enabled: value, saving: true } : { replies: value, saving: true },
+  );
+  try {
+    await SecureStore.setItemAsync(setting === "enabled" ? key : repliesKey, String(value));
+  } finally {
+    useHapticsPreference.setState({ saving: false });
+  }
+}

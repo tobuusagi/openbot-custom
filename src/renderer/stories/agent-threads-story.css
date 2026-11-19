@@ -1,0 +1,11 @@
+.agent-threads-story {
+  height: 100vh;
+}
+
+.thread-header-story {
+  height: 100vh;
+}
+
+.thread-header-story[data-narrow] {
+  width: 560px;
+}

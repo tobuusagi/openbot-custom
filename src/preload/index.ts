@@ -1,0 +1,1661 @@
+import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import {
+  type AgentIpcRequest,
+  type AttachmentImportEvent,
+  decodeAddedAgent,
+  decodeAgentAccessSnapshot,
+  decodeAgentAdminSettings,
+  decodeAgentBackupModelSettings,
+  decodeAgentBrowserProfile,
+  decodeAgentDefaultsOverview,
+  decodeAgentExclusionChangeFromMain,
+  decodeAgentFastModeSettings,
+  decodeAgentFolderBrowse,
+  decodeAgentFolderChangeFromMain,
+  decodeAgentFolderListFromMain,
+  decodeAgentImportPreview,
+  decodeAgentImportResult,
+  decodeAgentInstructionsFileFromMain,
+  decodeAgentNewChatSettings,
+  decodeAgentPlanCardSettings,
+  decodeAgentProfileDraft,
+  decodeBrowserProfileList,
+  decodeBrowserProfileSummary,
+  decodeBrowserProxySummary,
+  decodeBrowserTabProfiles,
+  decodeChannel,
+  decodeChannelMemories,
+  decodeChannelMemory,
+  decodeChannelPage,
+  decodeChannelRoutine,
+  decodeChannelRoutineRun,
+  decodeChannelRoutineRuns,
+  decodeChannelRoutines,
+  decodeChannelSummaries,
+  decodeClaudeCompactWindowSetting,
+  decodeClaudeUserSetupSetting,
+  decodeCompanySignInScimToken,
+  decodeCompanySignInSettings,
+  decodeHermesImportPreview,
+  decodeHermesImportResult,
+  decodeHostAgentMemoryLimit,
+  decodeHostBrowsingMemory,
+  decodeHostMemoryReview,
+  decodeHostPersonality,
+  decodeHostSkillLearning,
+  decodeHostTimezoneSettings,
+  decodeHostTurnLimits,
+  decodeHostUpdateStatus,
+  decodeInstanceExportResult,
+  decodeInstanceTransferPreview,
+  decodeInstanceTransferResult,
+  decodeInstanceTransferSummary,
+  decodeInstanceTransferUploadProgress,
+  decodeLibraryFoldersSnapshot,
+  decodeMachineAlertSettings,
+  decodeMcpAccessSnapshot,
+  decodeMcpServerConfigs,
+  decodeMcpSignInAppState,
+  decodeMcpSignInPage,
+  decodeMcpSignInRelayPage,
+  decodeMcpSignInStates,
+  decodeMcpTestResult,
+  decodeOptionalBrowserComputerSharing,
+  decodeOptionalBrowserProxyList,
+  decodeOptionalLibraryFoldersSnapshot,
+  decodeOptionalMachineMetrics,
+  decodeOptionalStorageDisk,
+  decodeOptionalStorageUsage,
+  decodePromptCacheTtlSetting,
+  decodeProviderAccountCodeLoginStart,
+  decodeProviderAccountCodeLoginStatus,
+  decodeProviderEnvironment,
+  decodeProviderHostSignInStatus,
+  decodeProviderModelVisibility,
+  decodeProviderRelaySignInStatus,
+  decodeProviderRuntimeDownload,
+  decodeRegistryEntries,
+  decodeRegistryInstallations,
+  decodeRegistryInstallResult,
+  decodeRegistryOperations,
+  decodeRemovableRuntimes,
+  decodeSaveAgentProfileResult,
+  decodeSaveSkillSuggestionResult,
+  decodeServerAuditLog,
+  decodeTestCompanySignInResult,
+  decodeWorkspaceDirectory,
+  type EventEndpoint,
+  type GroupApi,
+  groupApiMethodName,
+  type ImportAttachmentsInput,
+  IPC_ENDPOINTS,
+  type IpcEndpointGroup,
+  LOCAL_SERVER_ID,
+  type OpenBotDesktopApi,
+  type RequestEndpoint,
+  type ServerScope,
+  type ServerSummary,
+  type Untyped,
+} from "@openbot/contracts/ipc";
+import {
+  decodeAgentWebhookSecret,
+  decodeEventActivity,
+  decodeEventRoutineRuns,
+  decodeEventRoutines,
+  decodeEventStatus,
+  decodeSaveEventRoutineResult,
+  decodeWebhookSecret,
+  decodeWebhookTestResult,
+} from "@openbot/contracts/ipc-events";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
+import {
+  decodeAccountUsageFromMain,
+  decodeAgent,
+  decodeAgentAnalyticsFromMain,
+  decodeAgentHostSettingsFromMain,
+  decodeAgentModels,
+  decodeAgentNotificationLevelsFromMain,
+  decodeAgentRuntimeSnapshot,
+  decodeAgentSessionSettingsFromMain,
+  decodeAgentStatusFromMain,
+  decodeAgents,
+  decodeAutomationRunCommand,
+  decodeDuplicateAgentResultFromMain,
+  decodeHiddenAgentsFromMain,
+  decodeHostAnalyticsFromMain,
+  decodeHostDefaultProviderFromMain,
+  decodeHostProviderAccountsFromMain,
+  decodeMemories,
+  decodeMemory,
+  decodeMemorySelection,
+  decodeOptionalMemorySelection,
+  decodeProviderApiKeyState,
+  decodeProviderCodeLoginStart,
+  decodeProviderUsageResetOutcomeFromMain,
+  decodeProviderUsageResetsFromMain,
+  decodeProviderUseFromMain,
+  decodeQuitShortcutHint,
+  decodeRoutine,
+  decodeRoutineCalendar,
+  decodeRoutineFeed,
+  decodeRoutineRun,
+  decodeRoutineRuns,
+  decodeRoutines,
+  decodeSidebarLayout,
+  decodeSidebarPinsFromMain,
+  decodeSideQuestionAnswer,
+  decodeTables,
+} from "./agent-decoding";
+import {
+  decodeAgentDockAction,
+  decodeAgentDockDisplays,
+  decodeAgentDockOffset,
+  decodeAgentDockPresentation,
+} from "./agent-dock-decoding";
+import { decodeScopedAgentEvent } from "./agent-event-decoding";
+import {
+  decodeAccountSessions,
+  decodeAgentDefaults,
+  decodeAgentImportSkill,
+  decodeAgentMemoryLimitPreference,
+  decodeAnalyticsPreference,
+  decodeAppAppearancePreference,
+  decodeAppBehaviorPreference,
+  decodeAppInfo,
+  decodeAppInterfaceSizePreference,
+  decodeAppLanguagePreference,
+  decodeAppLogoColorPreference,
+  decodeApprovalAutomationPreference,
+  decodeAppSetupState,
+  decodeBillingDetails,
+  decodeBillingState,
+  decodeBitwardenConnectorStatus,
+  decodeBusyMessageModePreference,
+  decodeCentralAuthState,
+  decodeChatWindowTargets,
+  decodeCustomAgentCheckResult,
+  decodeCustomAgentResult,
+  decodeCustomAgents,
+  decodeCustomAgentUsage,
+  decodeCustomProviderResult,
+  decodeCustomProviders,
+  decodeDetectedAcpAgents,
+  decodeDetectedModelServers,
+  decodeDiscoverModelsResult,
+  decodeExportResult,
+  decodeExternalLinkBrowserOrNull,
+  decodeExternalLinkBrowsers,
+  decodeExternalLinkFallback,
+  decodeExternalLinkPreference,
+  decodeGitHubConnectorRepositories,
+  decodeGitHubConnectorStatus,
+  decodeHostedServer,
+  decodeHostedServerCatalog,
+  decodeHostedServerList,
+  decodeHostedSite,
+  decodeHostedSiteList,
+  decodeInstalledFonts,
+  decodeLicenseState,
+  decodeLinkAccountStatus,
+  decodeMobileConnectedDevices,
+  decodeMobileConnectLink,
+  decodeMobileConnectTicket,
+  decodeNotificationOpenedEvent,
+  decodeNotificationPreference,
+  decodeNullablePath,
+  decodeOnePasswordConnectorStatus,
+  decodePendingAgentTemplate,
+  decodePendingListing,
+  decodePendingMarketplaceListing,
+  decodeProviderDetectionSettings,
+  decodeReferralState,
+  decodeRemoteDesktopSetupFromMain,
+  decodeRemoteDesktopTestFromMain,
+  decodeRemoteNetworkRouteState,
+  decodeRemoteSessionReusePreference,
+  decodeSentMessageStats,
+  decodeServerClaim,
+  decodeSpeechAudio,
+  decodeSpeechModelStatus,
+  decodeSpeechSettings,
+  decodeUpdatePreference,
+  decodeUpdateStatus,
+  decodeVoiceLiveEvent,
+  decodeVoiceLiveSession,
+  decodeVoiceModelStatus,
+  decodeVoiceModelStatuses,
+  decodeVoiceServerProbe,
+  decodeVoiceServerSettings,
+  decodeVoiceSettings,
+  decodeVoiceStream,
+  decodeVoiceStreamTranscript,
+  decodeVoiceTranscriptionResult,
+  decodeVoid,
+  decodeWorkflowNotificationOpenedEvent,
+} from "./app-decoding";
+import { decodeBackgroundProcesses } from "./background-process-decoding";
+import {
+  decodeBrowserBounds,
+  decodeBrowserControlState,
+  decodeBrowserDisplayState,
+  decodeBrowserLiveViewEvent,
+  decodeBrowserLocalSignInEnd,
+  decodeBrowserLocalSignInResult,
+  decodeBrowserPictureInPictureEvent,
+  decodeBrowserPreviewFromMain,
+  decodeBrowserTab,
+  decodeBrowserTabs,
+  decodeBrowserTeachSteps,
+} from "./browser-decoding";
+import {
+  decodeBrowserDockAction,
+  decodeBrowserDockPresentation,
+  decodeBrowserDockShown,
+} from "./browser-dock-decoding";
+import { clipboardFiles } from "./clipboard-files";
+import {
+  decodeComputerUseHighlightPlacement,
+  decodeComputerUsePermissionApp,
+  decodeComputerUseState,
+} from "./computer-use-decoding";
+import {
+  decodeActiveQueues,
+  decodeAgentTask,
+  decodeAgentTaskReadState,
+  decodeAgentTaskReadStates,
+  decodeAgentTasks,
+  decodeAttachment,
+  decodeAttachmentDownloadProgress,
+  decodeAttachmentImportProgress,
+  decodeAttachments,
+  decodeConversation,
+  decodeConversationFileSearchPage,
+  decodeConversationPageFromMain,
+  decodeConversationSearchPageFromMain,
+  decodeFilePreview,
+  decodeOptionalFilePreviewPageUrl,
+  decodePendingApproval,
+  decodePinnedMessages,
+  decodeQueue,
+  decodeReadState,
+  decodeReadStates,
+  decodeReceipt,
+  decodeTaskConversation,
+  decodeTaskPage,
+  decodeTaskWindow,
+  decodeWaits,
+  decodeWithdrawFeedbackResult,
+} from "./conversation-decoding";
+import {
+  decodeCrmActivityPage,
+  decodeCrmApplyResult,
+  decodeCrmCustomerPage,
+  decodeCrmOverview,
+  decodeCrmPaymentPage,
+  decodeCrmSettings,
+} from "./crm-decoding";
+import {
+  decodeDynamicIslandAction,
+  decodeDynamicIslandGeometry,
+  decodeDynamicIslandPreference,
+  decodeDynamicIslandPresentation,
+} from "./dynamic-island-decoding";
+import { decodeHostReleaseStatusFromMain } from "./host-release-decoding";
+import { decodeMacAutomationResults } from "./mac-automation-decoding";
+import {
+  decodeAddOrchestratorReply,
+  decodeDiscordAccessReply,
+  decodeDiscordRolesReply,
+  decodeMessagingOverviewReply,
+  decodeTelegramOverviewReply,
+  decodeWhatsAppGroupsReply,
+  decodeWhatsAppLinkStateReply,
+  decodeWhatsAppOverviewReply,
+} from "./messaging-decoding";
+import {
+  decodePasswordManagerChange,
+  decodePasswordManagerResponse,
+  decodePasswordManagerResponses,
+} from "./password-manager-decoding";
+import { decodeProviderRuntimeSnapshot } from "./provider-runtime";
+import { decodeRoutineFlowCanvas, decodeRoutineFlowLink } from "./routine-flow-decoding";
+import {
+  decodeRoutineResultDeliveries,
+  decodeRoutineResultDestination,
+  decodeRoutineResultOptions,
+} from "./routine-result-decoding";
+import {
+  decodeAgentInstallation,
+  decodeAgentPublicationPreview,
+  decodeAgentSubmission,
+  decodeAgentSubmissions,
+  decodeAgentTemplateDetail,
+  decodeAgentTemplatePreview,
+  decodeAgentTemplatePublication,
+  decodeGithubSkillSourceFromMain,
+  decodeInstalledSkill,
+  decodeInstalledSkillsFromMain,
+  decodeMarketplaceAgentDetail,
+  decodeMarketplaceAgentPage,
+  decodeSkillDetail,
+  decodeSkillDetails,
+  decodeSkillPage,
+  decodeSkillPreview,
+  decodeSubmission,
+  decodeSubmissions,
+} from "./skills-decoding";
+import {
+  decodeDirectConversation,
+  decodeDirectConversationPage,
+  decodeDirectMessage,
+  decodeDirectReadState,
+  decodeDirectThreads,
+  decodeHostStatus,
+  decodeInvitePreview,
+  decodeInviteSummary,
+  decodeInviteUrl,
+  decodePendingInvite,
+  decodeRemoteControlPolicy,
+  decodeRemoteDesktopConnectResult,
+  decodeRemoteDesktopSessions,
+  decodeScopedDirectMessage,
+  decodeScopedDirectTyping,
+  decodeScopedTeamPresence,
+  decodeServer,
+  decodeServers,
+  decodeTeamInvites,
+  decodeTeamMember,
+  decodeTeamMembers,
+  decodeTeamPresenceSnapshot,
+  decodeTeamSessions,
+} from "./team-decoding";
+import { decodeVaultCodes, decodeVaultImportResult, decodeVaultSecret, decodeVaultState } from "./vault-decoding";
+import {
+  decodeWorkflowDetail,
+  decodeWorkflowGitHubCatalog,
+  decodeWorkflowGitHubHistory,
+  decodeWorkflowGitHubOptions,
+  decodeWorkflowGraph,
+  decodeWorkflowMediaCatalog,
+  decodeWorkflowMediaCredits,
+  decodeWorkflowMediaPrice,
+  decodeWorkflowMediaProviders,
+  decodeWorkflowPictureId,
+  decodeWorkflowRunDetail,
+  decodeWorkflowRunPage,
+  decodeWorkflowSaveResult,
+  decodeWorkflowStep,
+  decodeWorkflowSummaries,
+  decodeWorkflowSummary,
+  decodeWorkflowVersions,
+  decodeWorkflowWebhookSecret,
+} from "./workflow-decoding";
+
+const attachmentImportListeners = new Set<(event: AttachmentImportEvent) => void>();
+const chatWindowServerId = (() => {
+  const query = new URLSearchParams(window.location.search);
+  return query.get("window") === "chat" ? query.get("server") : null;
+})();
+let selectedServerId: string = chatWindowServerId ?? LOCAL_SERVER_ID;
+
+function invokeAgentForServer<Input, Result>(
+  serverId: string,
+  endpoint: RequestEndpoint<string, AgentIpcRequest<Input>, Result>,
+  payload: NoInfer<Input>,
+  decode: (value: unknown) => NoInfer<Result>,
+): Promise<Result> {
+  const request: AgentIpcRequest<Input> = { serverId, payload };
+  return ipcRenderer.invoke(endpoint.channel, request).then(decode);
+}
+
+function listen(endpoint: EventEndpoint, onValue: (value: unknown) => void): () => void {
+  const handler = (_event: Electron.IpcRendererEvent, value: unknown) => onValue(value);
+  ipcRenderer.on(endpoint.channel, handler);
+  return () => ipcRenderer.removeListener(endpoint.channel, handler);
+}
+
+interface DroppingDecoder<Payload> {
+  readonly drop: (value: unknown) => Payload | null;
+}
+
+function dropInvalid<Payload>(decode: (value: unknown) => Payload | null): DroppingDecoder<Payload> {
+  return { drop: decode };
+}
+
+type DecoderFor<Endpoint> =
+  Endpoint extends RequestEndpoint<string, infer Payload, infer Result>
+    ? [Payload] extends [Untyped]
+      ? never
+      : (value: unknown) => Result
+    : Endpoint extends EventEndpoint<string, infer Payload>
+      ? ((value: unknown) => Payload) | DroppingDecoder<Payload>
+      : never;
+
+type GroupDecoders<Group extends IpcEndpointGroup> = { -readonly [Key in keyof Group]: DecoderFor<Group[Key]> };
+
+type BridgeDecoder = ((value: unknown) => unknown) | DroppingDecoder<unknown>;
+type BridgeMethod = (...args: never[]) => Promise<unknown> | (() => void);
+
+function bridgeGroup<Group extends IpcEndpointGroup>(
+  group: Group,
+  decoders: NoInfer<GroupDecoders<Group>>,
+): GroupApi<Group>;
+function bridgeGroup(group: IpcEndpointGroup, decoders: Readonly<Record<string, BridgeDecoder | undefined>>): object {
+  for (const key of Object.keys(decoders)) {
+    if (!Object.hasOwn(group, key)) throw new Error(`The preload has a decoder for no endpoint: ${key}.`);
+  }
+  const api: Record<string, BridgeMethod> = {};
+  for (const [key, endpoint] of Object.entries(group)) {
+    const decode = decoders[key];
+    if (decode === undefined) throw new Error(`The preload has no decoder for ${endpoint.channel}.`);
+    const name = groupApiMethodName(key, endpoint);
+    if (Object.hasOwn(api, name)) throw new Error(`The preload has two methods named ${name}.`);
+    if (endpoint.kind === "request") {
+      if (typeof decode !== "function") throw new Error(`The preload cannot drop the result of ${endpoint.channel}.`);
+      const { scope } = endpoint;
+      api[name] =
+        scope === undefined
+          ? (...args: unknown[]) => ipcRenderer.invoke(endpoint.channel, ...args.slice(0, 1)).then(decode)
+          : (...args: unknown[]) => ipcRenderer.invoke(endpoint.channel, scopedRequest(scope, args)).then(decode);
+    } else if (typeof decode === "function") {
+      api[name] = (listener: (payload: unknown) => void) => listen(endpoint, (value) => listener(decode(value)));
+    } else {
+      api[name] = (listener: (payload: unknown) => void) =>
+        listen(endpoint, (value) => {
+          const payload = decode.drop(value);
+          if (payload !== null) listener(payload);
+        });
+    }
+  }
+  return api;
+}
+
+function scopedRequest(scope: ServerScope, args: readonly unknown[]): AgentIpcRequest<unknown> {
+  const [payload, server] = scope === "empty" ? [null, args[0]] : [args[0], args[1]];
+  return { serverId: typeof server === "string" ? server : selectedServerId, payload };
+}
+
+function rememberActiveServer(servers: ServerSummary[]): ServerSummary[] {
+  const pinned = chatWindowServerId;
+  if (pinned !== null && servers.some((server) => server.id === pinned)) {
+    selectedServerId = pinned;
+    return servers.map((server) => ({ ...server, active: server.id === pinned }));
+  }
+  selectedServerId = servers.find((server) => server.active)?.id ?? LOCAL_SERVER_ID;
+  return servers;
+}
+
+function emitAttachmentImport(event: AttachmentImportEvent): void {
+  for (const listener of attachmentImportListeners) listener(event);
+}
+
+const attachmentImportFiles = new Map<string, { serverId: string; files: NamedFile[] }>();
+
+interface NamedFile {
+  file: File;
+  name: string;
+}
+
+listen(IPC_ENDPOINTS.attachmentImports.importProgress, (value) => {
+  const progress = decodeAttachmentImportProgress(value);
+  if (attachmentImportFiles.has(progress.requestId)) emitAttachmentImport({ type: "progress", ...progress });
+});
+
+async function importFiles(files: File[]): Promise<void> {
+  if (files.length === 0) return;
+  const serverId = selectedServerId;
+  const named = files.map((file) => ({ file, name: file.name || `pasted-${Date.now()}.png` }));
+  const fits = ({ file }: NamedFile) => file.size <= ATTACHMENT_LIMITS.fileBytes;
+  const fitting = named.filter(fits);
+  const tooLarge = named.filter((file) => !fits(file));
+  const overLimit =
+    files.length > INPUT_LIMITS.attachments ||
+    fitting.reduce((sum, { file }) => sum + file.size, 0) > ATTACHMENT_LIMITS.totalBytes;
+  if (overLimit) {
+    await runAttachmentImport(crypto.randomUUID(), serverId, named, false);
+    return;
+  }
+  const imports = fitting.map((file) => runAttachmentImport(crypto.randomUUID(), serverId, [file], true));
+  if (tooLarge.length > 0)
+    imports.push(runAttachmentImport(crypto.randomUUID(), serverId, tooLarge, false, Promise.all(imports)));
+  await Promise.all(imports);
+}
+
+async function runAttachmentImport(
+  requestId: string,
+  serverId: string,
+  named: NamedFile[],
+  retryable: boolean,
+  reportAfter: Promise<unknown> = Promise.resolve(),
+): Promise<void> {
+  if (retryable) attachmentImportFiles.set(requestId, { serverId, files: named });
+  emitAttachmentImport({
+    type: "started",
+    requestId,
+    serverId,
+    files: retryable ? named.map(({ file, name }) => ({ name, size: file.size })) : [],
+  });
+  try {
+    const input: ImportAttachmentsInput = { paths: [], data: [], requestId };
+    for (const { file, name } of named) {
+      const path = webUtils.getPathForFile(file);
+      if (path) input.paths.push(path);
+      else {
+        input.data.push({
+          name,
+          mimeType: file.type,
+          bytes: new Uint8Array(await file.arrayBuffer()),
+        });
+      }
+    }
+    const attachments = await invokeAgentForServer(
+      serverId,
+      IPC_ENDPOINTS.attachmentImports.importAttachments,
+      input,
+      decodeAttachments,
+    );
+    attachmentImportFiles.delete(requestId);
+    emitAttachmentImport({ type: "completed", requestId, serverId, attachments });
+  } catch (error) {
+    await reportAfter;
+    emitAttachmentImport({
+      type: "error",
+      requestId,
+      serverId,
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function isConversationDropTarget(target: EventTarget | null): boolean {
+  const conversation = document.querySelector(".conversation-panel");
+  return target instanceof Node && Boolean(conversation?.contains(target));
+}
+
+window.addEventListener("dragover", (event) => {
+  if (!isConversationDropTarget(event.target)) return;
+  if ([...(event.dataTransfer?.items ?? [])].some((item) => item.kind === "file")) {
+    event.preventDefault();
+  }
+});
+window.addEventListener("drop", (event) => {
+  if (!isConversationDropTarget(event.target)) return;
+  const files = [...(event.dataTransfer?.files ?? [])];
+  if (!files.length) return;
+  event.preventDefault();
+  void importFiles(files);
+});
+window.addEventListener("paste", (event) => {
+  const files = clipboardFiles(event.clipboardData);
+  if (files.length) {
+    event.preventDefault();
+    void importFiles(files);
+  }
+});
+window.addEventListener("change", (event) => {
+  const input = event.target;
+  if (!(input instanceof HTMLInputElement) || input.dataset.openbotAttachmentPicker !== "true") return;
+  void importFiles([...(input.files ?? [])]);
+});
+
+const agentGroup = bridgeGroup(IPC_ENDPOINTS.agent, {
+  getStatus: decodeAgentStatusFromMain,
+  getRuntimeSnapshot: decodeAgentRuntimeSnapshot,
+  getHostAnalytics: decodeHostAnalyticsFromMain,
+  getAnalytics: decodeAgentAnalyticsFromMain,
+  getUsage: decodeAccountUsageFromMain,
+  listModels: decodeAgentModels,
+  listAgents: decodeAgents,
+  readAgentSessionSettings: decodeAgentSessionSettingsFromMain,
+  setAgentSessionSetting: decodeAgentSessionSettingsFromMain,
+  resetAgentSessionSetting: decodeAgentSessionSettingsFromMain,
+  listHiddenAgents: decodeHiddenAgentsFromMain,
+  setAgentHidden: decodeHiddenAgentsFromMain,
+  listAgentNotificationLevels: decodeAgentNotificationLevelsFromMain,
+  setAgentNotificationLevel: decodeAgentNotificationLevelsFromMain,
+  listInstalledSkills: decodeInstalledSkillsFromMain,
+  listChannels: decodeChannelSummaries,
+  readChannel: decodeChannelPage,
+  channelCommand: decodeChannel,
+  deleteChannel: decodeVoid,
+  deleteChannelMessage: decodeVoid,
+  setChannelImage: decodeChannel,
+  clearChannelContext: decodeVoid,
+  deleteChannelHistory: decodeVoid,
+  compactChannelContext: decodeVoid,
+  getSidebarLayout: decodeSidebarLayout,
+  mutateSidebarLayout: decodeSidebarLayout,
+  getSidebarPins: decodeSidebarPinsFromMain,
+  setSidebarPins: decodeSidebarPinsFromMain,
+  seedSidebarPins: decodeSidebarPinsFromMain,
+  generateProfile: decodeAgentProfileDraft,
+  saveProfile: decodeSaveAgentProfileResult,
+  askSideQuestion: decodeSideQuestionAnswer,
+  saveSkillSuggestion: decodeSaveSkillSuggestionResult,
+  createAgent: decodeAgent,
+  duplicateAgent: decodeDuplicateAgentResultFromMain,
+  updateAgent: decodeAgent,
+  setAvatar: decodeAgent,
+  deleteAgent: decodeVoid,
+  readConversation: decodeConversation,
+  readConversationPage: decodeConversationPageFromMain,
+  searchConversationMessages: decodeConversationSearchPageFromMain,
+  openMessageLink: decodeMcpSignInRelayPage,
+  pasteMessageLink: decodeVoid,
+  cancelMessageLink: decodeVoid,
+  searchConversationFiles: decodeConversationFileSearchPage,
+  listConversationReads: decodeReadStates,
+  markConversationRead: decodeReadState,
+  markConversationUnread: decodeReadState,
+  sendMessage: decodeReceipt,
+  setMessageReaction: decodeVoid,
+  deleteConversationMessage: decodeVoid,
+  withdrawFeedback: decodeWithdrawFeedbackResult,
+  listQueue: decodeQueue,
+  listActiveQueues: decodeActiveQueues,
+  listWaits: decodeWaits,
+  listPinnedMessages: decodePinnedMessages,
+  setMessagePinned: decodePinnedMessages,
+  cancelWait: decodeVoid,
+  listTasks: decodeAgentTasks,
+  readTask: decodeTaskConversation,
+  readTaskPage: decodeTaskPage,
+  readTaskAround: decodeTaskWindow,
+  startTask: decodeAgentTask,
+  runQueuedMessageAsTask: decodeAgentTask,
+  branchTask: decodeAgentTask,
+  stopTask: decodeVoid,
+  closeTask: decodeVoid,
+  reopenTask: decodeVoid,
+  renameTask: decodeVoid,
+  deleteTask: decodeVoid,
+  listTaskReads: decodeAgentTaskReadStates,
+  markTaskRead: decodeAgentTaskReadState,
+  acknowledgeFailedTurn: decodeVoid,
+  cancelQueuedMessage: decodeVoid,
+  steerQueuedMessage: decodeVoid,
+  editQueuedMessage: decodeQueue,
+  updateQueuedMessage: decodeVoid,
+  reorderQueue: decodeVoid,
+  interrupt: decodeVoid,
+  clearContext: decodeVoid,
+  deleteHistory: decodeVoid,
+  compactContext: decodeVoid,
+  compactTaskContext: decodeVoid,
+  respondToPrompt: decodeVoid,
+  respondToApproval: decodeVoid,
+  readPendingApproval: decodePendingApproval,
+  respondToBrowserSecret: decodeVoid,
+  respondToBrowserTakeover: decodeVoid,
+  scopedEvent: decodeScopedAgentEvent,
+});
+
+const agentFoldersGroup = bridgeGroup(IPC_ENDPOINTS.agentFolders, {
+  listAgentFolders: decodeAgentFolderListFromMain,
+  chooseAgentFolder: decodeAgentFolderChangeFromMain,
+  addAgentFolder: decodeAgentFolderChangeFromMain,
+  removeAgentFolder: decodeAgentFolderChangeFromMain,
+  chooseAgentExclusion: decodeAgentExclusionChangeFromMain,
+  addAgentExclusion: decodeAgentExclusionChangeFromMain,
+  removeAgentExclusion: decodeAgentExclusionChangeFromMain,
+  browseAgentFolders: decodeAgentFolderBrowse,
+});
+
+const serversGroup = bridgeGroup(IPC_ENDPOINTS.servers, {
+  list: decodeServers,
+  select: decodeServers,
+  reorder: decodeServers,
+  setMuted: decodeServers,
+  setNotificationLevel: decodeServers,
+  join: decodeServer,
+  previewInvite: decodeInvitePreview,
+  takePendingInvite: decodePendingInvite,
+  login: decodeServer,
+  retryConnection: decodeServer,
+  remove: decodeVoid,
+  getPresence: decodeTeamPresenceSnapshot,
+  getPresenceFor: decodeTeamPresenceSnapshot,
+  refreshIdentity: decodeServer,
+  listMembers: decodeTeamMembers,
+  updateMember: decodeTeamMember,
+  removeMember: decodeVoid,
+  listInvites: decodeTeamInvites,
+  revokeInvite: decodeVoid,
+  createInvite: decodeInviteSummary,
+  setTyping: decodeVoid,
+  scopedPresence: decodeScopedTeamPresence,
+  listDirectThreads: decodeDirectThreads,
+  readDirectConversation: decodeDirectConversation,
+  readDirectConversationPage: decodeDirectConversationPage,
+  sendDirectMessage: decodeDirectMessage,
+  markDirectRead: decodeDirectReadState,
+  setDirectTyping: decodeVoid,
+  scopedDirectMessage: decodeScopedDirectMessage,
+  scopedDirectTyping: decodeScopedDirectTyping,
+  event: decodeServers,
+  invite: decodeInviteUrl,
+});
+
+function selectJoinedServer(server: ServerSummary): ServerSummary {
+  selectedServerId = server.id;
+  return server;
+}
+
+const openbotApi: OpenBotDesktopApi = {
+  ...bridgeGroup(IPC_ENDPOINTS.app, {
+    getAppInfo: decodeAppInfo,
+    getSetupState: decodeAppSetupState,
+    saveSetup: decodeAppSetupState,
+    setupState: decodeAppSetupState,
+    getAnalyticsPreference: decodeAnalyticsPreference,
+    getAnalyticsDefault: decodeAnalyticsPreference,
+    analyticsPreference: decodeAnalyticsPreference,
+    setAnalyticsPreference: decodeAnalyticsPreference,
+    reportRendererTiming: decodeVoid,
+    getApprovalAutomation: decodeApprovalAutomationPreference,
+    approvalAutomation: decodeApprovalAutomationPreference,
+    getBusyMessageModePreference: decodeBusyMessageModePreference,
+    getAgentDefaults: decodeAgentDefaults,
+    getAgentMemoryLimitPreference: decodeAgentMemoryLimitPreference,
+    agentMemoryLimitPreference: decodeAgentMemoryLimitPreference,
+    getAppBehaviorPreference: decodeAppBehaviorPreference,
+    setAppBehaviorPreference: decodeAppBehaviorPreference,
+    getRemoteSessionReusePreference: decodeRemoteSessionReusePreference,
+    setRemoteSessionReusePreference: decodeRemoteSessionReusePreference,
+    getRemoteNetworkRoute: decodeRemoteNetworkRouteState,
+    setRemoteNetworkRoute: decodeRemoteNetworkRouteState,
+    getAppLanguagePreference: decodeAppLanguagePreference,
+    setAppLanguagePreference: decodeAppLanguagePreference,
+    appLanguagePreference: decodeAppLanguagePreference,
+    getAppLogoColorPreference: decodeAppLogoColorPreference,
+    setAppLogoColorPreference: decodeAppLogoColorPreference,
+    appLogoColorPreference: decodeAppLogoColorPreference,
+    getAppAppearancePreference: decodeAppAppearancePreference,
+    setAppAppearancePreference: decodeAppAppearancePreference,
+    appAppearancePreference: decodeAppAppearancePreference,
+    listInstalledFonts: decodeInstalledFonts,
+    getAppInterfaceSizePreference: decodeAppInterfaceSizePreference,
+    setAppInterfaceSizePreference: decodeAppInterfaceSizePreference,
+    appInterfaceSizePreference: decodeAppInterfaceSizePreference,
+    openSettings: decodeVoid,
+    openUpdateSettings: decodeVoid,
+    openExternal: decodeVoid,
+    getSentMessageStats: decodeSentMessageStats,
+    openUrl: decodeVoid,
+    getExternalLinkPreference: decodeExternalLinkPreference,
+    setExternalLinkPreference: decodeExternalLinkPreference,
+    listExternalLinkBrowsers: decodeExternalLinkBrowsers,
+    chooseExternalLinkApp: decodeExternalLinkBrowserOrNull,
+    externalLinkFallback: decodeExternalLinkFallback,
+    openChatWindow: decodeVoid,
+    getChatWindows: decodeChatWindowTargets,
+    chatWindows: decodeChatWindowTargets,
+    quitShortcutHint: decodeQuitShortcutHint,
+  }),
+  ...bridgeGroup(IPC_ENDPOINTS.providers, {
+    connectProvider: decodeAgentStatusFromMain,
+    connectProviderInMainlandChina: decodeAgentStatusFromMain,
+    cancelProviderSignIn: decodeAgentStatusFromMain,
+    refreshAgentProviders: decodeAgentStatusFromMain,
+    setProviderOn: decodeAgentStatusFromMain,
+    restartProvider: decodeAgentStatusFromMain,
+    cancelProviderRestart: decodeAgentStatusFromMain,
+    chooseInstalledCli: decodeAgentStatusFromMain,
+    updateProviderCli: decodeAgentStatusFromMain,
+    setProviderApiKey: decodeAgentStatusFromMain,
+    clearProviderApiKey: decodeAgentStatusFromMain,
+    getProviderApiKeyState: decodeProviderApiKeyState,
+    startProviderCodeLogin: decodeProviderCodeLoginStart,
+    cancelProviderCodeLogin: decodeAgentStatusFromMain,
+    connectProviderAccount: decodeAgentStatusFromMain,
+    connectProviderAccountKey: decodeAgentStatusFromMain,
+    cancelProviderAccountSignIn: decodeAgentStatusFromMain,
+    renameProviderAccount: decodeAgentStatusFromMain,
+    removeProviderAccount: decodeAgentStatusFromMain,
+    setProviderAccountPool: decodeAgentStatusFromMain,
+    signOutProvider: decodeAgentStatusFromMain,
+    providerUsageResets: decodeProviderUsageResetsFromMain,
+    resetProviderUsage: decodeProviderUsageResetOutcomeFromMain,
+  }),
+  browserDock: bridgeGroup(IPC_ENDPOINTS.browserDock, {
+    publishPresentation: decodeVoid,
+    getPresentation: decodeBrowserDockPresentation,
+    presentation: decodeBrowserDockPresentation,
+    performAction: decodeVoid,
+    action: decodeBrowserDockAction,
+    setFrame: decodeVoid,
+    shown: decodeBrowserDockShown,
+  }),
+  agentDock: bridgeGroup(IPC_ENDPOINTS.agentDock, {
+    publishPresentation: decodeVoid,
+    getPresentation: decodeAgentDockPresentation,
+    presentation: decodeAgentDockPresentation,
+    performAction: decodeVoid,
+    action: decodeAgentDockAction,
+    setInteractive: decodeVoid,
+    setInputRegion: decodeVoid,
+    setXWayland: decodeVoid,
+    closeChat: decodeVoid,
+    listDisplays: decodeAgentDockDisplays,
+    drag: decodeVoid,
+    moved: decodeAgentDockOffset,
+  }),
+  dynamicIsland: bridgeGroup(IPC_ENDPOINTS.dynamicIsland, {
+    getPreference: decodeDynamicIslandPreference,
+    setPreference: decodeDynamicIslandPreference,
+    publishPresentation: decodeVoid,
+    getPresentation: decodeDynamicIslandPresentation,
+    preference: decodeDynamicIslandPreference,
+    presentation: decodeDynamicIslandPresentation,
+    geometry: decodeDynamicIslandGeometry,
+    getBuiltInDisplayGeometry: decodeDynamicIslandGeometry,
+    performAction: decodeVoid,
+    performHaptic: decodeVoid,
+    action: decodeDynamicIslandAction,
+    openBrowserTakeover: decodeVoid,
+    setInteractive: decodeVoid,
+    setInputRegion: decodeVoid,
+    setXWayland: decodeVoid,
+  }),
+  computerUse: bridgeGroup(IPC_ENDPOINTS.computerUse, {
+    getState: decodeComputerUseState,
+    openPermissionPane: decodeComputerUseState,
+    closePermissionHelp: decodeVoid,
+    getPermissionApp: decodeComputerUsePermissionApp,
+    startPermissionAppDrag: decodeVoid,
+    revealPermissionApp: decodeVoid,
+    highlightPlacement: decodeComputerUseHighlightPlacement,
+  }),
+  macAutomation: bridgeGroup(IPC_ENDPOINTS.macAutomation, {
+    request: decodeMacAutomationResults,
+  }),
+  backgroundProcesses: bridgeGroup(IPC_ENDPOINTS.backgroundProcesses, {
+    list: decodeBackgroundProcesses,
+    stop: decodeVoid,
+  }),
+  providerRuntimes: bridgeGroup(IPC_ENDPOINTS.providerRuntimes, {
+    getStatus: decodeProviderRuntimeSnapshot,
+    download: decodeProviderRuntimeSnapshot,
+    cancel: decodeProviderRuntimeSnapshot,
+    measureDownload: decodeProviderRuntimeDownload,
+    removeDownload: decodeProviderRuntimeSnapshot,
+    checkForUpdates: decodeProviderRuntimeSnapshot,
+    event: decodeProviderRuntimeSnapshot,
+  }),
+  routineFlows: bridgeGroup(IPC_ENDPOINTS.routineFlows, {
+    canvas: decodeRoutineFlowCanvas,
+    savePosition: decodeVoid,
+    removePosition: decodeVoid,
+    connect: decodeRoutineFlowLink,
+    disconnect: decodeVoid,
+    updateLink: decodeRoutineFlowLink,
+    stopRun: decodeVoid,
+  }),
+  workflows: bridgeGroup(IPC_ENDPOINTS.workflows, {
+    list: decodeWorkflowSummaries,
+    get: decodeWorkflowDetail,
+    create: decodeWorkflowDetail,
+    rename: decodeWorkflowSummary,
+    delete: decodeVoid,
+    saveGraph: decodeWorkflowSaveResult,
+    versions: decodeWorkflowVersions,
+    versionGraph: decodeWorkflowGraph,
+    restoreVersion: decodeWorkflowDetail,
+    startRun: decodeWorkflowRunDetail,
+    runStep: decodeWorkflowStep,
+    stopStep: decodeVoid,
+    stopRun: decodeVoid,
+    retryStep: decodeWorkflowStep,
+    decide: decodeVoid,
+    runs: decodeWorkflowRunPage,
+    run: decodeWorkflowRunDetail,
+    rotateWebhookSecret: decodeWorkflowWebhookSecret,
+    githubCatalog: decodeWorkflowGitHubCatalog,
+    githubOptions: decodeWorkflowGitHubOptions,
+    githubHistory: decodeWorkflowGitHubHistory,
+    githubRunLastEvent: decodeWorkflowRunDetail,
+    keepPicture: decodeWorkflowPictureId,
+    mediaProviders: decodeWorkflowMediaProviders,
+    mediaCredits: decodeWorkflowMediaCredits,
+    mediaCatalog: decodeWorkflowMediaCatalog,
+    mediaPrice: decodeWorkflowMediaPrice,
+  }),
+  crm: bridgeGroup(IPC_ENDPOINTS.crm, {
+    overview: decodeCrmOverview,
+    customers: decodeCrmCustomerPage,
+    payments: decodeCrmPaymentPage,
+    activity: decodeCrmActivityPage,
+    apply: decodeCrmApplyResult,
+    sourceConnect: decodeCrmApplyResult,
+    sourceDisconnect: decodeCrmApplyResult,
+    sourceSync: decodeCrmApplyResult,
+    settings: decodeCrmSettings,
+    setSettings: decodeCrmSettings,
+  }),
+  routineResults: bridgeGroup(IPC_ENDPOINTS.routineResults, {
+    options: decodeRoutineResultOptions,
+    destination: decodeRoutineResultDestination,
+    setDestination: decodeRoutineResultDestination,
+    deliveries: decodeRoutineResultDeliveries,
+    resend: decodeVoid,
+  }),
+  voice: bridgeGroup(IPC_ENDPOINTS.voice, {
+    getModelStatus: decodeVoiceModelStatus,
+    getModelStatuses: decodeVoiceModelStatuses,
+    downloadModel: decodeVoiceModelStatus,
+    cancelModelDownload: decodeVoiceModelStatus,
+    removeModel: decodeVoiceModelStatus,
+    getSettings: decodeVoiceSettings,
+    setSettings: decodeVoiceSettings,
+    prepareModel: decodeVoiceModelStatus,
+    transcribe: decodeVoiceTranscriptionResult,
+    setApiKey: decodeVoiceModelStatus,
+    startStream: decodeVoiceStream,
+    appendStream: decodeVoid,
+    finishStream: decodeVoiceTranscriptionResult,
+    cancelStream: decodeVoid,
+    modelStatus: decodeVoiceModelStatus,
+    streamTranscript: decodeVoiceStreamTranscript,
+    getSpeechSettings: decodeSpeechSettings,
+    setSpeechSettings: decodeSpeechSettings,
+    getSpeechModelStatus: decodeSpeechModelStatus,
+    setSpeechApiKey: decodeSpeechModelStatus,
+    downloadSpeechModel: decodeSpeechModelStatus,
+    cancelSpeechModelDownload: decodeSpeechModelStatus,
+    removeSpeechModel: decodeSpeechModelStatus,
+    speak: decodeSpeechAudio,
+    warmSpeech: decodeVoid,
+    keepRecording: decodeAttachment,
+    speechModelStatus: decodeSpeechModelStatus,
+    getServer: decodeVoiceServerSettings,
+    probeServer: decodeVoiceServerProbe,
+    setServer: decodeVoiceServerSettings,
+    serverSettings: decodeVoiceServerSettings,
+    startLive: decodeVoiceLiveSession,
+    stopLive: decodeVoid,
+    liveEvent: decodeVoiceLiveEvent,
+  }),
+  auth: bridgeGroup(IPC_ENDPOINTS.auth, {
+    getState: decodeCentralAuthState,
+    retry: decodeCentralAuthState,
+    requestEmailCode: decodeCentralAuthState,
+    verifyEmailCode: decodeCentralAuthState,
+    updateName: decodeCentralAuthState,
+    updateAvatar: decodeCentralAuthState,
+    updateChatColor: decodeCentralAuthState,
+    createMobileConnect: decodeMobileConnectTicket,
+    cancelMobileConnect: decodeVoid,
+    getMobileConnectLink: (value) => (value === null ? null : decodeMobileConnectLink(value)),
+    createMobileConnectLink: decodeMobileConnectLink,
+    revokeMobileConnectLink: decodeVoid,
+    listMobileConnectedDevices: decodeMobileConnectedDevices,
+    listAccountSessions: decodeAccountSessions,
+    revokeAccountSession: decodeVoid,
+    revokeMobileConnectedDevice: decodeVoid,
+    logout: decodeCentralAuthState,
+    openCompanySignIn: decodeCentralAuthState,
+    getCompanySignIn: decodeCompanySignInSettings,
+    testCompanySignIn: decodeTestCompanySignInResult,
+    cancelCompanySignInTest: decodeVoid,
+    setCompanySignInEnabled: decodeCompanySignInSettings,
+    removeCompanySignIn: decodeCompanySignInSettings,
+    createCompanySignInScimToken: decodeCompanySignInScimToken,
+    revokeCompanySignInScimToken: decodeCompanySignInSettings,
+    event: decodeCentralAuthState,
+  }),
+  skills: bridgeGroup(IPC_ENDPOINTS.skills, {
+    localList: decodeSkillDetails,
+    localGet: decodeSkillDetail,
+    localCreate: decodeSkillDetail,
+    localRevise: decodeSkillDetail,
+    localInstall: decodeInstalledSkill,
+    list: decodeSkillPage,
+    get: decodeSkillDetail,
+    getBySlug: decodeSkillDetail,
+    listMine: decodeSubmissions,
+    choosePackage: decodeSkillPreview,
+    submit: decodeSubmission,
+    listInstalled: decodeInstalledSkillsFromMain,
+    install: decodeInstalledSkill,
+    uninstall: decodeVoid,
+    setEnabled: decodeInstalledSkill,
+  }),
+  hostedSites: bridgeGroup(IPC_ENDPOINTS.hostedSites, {
+    list: decodeHostedSiteList,
+    chooseDirectory: decodeNullablePath,
+    publish: decodeHostedSite,
+    replace: decodeHostedSite,
+    delete: decodeVoid,
+  }),
+  githubConnector: bridgeGroup(IPC_ENDPOINTS.githubConnector, {
+    status: decodeGitHubConnectorStatus,
+    connect: decodeGitHubConnectorStatus,
+    cancel: decodeGitHubConnectorStatus,
+    disconnect: decodeGitHubConnectorStatus,
+    repositories: decodeGitHubConnectorRepositories,
+    openVerification: decodeVoid,
+    openInstall: decodeVoid,
+    changed: decodeGitHubConnectorStatus,
+    hostStatus: decodeGitHubConnectorStatus,
+    hostConnect: decodeGitHubConnectorStatus,
+    hostCancel: decodeGitHubConnectorStatus,
+    hostDisconnect: decodeGitHubConnectorStatus,
+    hostRepositories: decodeGitHubConnectorRepositories,
+    hostOpenVerification: decodeVoid,
+    hostOpenInstall: decodeVoid,
+  }),
+  linkAccount: bridgeGroup(IPC_ENDPOINTS.linkAccount, {
+    status: decodeLinkAccountStatus,
+    connect: decodeLinkAccountStatus,
+    cancel: decodeLinkAccountStatus,
+    disconnect: decodeLinkAccountStatus,
+    changed: decodeLinkAccountStatus,
+  }),
+  passwordManagers: bridgeGroup(IPC_ENDPOINTS.passwordManagers, {
+    list: decodePasswordManagerResponses,
+    connect: decodePasswordManagerResponse,
+    cancel: decodePasswordManagerResponse,
+    disconnect: decodePasswordManagerResponse,
+    openSignIn: decodeVoid,
+    changed: dropInvalid(decodePasswordManagerChange),
+    hostList: decodePasswordManagerResponses,
+    hostConnect: decodePasswordManagerResponse,
+    hostCancel: decodePasswordManagerResponse,
+    hostDisconnect: decodePasswordManagerResponse,
+    hostOpenSignIn: decodeVoid,
+  }),
+  bitwardenConnector: bridgeGroup(IPC_ENDPOINTS.bitwardenConnector, {
+    status: decodeBitwardenConnectorStatus,
+    connect: decodeBitwardenConnectorStatus,
+    disconnect: decodeBitwardenConnectorStatus,
+    changed: decodeBitwardenConnectorStatus,
+    hostStatus: decodeBitwardenConnectorStatus,
+    hostConnect: decodeBitwardenConnectorStatus,
+    hostDisconnect: decodeBitwardenConnectorStatus,
+  }),
+  vault: bridgeGroup(IPC_ENDPOINTS.vault, {
+    list: decodeVaultState,
+    save: decodeVaultState,
+    delete: decodeVaultState,
+    reveal: decodeVaultSecret,
+    copy: decodeVoid,
+    importCsv: decodeVaultImportResult,
+    reset: decodeVaultState,
+    codes: decodeVaultCodes,
+    changed: decodeVaultState,
+    hostList: decodeVaultState,
+    hostSave: decodeVaultState,
+    hostDelete: decodeVaultState,
+    hostReveal: decodeVaultSecret,
+    hostCopy: decodeVoid,
+    hostReset: decodeVaultState,
+    hostCodes: decodeVaultCodes,
+    hostImportCsv: decodeVaultImportResult,
+  }),
+  onePasswordConnector: bridgeGroup(IPC_ENDPOINTS.onePasswordConnector, {
+    status: decodeOnePasswordConnectorStatus,
+    checkSetup: decodeOnePasswordConnectorStatus,
+    installCli: decodeOnePasswordConnectorStatus,
+    openApp: decodeVoid,
+    connect: decodeOnePasswordConnectorStatus,
+    connectWithToken: decodeOnePasswordConnectorStatus,
+    cancel: decodeOnePasswordConnectorStatus,
+    disconnect: decodeOnePasswordConnectorStatus,
+    changed: decodeOnePasswordConnectorStatus,
+    hostStatus: decodeOnePasswordConnectorStatus,
+    hostConnectWithToken: decodeOnePasswordConnectorStatus,
+    hostDisconnect: decodeOnePasswordConnectorStatus,
+  }),
+  routineFeed: bridgeGroup(IPC_ENDPOINTS.routineFeed, {
+    get: decodeRoutineFeed,
+    create: decodeRoutineFeed,
+    remove: decodeRoutineFeed,
+  }),
+  billing: bridgeGroup(IPC_ENDPOINTS.billing, {
+    getState: decodeBillingState,
+    openPortal: decodeVoid,
+    buyStorage: decodeBillingState,
+    getDetails: decodeBillingDetails,
+    setDetails: decodeBillingDetails,
+  }),
+  referral: bridgeGroup(IPC_ENDPOINTS.referral, {
+    getState: decodeReferralState,
+  }),
+  license: bridgeGroup(IPC_ENDPOINTS.license, {
+    getState: decodeLicenseState,
+    openCheckout: decodeVoid,
+    setUsers: decodeLicenseState,
+    changePlan: decodeLicenseState,
+    setRenewal: decodeLicenseState,
+  }),
+  hostedServers: bridgeGroup(IPC_ENDPOINTS.hostedServers, {
+    lifecycle: decodeVoid,
+    list: decodeHostedServerList,
+    plans: decodeHostedServerCatalog,
+    create: decodeHostedServer,
+    openCheckout: decodeHostedServer,
+    delete: decodeVoid,
+    wake: decodeHostedServer,
+    restart: decodeHostedServer,
+    createServerClaim: decodeServerClaim,
+  }),
+  localServers: bridgeGroup(IPC_ENDPOINTS.localServers, {
+    create: decodeServer,
+    restart: decodeVoid,
+    delete: decodeVoid,
+  }),
+  customProviders: bridgeGroup(IPC_ENDPOINTS.customProviders, {
+    list: decodeCustomProviders,
+    save: decodeCustomProviderResult,
+    delete: decodeCustomProviderResult,
+    update: decodeCustomProviderResult,
+  }),
+  acpRegistry: bridgeGroup(IPC_ENDPOINTS.acpRegistry, {
+    search: decodeRegistryEntries,
+    installed: decodeRegistryInstallations,
+    status: decodeRegistryOperations,
+    install: decodeRegistryInstallResult,
+    cancel: decodeVoid,
+    remove: decodeVoid,
+  }),
+  customAgents: bridgeGroup(IPC_ENDPOINTS.customAgents, {
+    list: decodeCustomAgents,
+    save: decodeCustomAgentResult,
+    delete: decodeCustomAgentResult,
+    check: decodeCustomAgentCheckResult,
+    usage: decodeCustomAgentUsage,
+  }),
+  providerDetection: bridgeGroup(IPC_ENDPOINTS.providerDetection, {
+    scanModelServers: decodeDetectedModelServers,
+    scanAgents: decodeDetectedAcpAgents,
+    discoverModels: decodeDiscoverModelsResult,
+    getSettings: decodeProviderDetectionSettings,
+    setSettings: decodeProviderDetectionSettings,
+  }),
+  providerAdmin: bridgeGroup(IPC_ENDPOINTS.providerAdmin, {
+    startCodeLogin: decodeProviderCodeLoginStart,
+    submitCodeLogin: decodeAgentStatusFromMain,
+    cancelCodeLogin: decodeAgentStatusFromMain,
+    startHostSignIn: decodeVoid,
+    hostSignInStatus: decodeProviderHostSignInStatus,
+    cancelHostSignIn: decodeAgentStatusFromMain,
+    accounts: decodeHostProviderAccountsFromMain,
+    accountUsage: decodeAccountUsageFromMain,
+    startAccountSignIn: decodeVoid,
+    accountSignInStatus: decodeProviderHostSignInStatus,
+    cancelAccountSignIn: decodeVoid,
+    connectAccountKey: decodeVoid,
+    startAccountCodeLogin: decodeProviderAccountCodeLoginStart,
+    submitAccountCodeLogin: decodeVoid,
+    accountCodeLoginStatus: decodeProviderAccountCodeLoginStatus,
+    cancelAccountCodeLogin: decodeVoid,
+    renameAccount: decodeVoid,
+    removeAccount: decodeVoid,
+    setAccountPool: decodeVoid,
+    hostDefaultProvider: decodeHostDefaultProviderFromMain,
+    setHostDefaultProvider: decodeHostDefaultProviderFromMain,
+    usageResets: decodeProviderUsageResetsFromMain,
+    resetUsage: decodeProviderUsageResetOutcomeFromMain,
+    signOut: decodeVoid,
+    startRelaySignIn: decodeVoid,
+    startAccountRelaySignIn: decodeVoid,
+    relaySignInStatus: decodeProviderRelaySignInStatus,
+    openRelaySignIn: decodeVoid,
+    pasteRelaySignIn: decodeVoid,
+    cancelRelaySignIn: decodeAgentStatusFromMain,
+    getApiKeyState: decodeProviderApiKeyState,
+    setApiKey: decodeAgentStatusFromMain,
+    clearApiKey: decodeAgentStatusFromMain,
+    getRuntimes: decodeProviderRuntimeSnapshot,
+    downloadRuntime: decodeProviderRuntimeSnapshot,
+    cancelRuntime: decodeProviderRuntimeSnapshot,
+    checkRuntimeUpdates: decodeProviderRuntimeSnapshot,
+    listCustomProviders: decodeCustomProviders,
+    saveCustomProvider: decodeCustomProviderResult,
+    updateCustomProvider: decodeCustomProviderResult,
+    deleteCustomProvider: decodeCustomProviderResult,
+    providerUse: decodeProviderUseFromMain,
+    setProviderUse: decodeProviderUseFromMain,
+  }),
+  messaging: bridgeGroup(IPC_ENDPOINTS.messaging, {
+    getSlackOverview: decodeMessagingOverviewReply,
+    connectSlackWorkspace: decodeVoid,
+    disconnectSlackWorkspace: decodeVoid,
+    reconnectSlackWorkspace: decodeVoid,
+    setSlackEnabled: decodeVoid,
+    addSlackOrchestrator: decodeAddOrchestratorReply,
+    getDiscordOverview: decodeMessagingOverviewReply,
+    connectDiscordGuild: decodeVoid,
+    disconnectDiscordGuild: decodeVoid,
+    reconnectDiscordGuild: decodeVoid,
+    setDiscordEnabled: decodeVoid,
+    addDiscordOrchestrator: decodeAddOrchestratorReply,
+    getDiscordAccess: decodeDiscordAccessReply,
+    listDiscordRoles: decodeDiscordRolesReply,
+    setDiscordAccess: decodeDiscordAccessReply,
+    getTelegramOverview: decodeTelegramOverviewReply,
+    connectTelegramChat: decodeVoid,
+    disconnectTelegramChat: decodeVoid,
+    reconnectTelegramChat: decodeVoid,
+    setTelegramEnabled: decodeVoid,
+    addTelegramOrchestrator: decodeAddOrchestratorReply,
+    getWhatsAppOverview: decodeWhatsAppOverviewReply,
+    startWhatsAppLink: decodeWhatsAppLinkStateReply,
+    getWhatsAppLinkState: decodeWhatsAppLinkStateReply,
+    cancelWhatsAppLink: decodeVoid,
+    disconnectWhatsAppNumber: decodeVoid,
+    reconnectWhatsAppNumber: decodeVoid,
+    setWhatsAppEnabled: decodeVoid,
+    addWhatsAppOrchestrator: decodeAddOrchestratorReply,
+    listWhatsAppGroups: decodeWhatsAppGroupsReply,
+    addWhatsAppSender: decodeVoid,
+    removeWhatsAppSender: decodeVoid,
+    answerWhatsAppRequest: decodeVoid,
+    setWhatsAppOwnNumber: decodeVoid,
+    setWhatsAppWorkingMessage: decodeVoid,
+    setWhatsAppStatusReactions: decodeVoid,
+    hostOverview: decodeTelegramOverviewReply,
+    hostConnect: decodeVoid,
+    hostDisconnect: decodeVoid,
+    hostReconnect: decodeVoid,
+    hostSetEnabled: decodeVoid,
+    hostAddOrchestrator: decodeAddOrchestratorReply,
+    hostGetDiscordAccess: decodeDiscordAccessReply,
+    hostListDiscordRoles: decodeDiscordRolesReply,
+    hostSetDiscordAccess: decodeDiscordAccessReply,
+    hostGetWhatsAppOverview: decodeWhatsAppOverviewReply,
+    hostStartWhatsAppLink: decodeWhatsAppLinkStateReply,
+    hostGetWhatsAppLinkState: decodeWhatsAppLinkStateReply,
+    hostCancelWhatsAppLink: decodeVoid,
+    hostDisconnectWhatsAppNumber: decodeVoid,
+    hostReconnectWhatsAppNumber: decodeVoid,
+    hostSetWhatsAppEnabled: decodeVoid,
+    hostAddWhatsAppOrchestrator: decodeAddOrchestratorReply,
+    hostListWhatsAppGroups: decodeWhatsAppGroupsReply,
+    hostAddWhatsAppSender: decodeVoid,
+    hostRemoveWhatsAppSender: decodeVoid,
+    hostAnswerWhatsAppRequest: decodeVoid,
+    hostSetWhatsAppOwnNumber: decodeVoid,
+    hostSetWhatsAppWorkingMessage: decodeVoid,
+    hostSetWhatsAppStatusReactions: decodeVoid,
+  }),
+  hostAdmin: bridgeGroup(IPC_ENDPOINTS.hostAdmin, {
+    updateIdentity: decodeServer,
+    rotateHostKey: decodeVoid,
+    restartHost: decodeVoid,
+    getUpdateStatus: decodeHostUpdateStatus,
+    getReleaseStatus: (value) => (value === null ? null : decodeHostReleaseStatusFromMain(value)),
+    checkRelease: decodeHostReleaseStatusFromMain,
+    checkForUpdate: decodeHostUpdateStatus,
+    startUpdate: decodeHostUpdateStatus,
+    cancelUpdate: decodeHostUpdateStatus,
+    setUpdateSettings: decodeHostUpdateStatus,
+    getTimezone: decodeHostTimezoneSettings,
+    setTimezone: decodeHostTimezoneSettings,
+    getTurnLimits: decodeHostTurnLimits,
+    setTurnLimits: decodeHostTurnLimits,
+    getPersonality: decodeHostPersonality,
+    setPersonality: decodeHostPersonality,
+    getAgentMemoryLimit: decodeHostAgentMemoryLimit,
+    setAgentMemoryLimit: decodeHostAgentMemoryLimit,
+    getMemoryReview: decodeHostMemoryReview,
+    setMemoryReview: decodeHostMemoryReview,
+    getSkillLearning: decodeHostSkillLearning,
+    setSkillLearning: decodeHostSkillLearning,
+    getBrowsingMemory: decodeHostBrowsingMemory,
+    setBrowsingMemory: decodeHostBrowsingMemory,
+    getMachineAlerts: decodeMachineAlertSettings,
+    setMachineAlerts: decodeMachineAlertSettings,
+    getPromptCacheTtl: decodePromptCacheTtlSetting,
+    setPromptCacheTtl: decodePromptCacheTtlSetting,
+    getClaudeUserSetup: decodeClaudeUserSetupSetting,
+    setClaudeUserSetup: decodeClaudeUserSetupSetting,
+    getClaudeCompactWindow: decodeClaudeCompactWindowSetting,
+    setClaudeCompactWindow: decodeClaudeCompactWindowSetting,
+    getProviderEnvironment: decodeProviderEnvironment,
+    setProviderEnvironment: decodeProviderEnvironment,
+    getModelVisibility: decodeProviderModelVisibility,
+    setModelVisibility: decodeProviderModelVisibility,
+    getAgentAccess: decodeAgentAccessSnapshot,
+    setAgentAccess: decodeAgentAccessSnapshot,
+    getAuditLog: decodeServerAuditLog,
+  }),
+  agentImport: bridgeGroup(IPC_ENDPOINTS.agentImport, {
+    choose: decodeAgentImportPreview,
+    apply: decodeAgentImportResult,
+    discard: decodeVoid,
+    readSkill: decodeAgentImportSkill,
+    saveSkill: decodeExportResult,
+    readHermes: decodeHermesImportPreview,
+    chooseHermes: decodeHermesImportPreview,
+    applyHermes: decodeHermesImportResult,
+    discardHermes: decodeVoid,
+  }),
+  instanceTransfer: bridgeGroup(IPC_ENDPOINTS.instanceTransfer, {
+    summary: decodeInstanceTransferSummary,
+    export: decodeInstanceExportResult,
+    showExport: decodeVoid,
+    choose: decodeInstanceTransferPreview,
+    apply: decodeInstanceTransferResult,
+    discard: decodeVoid,
+    copy: decodeInstanceTransferResult,
+    uploadProgress: decodeInstanceTransferUploadProgress,
+  }),
+  marketplaceAgents: bridgeGroup(IPC_ENDPOINTS.marketplaceAgents, {
+    list: decodeMarketplaceAgentPage,
+    get: decodeMarketplaceAgentDetail,
+    getListing: decodeMarketplaceAgentDetail,
+    listMine: decodeAgentSubmissions,
+    preview: decodeAgentPublicationPreview,
+    submit: decodeAgentSubmission,
+    install: decodeAgentInstallation,
+  }),
+  agentTemplates: bridgeGroup(IPC_ENDPOINTS.agentTemplates, {
+    preview: decodeAgentTemplatePreview,
+    publish: decodeAgentTemplatePublication,
+    unpublish: decodeVoid,
+    get: decodeAgentTemplateDetail,
+    install: decodeAgentInstallation,
+    takePendingLink: decodePendingAgentTemplate,
+    openLink: dropInvalid(decodePendingAgentTemplate),
+  }),
+  agent: {
+    ...agentGroup,
+    ...bridgeGroup(IPC_ENDPOINTS.agentMemories, {
+      getMemorySelection: decodeOptionalMemorySelection,
+      setMemoryInclusion: decodeMemorySelection,
+      listMemories: decodeMemories,
+      createMemory: decodeMemory,
+      updateMemory: decodeMemory,
+      deleteMemory: decodeVoid,
+      clearMemories: decodeVoid,
+    }),
+    ...bridgeGroup(IPC_ENDPOINTS.sharedTables, {
+      listTables: decodeTables,
+      deleteTable: decodeVoid,
+    }),
+    ...bridgeGroup(IPC_ENDPOINTS.agentRoutines, {
+      listRoutines: decodeRoutines,
+      createRoutine: decodeRoutine,
+      updateRoutine: decodeRoutine,
+      deleteRoutine: decodeVoid,
+      testRoutine: decodeRoutineRun,
+      listRoutineRuns: decodeRoutineRuns,
+      automationRunCommand: decodeAutomationRunCommand,
+      routineCalendar: decodeRoutineCalendar,
+    }),
+    ...bridgeGroup(IPC_ENDPOINTS.channelMemories, {
+      listChannelMemories: decodeChannelMemories,
+      createChannelMemory: decodeChannelMemory,
+      updateChannelMemory: decodeChannelMemory,
+      deleteChannelMemory: decodeVoid,
+      clearChannelMemories: decodeVoid,
+    }),
+    ...bridgeGroup(IPC_ENDPOINTS.channelRoutines, {
+      listChannelRoutines: decodeChannelRoutines,
+      createChannelRoutine: decodeChannelRoutine,
+      updateChannelRoutine: decodeChannelRoutine,
+      deleteChannelRoutine: decodeVoid,
+      testChannelRoutine: decodeChannelRoutineRun,
+      listChannelRoutineRuns: decodeChannelRoutineRuns,
+    }),
+    ...bridgeGroup(IPC_ENDPOINTS.mcpServers, {
+      listMcpServers: decodeMcpServerConfigs,
+      saveMcpServer: decodeMcpServerConfigs,
+      removeMcpServer: decodeMcpServerConfigs,
+      setMcpServerEnabled: decodeMcpServerConfigs,
+      getMcpAccess: decodeMcpAccessSnapshot,
+      setMcpAccess: decodeMcpAccessSnapshot,
+      testMcpServer: decodeMcpTestResult,
+      signInMcpServer: decodeMcpTestResult,
+      mcpSignInPage: decodeMcpSignInPage,
+      mcpSignInRelay: decodeMcpSignInRelayPage,
+      openMcpSignInRelay: decodeVoid,
+      completeMcpSignInRelay: decodeVoid,
+      cancelMcpSignIn: decodeVoid,
+      copyMcpSignInLink: decodeVoid,
+      signOutMcpServer: decodeMcpSignInStates,
+      listMcpSignIns: decodeMcpSignInStates,
+      mcpSignInApp: decodeMcpSignInAppState,
+      saveMcpSignInApp: decodeMcpSignInAppState,
+      removeMcpSignInApp: decodeMcpSignInAppState,
+    }),
+    ...bridgeGroup(IPC_ENDPOINTS.agentAdmin, {
+      getAgentAdminSettings: decodeAgentAdminSettings,
+      getAgentHostSettings: decodeAgentHostSettingsFromMain,
+      updateAgentHostSettings: decodeAgentHostSettingsFromMain,
+      getAgentBackupModels: decodeAgentBackupModelSettings,
+      updateAgentBackupModels: decodeAgentBackupModelSettings,
+      getAgentNewChat: decodeAgentNewChatSettings,
+      updateAgentNewChat: decodeAgentNewChatSettings,
+      previewAgentTemplate: decodeAgentTemplatePreview,
+      publishAgentTemplate: decodeAgentTemplatePublication,
+      unpublishAgentTemplate: decodeVoid,
+      getAgentPlanCard: decodeAgentPlanCardSettings,
+      updateAgentPlanCard: decodeAgentPlanCardSettings,
+      getAgentFastMode: decodeAgentFastModeSettings,
+      updateAgentFastMode: decodeAgentFastModeSettings,
+      listBrowserProfiles: decodeBrowserProfileList,
+      createBrowserProfile: decodeBrowserProfileSummary,
+      updateBrowserProfile: decodeBrowserProfileSummary,
+      clearBrowserData: decodeVoid,
+      deleteBrowserProfile: decodeVoid,
+      getAgentBrowserProfile: decodeAgentBrowserProfile,
+      updateAgentBrowserProfile: decodeAgentBrowserProfile,
+      getAgentDefaultsOverview: decodeAgentDefaultsOverview,
+      updateAgentDefaultsOverview: decodeAgentDefaultsOverview,
+      setAgentDefaultChoice: decodeAgentDefaultsOverview,
+      listBrowserProxies: decodeOptionalBrowserProxyList,
+      saveBrowserProxy: decodeBrowserProxySummary,
+      deleteBrowserProxy: decodeVoid,
+      setBrowserProfileProxy: decodeVoid,
+      getBrowserComputerSharing: decodeOptionalBrowserComputerSharing,
+      setBrowserComputerSharing: decodeVoid,
+      listBrowserTabProfiles: decodeBrowserTabProfiles,
+      updateAgentAdminSettings: decodeAgentAdminSettings,
+      listAgentSkills: decodeInstalledSkillsFromMain,
+      installAgentSkill: decodeInstalledSkill,
+      uninstallAgentSkill: decodeVoid,
+      setAgentSkillEnabled: decodeInstalledSkill,
+      readGithubSkills: decodeGithubSkillSourceFromMain,
+      addMarketplaceAgent: decodeAddedAgent,
+      addTemplateAgent: decodeAddedAgent,
+    }),
+    ...bridgeGroup(IPC_ENDPOINTS.agentAttachments, {
+      importAttachmentData: decodeAttachments,
+      chooseAttachments: decodeAttachments,
+      discardDraftAttachment: decodeVoid,
+      downloadAttachments: decodeVoid,
+      openAttachment: decodeVoid,
+      stopAttachmentDownload: decodeVoid,
+      attachmentDownload: decodeAttachmentDownloadProgress,
+      openSharedFile: decodeVoid,
+      openWorkspaceFile: decodeVoid,
+      previewSharedFile: decodeFilePreview,
+      previewWorkspaceFile: decodeFilePreview,
+      releaseFilePreview: decodeVoid,
+      addPreviewPage: decodeOptionalFilePreviewPageUrl,
+      listWorkspaceDirectory: decodeWorkspaceDirectory,
+    }),
+    ...agentFoldersGroup,
+    ...bridgeGroup(IPC_ENDPOINTS.agentInstructions, {
+      readAgentInstructions: decodeAgentInstructionsFileFromMain,
+      saveAgentInstructions: decodeAgentInstructionsFileFromMain,
+      revealAgentInstructions: decodeVoid,
+    }),
+    addDroppedAgentFolder: async (agentId, folder) => {
+      const path = webUtils.getPathForFile(folder);
+      if (!path)
+        return {
+          outcome: "refused",
+          path: folder.name,
+          refusal: "missing",
+          list: await agentFoldersGroup.listAgentFolders(agentId),
+        };
+      return agentFoldersGroup.addAgentFolder({ agentId, path });
+    },
+    onAttachmentImport: (listener) => {
+      attachmentImportListeners.add(listener);
+      return () => attachmentImportListeners.delete(listener);
+    },
+    retryAttachmentImport: (requestId) => {
+      const entry = attachmentImportFiles.get(requestId);
+      if (entry) void runAttachmentImport(requestId, entry.serverId, entry.files, true);
+    },
+    discardAttachmentImport: (requestId) => {
+      attachmentImportFiles.delete(requestId);
+    },
+    onEvent: (listener) =>
+      agentGroup.onScopedEvent((scoped) => {
+        if (scoped.serverId === selectedServerId) listener(scoped.event);
+      }),
+  },
+  browser: {
+    ...bridgeGroup(IPC_ENDPOINTS.browser, {
+      open: decodeBrowserTab,
+      activate: decodeVoid,
+      navigate: decodeVoid,
+      reload: decodeVoid,
+      stop: decodeVoid,
+      close: decodeVoid,
+      takeControl: decodeVoid,
+      releaseControl: decodeVoid,
+      startTeach: decodeVoid,
+      stopTeach: decodeBrowserTeachSteps,
+      listTabs: decodeBrowserTabs,
+      getDisplayState: decodeBrowserDisplayState,
+      getControlState: decodeBrowserControlState,
+      capturePreview: decodeBrowserPreviewFromMain,
+      setVisible: decodeVoid,
+      startLiveView: decodeVoid,
+      stopLiveView: decodeVoid,
+      liveViewEvent: decodeBrowserLiveViewEvent,
+      displayState: decodeBrowserDisplayState,
+      openPictureInPicture: decodeBrowserBounds,
+      closePictureInPicture: decodeVoid,
+      dockPictureInPicture: decodeVoid,
+      hidePictureInPicture: decodeVoid,
+      pictureInPictureEvent: decodeBrowserPictureInPictureEvent,
+      openLocalSignIn: decodeBrowserLocalSignInEnd,
+      finishLocalSignIn: decodeBrowserLocalSignInResult,
+    }),
+    sendLiveViewInput: (input) =>
+      ipcRenderer.invoke(IPC_ENDPOINTS.browserInput.sendLiveViewInput.channel, input).then(decodeVoid),
+  },
+  update: bridgeGroup(IPC_ENDPOINTS.update, {
+    getStatus: decodeUpdateStatus,
+    check: decodeUpdateStatus,
+    download: decodeUpdateStatus,
+    install: decodeUpdateStatus,
+    getPreference: decodeUpdatePreference,
+    setPreference: decodeUpdatePreference,
+    cancelScheduledRestart: decodeUpdateStatus,
+    restartWhenIdle: decodeUpdateStatus,
+    cancelIdleRestart: decodeUpdateStatus,
+    event: decodeUpdateStatus,
+    preference: decodeUpdatePreference,
+  }),
+  notifications: bridgeGroup(IPC_ENDPOINTS.notifications, {
+    getPreference: decodeNotificationPreference,
+    setPreference: decodeNotificationPreference,
+    test: decodeVoid,
+    openSettings: decodeVoid,
+    opened: decodeNotificationOpenedEvent,
+    workflowOpened: decodeWorkflowNotificationOpenedEvent,
+  }),
+  maintenance: bridgeGroup(IPC_ENDPOINTS.maintenance, {
+    exportData: decodeExportResult,
+    exportDiagnostics: decodeExportResult,
+  }),
+  servers: {
+    ...serversGroup,
+    list: async () => rememberActiveServer(await serversGroup.list()),
+    select: async (serverId) => rememberActiveServer(await serversGroup.select(serverId)),
+    reorder: async (input) => rememberActiveServer(await serversGroup.reorder(input)),
+    setMuted: async (input) => rememberActiveServer(await serversGroup.setMuted(input)),
+    setNotificationLevel: async (input) => rememberActiveServer(await serversGroup.setNotificationLevel(input)),
+    join: async (input) => selectJoinedServer(await serversGroup.join(input)),
+    login: async (input) => selectJoinedServer(await serversGroup.login(input)),
+    onPresence: (listener, serverId) =>
+      serversGroup.onScopedPresence((scoped) => {
+        if (scoped.serverId === (serverId ?? selectedServerId)) listener(scoped.snapshot);
+      }),
+    onDirectMessage: (listener) =>
+      serversGroup.onScopedDirectMessage((scoped) => {
+        if (scoped.serverId === selectedServerId) listener(scoped.event);
+      }),
+    onDirectTyping: (listener) =>
+      serversGroup.onScopedDirectTyping((scoped) => {
+        if (scoped.serverId === selectedServerId) listener(scoped.event);
+      }),
+    onEvent: (listener) => serversGroup.onEvent((servers) => listener(rememberActiveServer(servers))),
+  },
+  plugins: bridgeGroup(IPC_ENDPOINTS.plugins, {
+    takePendingListing: decodePendingListing,
+    openListing: dropInvalid(decodePendingListing),
+  }),
+  marketplace: bridgeGroup(IPC_ENDPOINTS.marketplace, {
+    takePendingListing: decodePendingMarketplaceListing,
+    openListing: dropInvalid(decodePendingMarketplaceListing),
+  }),
+  host: bridgeGroup(IPC_ENDPOINTS.host, {
+    getStatus: decodeHostStatus,
+    configure: decodeHostStatus,
+    updateIdentity: decodeHostStatus,
+    rotateIdentityKey: decodeHostStatus,
+    getPresence: decodeTeamPresenceSnapshot,
+    start: decodeHostStatus,
+    stop: decodeHostStatus,
+    recheckScreenRecording: decodeHostStatus,
+    listMembers: decodeTeamMembers,
+    updateMember: decodeTeamMember,
+    removeMember: decodeVoid,
+    listSessions: decodeTeamSessions,
+    revokeSession: decodeVoid,
+    getRemoteControlPolicy: decodeRemoteControlPolicy,
+    setRemoteControlPolicy: decodeRemoteControlPolicy,
+    stopRemoteControl: decodeHostStatus,
+    listInvites: decodeTeamInvites,
+    revokeInvite: decodeVoid,
+    createInvite: decodeInviteSummary,
+    event: decodeHostStatus,
+  }),
+  events: bridgeGroup(IPC_ENDPOINTS.events, {
+    getStatus: decodeEventStatus,
+    listRoutines: decodeEventRoutines,
+    saveRoutine: decodeSaveEventRoutineResult,
+    deleteRoutine: decodeVoid,
+    testRoutine: decodeVoid,
+    rotateSecret: decodeWebhookSecret,
+    setSecret: decodeVoid,
+    giveSecretToAgent: decodeAgentWebhookSecret,
+    sendTestEvent: decodeWebhookTestResult,
+    listActivity: decodeEventActivity,
+    listRoutineRuns: decodeEventRoutineRuns,
+  }),
+  storage: bridgeGroup(IPC_ENDPOINTS.storage, {
+    getUsage: decodeOptionalStorageUsage,
+    getDisk: decodeOptionalStorageDisk,
+    getMachineMetrics: decodeOptionalMachineMetrics,
+    deleteFile: decodeVoid,
+    clear: decodeVoid,
+    openFile: decodeVoid,
+    openLocation: decodeVoid,
+    getLibraryFolders: decodeOptionalLibraryFoldersSnapshot,
+    changeLibraryFolders: decodeLibraryFoldersSnapshot,
+    getRemovableRuntimes: decodeRemovableRuntimes,
+    removeRemovableRuntimes: decodeRemovableRuntimes,
+  }),
+  remoteDesktop: bridgeGroup(IPC_ENDPOINTS.remoteDesktop, {
+    checkSetup: decodeRemoteDesktopSetupFromMain,
+    openSetup: decodeVoid,
+    test: decodeRemoteDesktopTestFromMain,
+    list: decodeRemoteDesktopSessions,
+    connect: decodeRemoteDesktopConnectResult,
+    selectDisplay: decodeVoid,
+    disconnect: decodeVoid,
+    event: decodeRemoteDesktopSessions,
+  }),
+};
+
+contextBridge.exposeInMainWorld("openbot", openbotApi);

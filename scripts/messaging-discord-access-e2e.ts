@@ -1,0 +1,1096 @@
+import assert from "node:assert/strict";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { DISCORD_GATEWAY_INTENTS, DISCORD_MESSAGE_CONTENT_INTENT } from "@openbot/contracts/discord-app";
+import { isDiscordRoleList } from "@openbot/contracts/ipc";
+import {
+  decodeDiscordApiError,
+  decodeDiscordChannels,
+  decodeDiscordDelivery,
+  decodeDiscordHistory,
+} from "@openbot/contracts/signal-protocol/discord-api";
+import { Effect } from "effect";
+import { type DiscordRestRequest, DiscordTransportError, makeDiscordApi } from "../remote/api/src/discord-api";
+import { DiscordState } from "../remote/api/src/discord-events";
+import type { AgentBrowserHost } from "../src/backend/agent/turn-lifecycle";
+import { AgentService } from "../src/backend/agent-service";
+import { AgentStore } from "../src/backend/agent-store";
+import { runCauseEffect } from "../src/backend/effect-boundary";
+import { MailboxStore } from "../src/backend/mailbox-store";
+import { discordDriver } from "../src/backend/messaging/discord/discord-driver";
+import { type MessagingCredentials, MessagingService } from "../src/backend/messaging/messaging-service";
+import { MessagingThreads } from "../src/backend/messaging/messaging-threads";
+import {
+  DiscordApiError,
+  type IngressHandler,
+  MessagingAdapterError,
+  type MessagingIngress,
+} from "../src/backend/messaging/messaging-types";
+import { OpenBotDatabase } from "../src/backend/openbot-database";
+import { SidebarLayoutStore } from "../src/backend/sidebar-layout-store";
+import { parseSetDiscordAccessInput } from "../src/main/ipc/messaging-inputs";
+
+const OUT = resolve(import.meta.dirname, "../.openbot-build/messaging-discord-access-e2e");
+const REPORT = join(OUT, "report.json");
+const root = await mkdtemp(join(tmpdir(), "openbot-messaging-discord-access-"));
+const userData = join(root, "user-data");
+const home = join(root, "home");
+const APP = "300000000000000001";
+const GUILD_ONE = "100000000000000001";
+const GUILD_TWO = "100000000000000002";
+const CHANNEL_ONE = "110000000000000001";
+const CHANNEL_TWO = "110000000000000002";
+const MAINTAINERS = "400000000000000001";
+const MEMBERS = "400000000000000002";
+const LONG_ROLE = "400000000000000003";
+const ANA = "500000000000000001";
+const BOB = "500000000000000002";
+const KAMIL = "500000000000000003";
+const EVA = "500000000000000004";
+const OLA = "500000000000000005";
+const IGA = "500000000000000006";
+const ULA = "500000000000000007";
+const TOMEK = "500000000000000008";
+const OLEK = "500000000000000009";
+const NINA = "500000000000000010";
+const PIOTR = "500000000000000011";
+const RITA = "500000000000000012";
+const SARA = "500000000000000013";
+const KUBA = "500000000000000014";
+const TICKET_TOOL = "500000000000000015";
+
+interface Step {
+  name: string;
+  passed: boolean;
+  detail?: unknown;
+  error?: string;
+}
+
+const report: { steps: Step[]; passed: boolean; unverified: string[] } = {
+  steps: [],
+  passed: false,
+  unverified: [
+    "The Discord Gateway and REST API: a fake REST client stands in for Discord, so the role IDs and the replied-to text in a real MESSAGE_CREATE are not checked here.",
+    "The Signal ingress socket and the Gateway intent fallback (close code 4014): the check calls Signal's API and normalizer in this process.",
+    "An agent turn: the check reads the prompt that the turn would get, and no provider runs.",
+  ],
+};
+
+async function step(name: string, run: () => Promise<unknown>): Promise<void> {
+  const entry: Step = { name, passed: false };
+  report.steps.push(entry);
+  try {
+    entry.detail = await run();
+    entry.passed = true;
+  } catch (error) {
+    entry.error = error instanceof Error ? error.message : String(error);
+    throw error;
+  }
+}
+
+const unused = () => Effect.die(new Error("Not used by this check."));
+const browser: AgentBrowserHost = {
+  listTabs: () => [],
+  beginTakeover: unused,
+  endTakeover: () => {},
+  userControlTabFor: () => null,
+  awaitUserControlRelease: unused,
+  resolveUploadTarget: unused,
+  handleDynamicTool: unused,
+  onChanged: () => () => {},
+  onControlChanged: () => () => {},
+  onDocumentChanged: () => () => {},
+  clearControls: () => {},
+  endControl: () => {},
+  close: () => Effect.void,
+  clearAgentSession: () => Effect.void,
+  shareTab: () => undefined,
+  unshareThread: () => undefined,
+  agentTab: () => null,
+};
+
+function gateway(t: string, d: unknown): Parameters<DiscordState["handle"]>[0] {
+  return JSON.parse(JSON.stringify({ op: 0, s: 1, t, d }));
+}
+
+const calls: DiscordRestRequest[] = [];
+const waiters: Array<{ match: (call: DiscordRestRequest) => boolean; resolve: () => void }> = [];
+let nextMessageId = 600000000000000000n;
+interface RestEmbed {
+  title?: string;
+  description?: string;
+  url?: string;
+  color?: number;
+  footer?: { text: string; icon_url?: string };
+  fields?: { name: string; value: string; inline?: boolean }[];
+}
+interface RestMessage {
+  id: string;
+  content: string;
+  timestamp: string;
+  author: { id: string; username: string };
+  attachments: { id: string; filename: string; content_type: string; size: number; url: string }[];
+  embeds?: RestEmbed[];
+  message_reference?: { type: number; message_id: string };
+  message_snapshots?: { message: { content: string; attachments: RestMessage["attachments"] } }[];
+}
+const channelOne: RestMessage[] = [];
+
+function waitForCall(match: (call: DiscordRestRequest) => boolean): Promise<void> {
+  if (calls.some(match)) return Promise.resolve();
+  return new Promise((done, fail) => {
+    const timer = setTimeout(() => fail(new Error("The expected Discord call did not come.")), 15_000);
+    waiters.push({
+      match,
+      resolve: () => {
+        clearTimeout(timer);
+        done();
+      },
+    });
+  });
+}
+
+const rest = {
+  request: (input: DiscordRestRequest) =>
+    Effect.suspend(() => {
+      calls.push(input);
+      for (const waiter of waiters.splice(0)) {
+        if (waiter.match(input)) waiter.resolve();
+        else waiters.push(waiter);
+      }
+      const route = input.route;
+      if (input.method === "POST" && /^\/channels\/[0-9]+\/messages$/u.test(route)) {
+        nextMessageId += 1n;
+        return Effect.succeed({ id: nextMessageId.toString() });
+      }
+      if (route.includes("/reactions/")) return Effect.succeed({});
+      if (route === `/channels/${CHANNEL_ONE}/messages`) {
+        const after = BigInt(input.query?.get("after") ?? "0");
+        return Effect.succeed(channelOne.filter((message) => BigInt(message.id) > after));
+      }
+      if (/^\/channels\/[0-9]+\/messages$/u.test(route)) return Effect.succeed([]);
+      const member = /^\/guilds\/[0-9]+\/members\/([0-9]+)$/u.exec(route);
+      if (member) {
+        const names: Record<string, string> = {
+          [ANA]: "Ana",
+          [BOB]: "Bob",
+          [KAMIL]: "Kamil",
+          [EVA]: "Eva",
+          [OLA]: "Ola",
+          [IGA]: "Iga",
+          [ULA]: "Ula",
+          [TOMEK]: "tomek",
+          [OLEK]: "Olek",
+        };
+        const id = member[1] ?? "";
+        return Effect.succeed({ nick: null, user: { id, username: names[id] ?? id } });
+      }
+      if (route === `/guilds/${GUILD_ONE}/roles`)
+        return Effect.succeed([
+          { id: GUILD_ONE, name: "@everyone", position: 0 },
+          { id: MEMBERS, name: "Members", position: 1 },
+          { id: MAINTAINERS, name: "Maintainers", position: 2 },
+          { id: "400000000000000009", name: "OpenBot", position: 3, managed: true },
+          { id: LONG_ROLE, name: "🦊".repeat(60), position: 0 },
+        ]);
+      return Effect.fail(new DiscordTransportError({ status: 404 }));
+    }),
+};
+
+const signal = new DiscordState(APP);
+signal.handle(
+  gateway("READY", {
+    v: 10,
+    user: { id: APP, username: "OpenBot", bot: true },
+    application: { id: APP, flags: 0 },
+    guilds: [
+      { id: GUILD_ONE, unavailable: true },
+      { id: GUILD_TWO, unavailable: true },
+    ],
+    session_id: "session",
+    resume_gateway_url: "wss://gateway.discord.gg",
+    shard: [0, 1],
+  }),
+);
+for (const [guildId, channelId, name] of [
+  [GUILD_ONE, CHANNEL_ONE, "Nightly"],
+  [GUILD_TWO, CHANNEL_TWO, "Labs"],
+] as const)
+  signal.handle(
+    gateway("GUILD_CREATE", { id: guildId, name, channels: [{ id: channelId, type: 0, name: "general" }] }),
+  );
+const signalApi = makeDiscordApi(rest, signal);
+
+let relayHandler: IngressHandler | null = null;
+const ingress: MessagingIngress = {
+  acquire: () => () => {},
+  state: () => "online",
+  onState: () => () => {},
+  handle: (handler) => {
+    relayHandler = handler;
+  },
+  telegram: { available: () => false, call: unused, download: unused, upload: unused },
+  reconnect: () => {},
+  onDiscordRoutes: () => () => {},
+  onLinkedRoutes: () => () => {},
+  discord: (request, decode) => {
+    if (request.op === "listRoles" && request.guildId === GUILD_TWO)
+      return Effect.fail(new MessagingAdapterError({ cause: new DiscordApiError(request.op, "invalid_request") }));
+    return signalApi.call(request, null).pipe(
+      Effect.map((result) => decode(JSON.parse(JSON.stringify(result)))),
+      Effect.mapError((failure) => {
+        const body = decodeDiscordApiError({ error: { code: failure.code } });
+        return new MessagingAdapterError({ cause: new DiscordApiError(request.op, body?.code ?? "discord_failed") });
+      }),
+    );
+  },
+};
+
+function memoryCredentials(): MessagingCredentials {
+  const values = new Map<string, Record<string, string>>();
+  return {
+    keys: () => [...values.keys()],
+    status: (connectionId) => (values.has(connectionId) ? "saved" : "missing"),
+    get: (connectionId) => values.get(connectionId) ?? null,
+    set: (connectionId, value) => Effect.sync(() => void values.set(connectionId, value)),
+    clear: (connectionId) => Effect.sync(() => void values.delete(connectionId)),
+    retain: (connectionIds) =>
+      Effect.sync(() => {
+        for (const key of values.keys()) if (!connectionIds.has(key)) values.delete(key);
+      }),
+  };
+}
+const credentials = memoryCredentials();
+
+interface Booted {
+  messaging: MessagingService;
+  threads: MessagingThreads;
+  mailbox: MailboxStore;
+}
+
+async function boot<T>(use: (services: Booted) => Promise<T>): Promise<T> {
+  const database = new OpenBotDatabase(userData);
+  const store = new AgentStore(userData, home, database);
+  const mailbox = new MailboxStore(userData, store.sharedRoot, store.database);
+  const sidebar = new SidebarLayoutStore(join(userData, "sidebar-layout.json"));
+  await runCauseEffect(sidebar.initialize());
+  await runCauseEffect(store.initialize());
+  await runCauseEffect(mailbox.initialize());
+  const agents = new AgentService({ store, mailbox, browser, sidebarLayout: sidebar });
+  const threads = new MessagingThreads(store.database, mailbox, {
+    schedule: () => {},
+    queueChanged: () => {},
+    busy: () => false,
+    interrupt: unused,
+    forgetThread: () => Effect.void,
+    ownChat: () => false,
+    contextSession: () => null,
+    progressUpdates: () => null,
+  });
+  const messaging = new MessagingService({
+    threads,
+    agents: {
+      listAgents: () => agents.listAgents(),
+      respondToApproval: (input) => agents.respondToApproval(input),
+      onEvent: () => () => {},
+      createAgentProfile: (input) => agents.createAgentProfile(input),
+      createMemory: (input) => agents.createMemory(input),
+      ensureDeletable: (agentId) => agents.ensureAgentDeletable(agentId),
+      deleteAgent: (agentId) => agents.deleteAgent(agentId),
+      sidebarChatIds: () => agents.sidebarChatIds(),
+    },
+    credentials,
+    drivers: [discordDriver({ ingress })],
+    downloadsRoot: join(userData, "messaging-downloads"),
+    ingress,
+    sidebar,
+  });
+  await runCauseEffect(messaging.start());
+  try {
+    return await use({ messaging, threads, mailbox });
+  } finally {
+    await runCauseEffect(messaging.stop());
+    await runCauseEffect(agents.stop());
+    database.close();
+  }
+}
+
+interface Mention {
+  id: string;
+  guildId: string;
+  channelId: string;
+  authorId: string;
+  authorName: string;
+  roles?: string[];
+  content: string;
+  replyTo?: {
+    id: string;
+    authorId: string;
+    authorName: string;
+    content: string;
+    attachments?: { id: string; filename: string; content_type: string; size: number; url: string }[];
+    forwarded?: boolean;
+    bot?: boolean;
+    embeds?: RestEmbed[];
+  };
+}
+
+async function mention(message: Mention) {
+  const actions = signal.handle(
+    gateway("MESSAGE_CREATE", {
+      id: message.id,
+      channel_id: message.channelId,
+      guild_id: message.guildId,
+      content: `<@${APP}> ${message.content}`,
+      timestamp: "2026-10-19T11:47:00.000Z",
+      author: { id: message.authorId, username: message.authorName },
+      ...(message.roles ? { member: { nick: null, roles: message.roles } } : {}),
+      mentions: [{ id: APP }],
+      attachments: [],
+      ...(message.replyTo
+        ? {
+            message_reference: { type: 0, message_id: message.replyTo.id },
+            referenced_message: {
+              id: message.replyTo.id,
+              timestamp: "2026-10-19T11:40:00.000Z",
+              author: {
+                id: message.replyTo.authorId,
+                username: message.replyTo.authorName,
+                ...(message.replyTo.bot ? { bot: true } : {}),
+              },
+              ...(message.replyTo.forwarded
+                ? {
+                    content: "",
+                    attachments: [],
+                    message_reference: { type: 1, message_id: nextId() },
+                    message_snapshots: [
+                      {
+                        message: { content: message.replyTo.content, attachments: message.replyTo.attachments ?? [] },
+                      },
+                    ],
+                  }
+                : {
+                    content: message.replyTo.content,
+                    attachments: message.replyTo.attachments ?? [],
+                    embeds: message.replyTo.embeds ?? [],
+                  }),
+            },
+          }
+        : {}),
+    }),
+  );
+  const action = actions[0];
+  assert.ok(action?.type === "deliver", "Signal did not pass the mention on.");
+  const delivery = decodeDiscordDelivery(JSON.parse(JSON.stringify(action.delivery)));
+  const handler = relayHandler;
+  assert.ok(handler, "The messaging service has no relay handler.");
+  const answer = await runCauseEffect(handler(action.guildId, { platform: "discord", delivery }));
+  assert.equal(answer.status, 200);
+  return delivery;
+}
+
+const received = (messageId: string) =>
+  waitForCall(
+    (call) =>
+      call.method === "PUT" && call.route.includes(`/messages/${messageId}/reactions/${encodeURIComponent("👀")}/`),
+  );
+
+function touched(messageId: string): boolean {
+  return calls.some(
+    (call) => call.route.includes(`/messages/${messageId}`) || JSON.stringify(call.body ?? null).includes(messageId),
+  );
+}
+
+async function promptOf(services: Booted, guildId: string, mentionId: string, channelId: string): Promise<string> {
+  const record = services.threads.store.connectionForWorkspace("discord", guildId);
+  assert.ok(record);
+  const context = services.mailbox.deliveryForKey(`messaging:${record.connectionId}:${channelId}:${mentionId}`);
+  assert.ok(context, "The mention has no delivery.");
+  const prepared = await runCauseEffect(services.threads.prepare(context));
+  assert.ok(prepared, "The delivery has no prompt.");
+  return prepared.text;
+}
+
+let messageId = 700000000000000000n;
+const nextId = () => {
+  messageId += 1n;
+  return messageId.toString();
+};
+
+try {
+  await step("the intents ask for Message Content only with the flag", async () => {
+    assert.equal(DISCORD_GATEWAY_INTENTS & DISCORD_MESSAGE_CONTENT_INTENT, 0);
+    assert.equal(DISCORD_MESSAGE_CONTENT_INTENT, 1 << 15);
+    return { base: DISCORD_GATEWAY_INTENTS, messageContent: DISCORD_MESSAGE_CONTENT_INTENT };
+  });
+
+  await step("a server with more than 500 places lists the newest threads and says what it left out", async () => {
+    const guildId = "1300000000000000100";
+    const parentId = "1300000000000000200";
+    const permissions = String((1n << 10n) | (1n << 11n) | (1n << 38n));
+    const channels = Array.from({ length: 182 }, (_, index) => ({
+      id: String(BigInt(parentId) + BigInt(index)),
+      type: 0,
+      name: `channel-${index}`,
+      permission_overwrites: [],
+    }));
+    const threads = Array.from({ length: 330 }, (_, index) => ({
+      id: String(1400000000000000000n + BigInt(index)),
+      type: 11,
+      parent_id: parentId,
+      name: `thread-${index}`,
+    }));
+    const api = makeDiscordApi(
+      {
+        request: ({ route }) =>
+          Effect.succeed(
+            route.endsWith("/roles")
+              ? [{ id: guildId, permissions }]
+              : route.includes("/members/")
+                ? { roles: [] }
+                : route.endsWith("/channels")
+                  ? channels
+                  : { threads, members: [] },
+          ),
+      },
+      new DiscordState(APP),
+    );
+    const adapter = discordDriver({
+      ingress: {
+        ...ingress,
+        discord: (request, decode) =>
+          api.call(request, null).pipe(
+            Effect.map((result) => decode(JSON.parse(JSON.stringify(result)))),
+            Effect.mapError(
+              () => new MessagingAdapterError({ cause: new DiscordApiError(request.op, "discord_failed") }),
+            ),
+          ),
+      },
+    }).createAdapter({ guildId }, { rateLimited: () => {} });
+    const listed = await runCauseEffect(adapter.places());
+    const threadIds = listed.places.filter((place) => place.kind === "thread").map((place) => place.id);
+    assert.equal(listed.places.length, 500);
+    assert.ok(
+      listed.places.slice(0, 182).every((place) => place.kind === "channel"),
+      "A channel was left out.",
+    );
+    assert.equal(threadIds[0], threads.at(-1)?.id, "The newest thread is not the first thread.");
+    assert.ok(!threadIds.includes(threads[0]?.id ?? ""), "The oldest thread was kept instead of a newer one.");
+    assert.match(listed.note ?? "", /^This server has 12 more places/u);
+    assert.equal(decodeDiscordChannels({ channels: [] }).omitted, 0);
+    return { listed: listed.places.length, firstThread: threadIds[0], note: listed.note };
+  });
+
+  await step("a mention of OpenBot's own role reaches OpenBot; a mention of another role does not", async () => {
+    const BOT_ROLE = "1300000000000000001";
+    const OTHER_ROLE = "1300000000000000002";
+    const state = new DiscordState(APP);
+    state.handle(
+      gateway("READY", {
+        v: 10,
+        user: { id: APP, username: "OpenBot", bot: true },
+        application: { id: APP, flags: 0 },
+        guilds: [{ id: GUILD_ONE, unavailable: true }],
+        session_id: "session",
+        resume_gateway_url: "wss://gateway.discord.gg",
+        shard: [0, 1],
+      }),
+    );
+    const guild = (roles: unknown[]) =>
+      gateway("GUILD_CREATE", {
+        id: GUILD_ONE,
+        name: "Nightly",
+        channels: [{ id: CHANNEL_ONE, type: 0, name: "general" }],
+        roles,
+      });
+    const botRole = { id: BOT_ROLE, name: "OpenBot", managed: true, tags: { bot_id: APP } };
+    const otherRole = { id: OTHER_ROLE, name: "Mods", managed: false };
+    const roleMention = (roleId: string): string | null => {
+      const actions = state.handle(
+        gateway("MESSAGE_CREATE", {
+          id: nextId(),
+          channel_id: CHANNEL_ONE,
+          guild_id: GUILD_ONE,
+          content: `<@&${roleId}> hello`,
+          timestamp: "2026-11-02T10:00:00.000Z",
+          author: { id: BOB, username: "Bob" },
+          mentions: [],
+          mention_roles: [roleId],
+          attachments: [],
+        }),
+      );
+      const action = actions[0];
+      if (action?.type !== "deliver") return null;
+      const delivery = decodeDiscordDelivery(JSON.parse(JSON.stringify(action.delivery)));
+      assert.equal(delivery.kind, "message");
+      return delivery.kind === "message" ? delivery.message.content : null;
+    };
+
+    state.handle(guild([otherRole]));
+    assert.equal(roleMention(BOT_ROLE), null, "A role that the Gateway did not name as the bot's was delivered.");
+    state.handle(gateway("GUILD_ROLE_CREATE", { guild_id: GUILD_ONE, role: botRole }));
+    assert.equal(state.botRoleId(GUILD_ONE), BOT_ROLE);
+    assert.equal(roleMention(BOT_ROLE), "hello");
+    assert.equal(roleMention(OTHER_ROLE), null, "A mention of another role was delivered.");
+    state.handle(gateway("GUILD_ROLE_DELETE", { guild_id: GUILD_ONE, role_id: BOT_ROLE }));
+    assert.equal(roleMention(BOT_ROLE), null, "A deleted bot role was still delivered.");
+    state.handle(guild([otherRole, botRole]));
+    assert.equal(roleMention(BOT_ROLE), "hello");
+    state.handle(gateway("GUILD_ROLE_UPDATE", { guild_id: GUILD_ONE, role: { ...botRole, tags: {} } }));
+    assert.equal(state.botRoleId(GUILD_ONE), null, "A role that lost its bot tag stayed the bot's role.");
+    state.handle(guild([botRole]));
+    state.handle(gateway("GUILD_DELETE", { id: GUILD_ONE }));
+    assert.equal(state.botRoleId(GUILD_ONE), null, "A guild that removed the bot kept its bot role.");
+    return { botRole: BOT_ROLE, otherRole: OTHER_ROLE };
+  });
+
+  await boot(async ({ threads }) => {
+    for (const [guildId, name] of [
+      [GUILD_ONE, "Nightly"],
+      [GUILD_TWO, "Labs"],
+    ] as const) {
+      const record = threads.store.ensureConnection("discord", guildId, name);
+      threads.store.updateConnection(record.connectionId, { enabled: true });
+      await runCauseEffect(credentials.set(record.connectionId, { guildId, guildName: name, appId: APP }));
+    }
+  });
+
+  await boot(async (services) => {
+    const { messaging } = services;
+
+    await step("two Discord servers connect, and one Discord Orchestrator answers both", async () => {
+      const overview = messaging.discordOverview().connections;
+      assert.equal(overview.length, 2);
+      assert.ok(overview.every((connection) => connection.state === "connected"));
+      const one = await runCauseEffect(messaging.addOrchestrator("discord", { workspaceId: GUILD_ONE }));
+      assert.ok(
+        messaging.discordOverview().connections.every((connection) => connection.orchestratorAgentId === one.agentId),
+        "The second Discord server did not get the orchestrator.",
+      );
+      const two = await runCauseEffect(messaging.addOrchestrator("discord", { workspaceId: GUILD_TWO }));
+      assert.equal(two.agentId, one.agentId, "A second Discord Orchestrator was made.");
+      assert.equal(two.sectionId, null);
+      return { connections: overview.map((connection) => connection.workspaceId), orchestrators: 1 };
+    });
+
+    await step("with no role list, anyone's mention is queued", async () => {
+      const id = nextId();
+      await mention({
+        id,
+        guildId: GUILD_ONE,
+        channelId: CHANNEL_ONE,
+        authorId: BOB,
+        authorName: "Bob",
+        roles: [],
+        content: "hello",
+      });
+      await received(id);
+      return { messageId: id };
+    });
+
+    await step("Signal lists the roles a person can have, highest first", async () => {
+      const list = await runCauseEffect(messaging.listDiscordRoles(GUILD_ONE));
+      assert.deepEqual(list.roles, [
+        { id: MAINTAINERS, name: "Maintainers" },
+        { id: MEMBERS, name: "Members" },
+        { id: LONG_ROLE, name: "🦊".repeat(50) },
+      ]);
+      assert.ok(isDiscordRoleList(list), "The role list does not pass the IPC decoder.");
+      return { roles: list.roles.length };
+    });
+
+    await step("an older Signal: the role list gives the unsupported text", async () => {
+      const failure = await runCauseEffect(messaging.listDiscordRoles(GUILD_TWO)).then(
+        () => null,
+        (error: unknown) => (error instanceof Error ? error.message : String(error)),
+      );
+      assert.equal(failure, "OpenBot cannot list Discord roles yet. Try again later.");
+      return { failure };
+    });
+
+    await step("the IPC decoder refuses a role list with a repeated role", async () => {
+      assert.throws(() =>
+        parseSetDiscordAccessInput({
+          workspaceId: GUILD_ONE,
+          allowedRoles: [
+            { id: MAINTAINERS, name: "Maintainers" },
+            { id: MAINTAINERS, name: "Maintainers" },
+          ],
+        }),
+      );
+      assert.deepEqual((await runCauseEffect(messaging.discordAccess(GUILD_ONE))).allowedRoles, []);
+      return { refused: true };
+    });
+
+    await step("with a role list, only members with one of its roles reach OpenBot", async () => {
+      const input = parseSetDiscordAccessInput({
+        workspaceId: GUILD_ONE,
+        allowedRoles: [{ id: MAINTAINERS, name: "Maintainers" }],
+      });
+      const saved = await runCauseEffect(messaging.setDiscordAccess(input));
+      assert.deepEqual(saved.allowedRoles, [{ id: MAINTAINERS, name: "Maintainers" }]);
+
+      const outsider = nextId();
+      await mention({
+        id: outsider,
+        guildId: GUILD_ONE,
+        channelId: CHANNEL_ONE,
+        authorId: BOB,
+        authorName: "Bob",
+        roles: [MEMBERS],
+        content: "do it",
+      });
+      const unknownRoles = nextId();
+      await mention({
+        id: unknownRoles,
+        guildId: GUILD_ONE,
+        channelId: CHANNEL_ONE,
+        authorId: BOB,
+        authorName: "Bob",
+        content: "do it",
+      });
+      const maintainer = nextId();
+      await mention({
+        id: maintainer,
+        guildId: GUILD_ONE,
+        channelId: CHANNEL_ONE,
+        authorId: ANA,
+        authorName: "Ana",
+        roles: [MEMBERS, MAINTAINERS],
+        content: "do it",
+      });
+      await received(maintainer);
+      assert.equal(touched(outsider), false, "OpenBot reacted or replied to a member without a listed role.");
+      assert.equal(touched(unknownRoles), false, "OpenBot reacted or replied to a mention without roles.");
+      const record = services.threads.store.connectionForWorkspace("discord", GUILD_ONE);
+      assert.ok(record);
+      assert.equal(
+        services.mailbox.deliveryForKey(`messaging:${record.connectionId}:${CHANNEL_ONE}:${outsider}`),
+        null,
+      );
+      assert.equal(
+        services.mailbox.deliveryForKey(`messaging:${record.connectionId}:${CHANNEL_ONE}:${unknownRoles}`),
+        null,
+      );
+
+      const other = nextId();
+      await mention({
+        id: other,
+        guildId: GUILD_TWO,
+        channelId: CHANNEL_TWO,
+        authorId: BOB,
+        authorName: "Bob",
+        roles: [],
+        content: "hi",
+      });
+      await received(other);
+      return { ignored: [outsider, unknownRoles], queued: [maintainer, other] };
+    });
+
+    await step("a reply to a person's message gives that message as context", async () => {
+      const replied = nextId();
+      const id = nextId();
+      await mention({
+        id,
+        guildId: GUILD_ONE,
+        channelId: CHANNEL_ONE,
+        authorId: EVA,
+        authorName: "Eva",
+        roles: [MAINTAINERS],
+        content: "make an issue for this",
+        replyTo: {
+          id: replied,
+          authorId: KAMIL,
+          authorName: "Kamil",
+          content: `Feature idea: webhooks for OpenBot. <@${BOB}> agrees.`,
+        },
+      });
+      await received(id);
+      const prompt = await promptOf(services, GUILD_ONE, id, CHANNEL_ONE);
+      assert.match(
+        prompt,
+        /--- the message this one replies to \(context\) ---\n\[2026-10-19T11:40:00\.000Z\] Kamil: Feature idea: webhooks for OpenBot\. @Bob agrees\.\n--- message ---\nmake an issue for this/u,
+      );
+      assert.doesNotMatch(prompt, /earlier messages/u);
+
+      const plain = nextId();
+      await mention({
+        id: plain,
+        guildId: GUILD_ONE,
+        channelId: CHANNEL_ONE,
+        authorId: OLA,
+        authorName: "Ola",
+        roles: [MAINTAINERS],
+        content: "status?",
+      });
+      await received(plain);
+      assert.doesNotMatch(await promptOf(services, GUILD_ONE, plain, CHANNEL_ONE), /replies to/u);
+      return { replyContext: true };
+    });
+
+    await step("a reply to a person's image gives the image to the agent", async () => {
+      const replied = nextId();
+      const id = nextId();
+      const url = `https://cdn.discordapp.com/attachments/${CHANNEL_ONE}/${replied}/screenshot.png`;
+      const image = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      const realFetch = globalThis.fetch;
+      globalThis.fetch = Object.assign(
+        (input: string | URL | Request, init?: RequestInit) =>
+          String(input) === url
+            ? Promise.resolve(new Response(image, { headers: { "content-type": "image/png" } }))
+            : realFetch(input, init),
+        realFetch,
+      );
+      try {
+        const delivery = await mention({
+          id,
+          guildId: GUILD_ONE,
+          channelId: CHANNEL_ONE,
+          authorId: KAMIL,
+          authorName: "Kamil",
+          roles: [MAINTAINERS],
+          content: "make an issue for this",
+          replyTo: {
+            id: replied,
+            authorId: ANA,
+            authorName: "Ana",
+            content: "",
+            attachments: [
+              { id: nextId(), filename: "screenshot.png", content_type: "image/png", size: image.byteLength, url },
+            ],
+          },
+        });
+        assert.ok(delivery.kind === "message");
+        assert.deepEqual(
+          delivery.message.replyTo?.quote?.attachments.map((file) => file.url),
+          [url],
+          "Signal did not pass on the replied-to image.",
+        );
+        await received(id);
+        const record = services.threads.store.connectionForWorkspace("discord", GUILD_ONE);
+        assert.ok(record);
+        const context = services.mailbox.deliveryForKey(`messaging:${record.connectionId}:${CHANNEL_ONE}:${id}`);
+        assert.deepEqual(
+          context?.managedAttachments.map((file) => file.name),
+          ["screenshot.png"],
+          "The agent's message has no replied-to image.",
+        );
+        const prompt = await promptOf(services, GUILD_ONE, id, CHANNEL_ONE);
+        assert.match(
+          prompt,
+          /the message this one replies to \(context\) ---\n\[[^\]]+\] Ana: \(Attached files: screenshot\.png\)\n/u,
+        );
+        assert.doesNotMatch(prompt, /did not arrive/u);
+        return { repliedImage: true };
+      } finally {
+        globalThis.fetch = realFetch;
+      }
+    });
+
+    await step("an image posted without a mention before a new conversation gives the image to the agent", async () => {
+      const posted = nextId();
+      const id = nextId();
+      const url = `https://cdn.discordapp.com/attachments/${CHANNEL_ONE}/${posted}/crash.png`;
+      const image = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      const realFetch = globalThis.fetch;
+      globalThis.fetch = Object.assign(
+        (input: string | URL | Request, init?: RequestInit) =>
+          String(input) === url
+            ? Promise.resolve(new Response(image, { headers: { "content-type": "image/png" } }))
+            : realFetch(input, init),
+        realFetch,
+      );
+      channelOne.push({
+        id: posted,
+        content: "",
+        timestamp: "2026-10-19T11:46:00.000Z",
+        author: { id: TOMEK, username: "tomek" },
+        attachments: [{ id: nextId(), filename: "crash.png", content_type: "image/png", size: image.byteLength, url }],
+      });
+      try {
+        await mention({
+          id,
+          guildId: GUILD_ONE,
+          channelId: CHANNEL_ONE,
+          authorId: OLEK,
+          authorName: "Olek",
+          roles: [MAINTAINERS],
+          content: "zrob issue",
+        });
+        await received(id);
+        const record = services.threads.store.connectionForWorkspace("discord", GUILD_ONE);
+        assert.ok(record);
+        const context = services.mailbox.deliveryForKey(`messaging:${record.connectionId}:${CHANNEL_ONE}:${id}`);
+        assert.deepEqual(
+          context?.managedAttachments.map((file) => file.name),
+          ["crash.png"],
+          "The agent's message has no earlier image.",
+        );
+        const prompt = await promptOf(services, GUILD_ONE, id, CHANNEL_ONE);
+        assert.match(
+          prompt,
+          /--- earlier messages \(context, oldest first, with their message id\) ---\n\[2026-10-19T11:46:00\.000Z\] \(id \d+\) tomek: \(Attached files: crash\.png\)\n/u,
+        );
+        assert.match(
+          prompt,
+          /--- message ---\nzrob issue\n\n\(Files of earlier messages, given with this one: tomek: crash\.png\)/u,
+        );
+        assert.doesNotMatch(prompt, /did not arrive/u);
+        assert.deepEqual(
+          decodeDiscordHistory({
+            messages: [
+              {
+                id: posted,
+                authorId: TOMEK,
+                authorName: "tomek",
+                authorIsBot: false,
+                content: "",
+                replyToId: null,
+                sentAt: "2026-10-19T11:46:00.000Z",
+              },
+            ],
+          })[0]?.attachments,
+          [],
+        );
+        return { earlierImage: true };
+      } finally {
+        globalThis.fetch = realFetch;
+        channelOne.length = 0;
+      }
+    });
+
+    await step("a forwarded report gives its text and image to the agent, or says that Discord gave none", async () => {
+      const replied = nextId();
+      const id = nextId();
+      const url = `https://cdn.discordapp.com/attachments/${CHANNEL_ONE}/${replied}/report.png`;
+      const image = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      const realFetch = globalThis.fetch;
+      globalThis.fetch = Object.assign(
+        (input: string | URL | Request, init?: RequestInit) =>
+          String(input) === url
+            ? Promise.resolve(new Response(image, { headers: { "content-type": "image/png" } }))
+            : realFetch(input, init),
+        realFetch,
+      );
+      try {
+        await mention({
+          id,
+          guildId: GUILD_ONE,
+          channelId: CHANNEL_ONE,
+          authorId: NINA,
+          authorName: "Nina",
+          roles: [MAINTAINERS],
+          content: "ini",
+          replyTo: {
+            id: replied,
+            authorId: ANA,
+            authorName: "Ana",
+            content: "Login fails after the update.",
+            attachments: [
+              { id: nextId(), filename: "report.png", content_type: "image/png", size: image.byteLength, url },
+            ],
+            forwarded: true,
+          },
+        });
+        await received(id);
+        const record = services.threads.store.connectionForWorkspace("discord", GUILD_ONE);
+        assert.ok(record);
+        const context = services.mailbox.deliveryForKey(`messaging:${record.connectionId}:${CHANNEL_ONE}:${id}`);
+        assert.deepEqual(
+          context?.managedAttachments.map((file) => file.name),
+          ["report.png"],
+          "The agent's message has no forwarded image.",
+        );
+        assert.match(
+          await promptOf(services, GUILD_ONE, id, CHANNEL_ONE),
+          /the message this one replies to \(context\) ---\n\[[^\]]+\] Ana: \(Forwarded message\)\nLogin fails after the update\.\n\(Attached files: report\.png\)\n/u,
+        );
+      } finally {
+        globalThis.fetch = realFetch;
+      }
+
+      const empty = nextId();
+      await mention({
+        id: empty,
+        guildId: GUILD_ONE,
+        channelId: CHANNEL_ONE,
+        authorId: PIOTR,
+        authorName: "Piotr",
+        roles: [MAINTAINERS],
+        content: "ini",
+        replyTo: { id: nextId(), authorId: ANA, authorName: "Ana", content: "", forwarded: true },
+      });
+      await received(empty);
+      assert.match(
+        await promptOf(services, GUILD_ONE, empty, CHANNEL_ONE),
+        /\] Ana: \(Forwarded message: Discord did not give its text or files\)\n/u,
+      );
+
+      const posted = nextId();
+      channelOne.push({
+        id: posted,
+        content: "",
+        timestamp: "2026-10-19T11:46:00.000Z",
+        author: { id: TOMEK, username: "tomek" },
+        attachments: [],
+        message_reference: { type: 1, message_id: nextId() },
+        message_snapshots: [{ message: { content: "Report: the export button does nothing.", attachments: [] } }],
+      });
+      try {
+        const asked = nextId();
+        await mention({
+          id: asked,
+          guildId: GUILD_ONE,
+          channelId: CHANNEL_ONE,
+          authorId: RITA,
+          authorName: "Rita",
+          roles: [MAINTAINERS],
+          content: "sesuai report diatas",
+        });
+        await received(asked);
+        assert.match(
+          await promptOf(services, GUILD_ONE, asked, CHANNEL_ONE),
+          /--- earlier messages \(context, oldest first, with their message id\) ---\n\[2026-10-19T11:46:00\.000Z\] \(id \d+\) tomek: \(Forwarded message\)\nReport: the export button does nothing\.\n/u,
+        );
+      } finally {
+        channelOne.length = 0;
+      }
+      return { forwardedReport: true };
+    });
+
+    await step(
+      "a reply to a ticket bot's form, and an earlier link preview, give their embeds to the agent",
+      async () => {
+        const id = nextId();
+        await mention({
+          id,
+          guildId: GUILD_ONE,
+          channelId: CHANNEL_ONE,
+          authorId: SARA,
+          authorName: "Sara",
+          roles: [MAINTAINERS],
+          content: "please look at this ticket",
+          replyTo: {
+            id: nextId(),
+            authorId: TICKET_TOOL,
+            authorName: "Ticket Tool",
+            bot: true,
+            content: `<@${BOB}> Welcome`,
+            embeds: [
+              {
+                description: `Support will be with you shortly. Opened by <@${KAMIL}>.`,
+                color: 0x2ecc71,
+                footer: {
+                  text: "TicketTool.xyz - Ticketing without clutter",
+                  icon_url: "https://tickettool.xyz/icon.png",
+                },
+              },
+              {
+                fields: [
+                  { name: "What do you need?", value: "```Bug```", inline: false },
+                  { name: "OpenBot version", value: "```0.59.0```", inline: false },
+                  { name: "\u200b", value: "\u200b" },
+                ],
+              },
+              { color: 0x2ecc71 },
+            ],
+          },
+        });
+        await received(id);
+        assert.match(
+          await promptOf(services, GUILD_ONE, id, CHANNEL_ONE),
+          /--- the message this one replies to \(context\) ---\n\[2026-10-19T11:40:00\.000Z\] Ticket Tool: @Bob Welcome\n\(Embed\)\nSupport will be with you shortly\. Opened by @Kamil\.\nFooter: TicketTool\.xyz - Ticketing without clutter\n\(Embed\)\nWhat do you need\?: ```Bug```\nOpenBot version: ```0\.59\.0```\n--- message ---\nplease look at this ticket/u,
+        );
+
+        channelOne.push({
+          id: nextId(),
+          content: "",
+          timestamp: "2026-10-19T11:46:00.000Z",
+          author: { id: TOMEK, username: "tomek" },
+          attachments: [],
+          embeds: [
+            {
+              title: "Login fails after the update",
+              url: "https://github.com/nightly-labs/openbot/issues/1",
+              description: "The app closes at start.",
+            },
+          ],
+        });
+        try {
+          const asked = nextId();
+          await mention({
+            id: asked,
+            guildId: GUILD_ONE,
+            channelId: CHANNEL_ONE,
+            authorId: KUBA,
+            authorName: "Kuba",
+            roles: [MAINTAINERS],
+            content: "is this fixed?",
+          });
+          await received(asked);
+          assert.match(
+            await promptOf(services, GUILD_ONE, asked, CHANNEL_ONE),
+            /--- earlier messages \(context, oldest first, with their message id\) ---\n\[2026-10-19T11:46:00\.000Z\] \(id \d+\) tomek: \(Embed\)\nLogin fails after the update\nLink: https:\/\/github\.com\/nightly-labs\/openbot\/issues\/1\nThe app closes at start\.\n/u,
+          );
+        } finally {
+          channelOne.length = 0;
+        }
+        return { embeds: true };
+      },
+    );
+  });
+
+  await boot(async (services) => {
+    await step("after a restart, the role list stays; an empty list lets everyone again", async () => {
+      const access = await runCauseEffect(services.messaging.discordAccess(GUILD_ONE));
+      assert.deepEqual(access.allowedRoles, [{ id: MAINTAINERS, name: "Maintainers" }]);
+      assert.deepEqual((await runCauseEffect(services.messaging.discordAccess(GUILD_TWO))).allowedRoles, []);
+      const outsider = nextId();
+      await mention({
+        id: outsider,
+        guildId: GUILD_ONE,
+        channelId: CHANNEL_ONE,
+        authorId: BOB,
+        authorName: "Bob",
+        roles: [MEMBERS],
+        content: "again",
+      });
+      const maintainer = nextId();
+      await mention({
+        id: maintainer,
+        guildId: GUILD_ONE,
+        channelId: CHANNEL_ONE,
+        authorId: IGA,
+        authorName: "Iga",
+        roles: [MAINTAINERS],
+        content: "again",
+      });
+      await received(maintainer);
+      assert.equal(touched(outsider), false);
+
+      await runCauseEffect(services.messaging.setDiscordAccess({ workspaceId: GUILD_ONE, allowedRoles: [] }));
+      const everyone = nextId();
+      await mention({
+        id: everyone,
+        guildId: GUILD_ONE,
+        channelId: CHANNEL_ONE,
+        authorId: ULA,
+        authorName: "Ula",
+        roles: [],
+        content: "now?",
+      });
+      await received(everyone);
+      return { allowedRoles: access.allowedRoles };
+    });
+  });
+
+  report.passed = true;
+} finally {
+  mkdirSync(OUT, { recursive: true });
+  writeFileSync(REPORT, `${JSON.stringify(report, null, 2)}\n`);
+  await rm(root, { recursive: true, force: true });
+}
+assert.ok(!readFileSync(REPORT, "utf8").includes("webhooks for OpenBot"), "The report contains message text.");
+process.stdout.write(`Discord access check passed. Report: ${REPORT}\n`);

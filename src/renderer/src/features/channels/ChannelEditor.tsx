@@ -1,0 +1,546 @@
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import type { Channel, ChannelBrowser, ChannelDraft, ChannelIcon } from "@openbot/contracts/ipc";
+import {
+  Button,
+  buttonVariants,
+  Crown,
+  Input,
+  ItemActions,
+  ItemGroup,
+  Listbox,
+  Plus,
+  Popover,
+  Search,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  SwitchField,
+  Tooltip,
+} from "@openbot/ui";
+import { createScrollFades } from "@openbot/ui/components/createScrollFades";
+import { ResizableTextarea } from "@openbot/ui/components/ResizableTextarea";
+import { SettingsField, SettingsLinkGroup, SettingsLinkRow } from "@openbot/ui/components/SettingsPanel";
+import { AgentAvatar } from "@openbot/ui/features/agents/AgentAvatar";
+import { InstructionsLimit, instructionsTooLong } from "@openbot/ui/features/agents/InstructionsLimit";
+import { ChannelContextActions } from "@openbot/ui/features/channels/ChannelContextActions";
+import { ChannelMemberRow } from "@openbot/ui/features/channels/ChannelMemberRow";
+import { ChannelPictureEditor } from "@openbot/ui/features/channels/ChannelPictureEditor";
+import { ContentExitMotion } from "@openbot/ui/menu-motion";
+import { useText } from "@openbot/ui/text";
+import { createEffect, createMemo, createStore, For, onSettled, Show } from "solid-js";
+import { useChannels } from "./channels-context";
+import { matchesAgentSearch, toggleChannelMember } from "./channels-draft";
+
+interface ChannelEditorProps {
+  memoryCount: number;
+  routineCount: number;
+  onOpenMemories: () => void;
+  onOpenRoutines: () => void;
+}
+
+export function ChannelEditor(props: ChannelEditorProps) {
+  const channels = useChannels();
+  const { t } = useText();
+  const agentList = channels.agents;
+  const channel = () => channels.state.page?.channel;
+  function deleteHistoryAction(channelId: string): (() => Promise<void>) | undefined {
+    if (!channels.historyDeletionSupported()) return undefined;
+    return () => channels.deleteHistory(channelId);
+  }
+  const [fields, setFields] = createStore({ name: "", title: "", instructions: "" });
+  const [dirty, setDirty] = createStore({ name: false, title: false, instructions: false });
+  let lastSignature = "";
+  let lastChannelId = "";
+
+  createEffect(
+    () => {
+      const current = channel();
+      return (
+        current && {
+          id: current.id,
+          name: current.name,
+          title: current.title,
+          instructions: current.instructions,
+          revision: current.revision,
+        }
+      );
+    },
+    (next) => {
+      if (!next) return;
+      const signature = JSON.stringify([next.id, next.revision, next.name, next.title, next.instructions]);
+      if (signature === lastSignature) return;
+      const changed = next.id !== lastChannelId;
+      const keep = {
+        name: !changed && dirty.name,
+        title: !changed && dirty.title,
+        instructions: !changed && dirty.instructions,
+      };
+      lastSignature = signature;
+      lastChannelId = next.id;
+      if (changed)
+        setDirty((state) => {
+          state.name = false;
+          state.title = false;
+          state.instructions = false;
+        });
+      setFields((state) => {
+        if (!keep.name) state.name = next.name;
+        if (!keep.title) state.title = next.title;
+        if (!keep.instructions) state.instructions = next.instructions;
+      });
+    },
+  );
+
+  const members = () =>
+    (channel()?.members ?? []).map((member) => ({
+      agentId: member.agentId,
+      agent: agentList().find((agent) => agent.id === member.agentId),
+    }));
+  const available = () =>
+    agentList().filter((agent) => !channel()?.members.some((member) => member.agentId === agent.id));
+
+  const [picker, setPicker] = createStore<{ open: boolean; search: string; placement: "bottom-start" | "top-start" }>({
+    open: false,
+    search: "",
+    placement: "bottom-start",
+  });
+  const matching = () => available().filter((agent) => matchesAgentSearch(agent, picker.search));
+  let pickerPanel: HTMLElement | undefined;
+  const pickerFades = createScrollFades();
+  onSettled(() => pickerFades.stop);
+  createEffect(
+    () => matching(),
+    () => pickerFades.remeasure(),
+  );
+  let pickerSearch: HTMLInputElement | undefined;
+  let pickerTrigger: HTMLButtonElement | undefined;
+  function typeIntoSearch(event: KeyboardEvent) {
+    const erase = event.key === "Backspace";
+    if ((event.key.length !== 1 && !erase) || event.ctrlKey || event.metaKey || event.altKey) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setPicker((state) => {
+      state.search = erase ? state.search.slice(0, -1) : state.search + event.key;
+    });
+    pickerSearch?.focus();
+  }
+  function focusFirstOption(): boolean {
+    const option = pickerPanel?.querySelector<HTMLElement>(".channel-member-option");
+    option?.focus();
+    return option !== null && option !== undefined;
+  }
+  function addMember(agentId: string) {
+    setPickerOpen(false);
+    requestAnimationFrame(() => pickerTrigger?.focus());
+    void commit((draft) => toggleChannelMember(draft, agentId, true));
+  }
+  function setPickerOpen(open: boolean) {
+    const trigger = pickerTrigger?.getBoundingClientRect();
+    setPicker((state) => {
+      state.open = open;
+      if (!open) state.search = "";
+      if (open && trigger)
+        state.placement = window.innerHeight - trigger.bottom >= trigger.top ? "bottom-start" : "top-start";
+    });
+    if (open) requestAnimationFrame(() => pickerSearch?.focus({ preventScroll: true }));
+    else pickerFades.stop();
+  }
+
+  function draftFrom(current: Channel): ChannelDraft {
+    return {
+      name: fields.name.trim() || current.name,
+      title: fields.title,
+      instructions: instructionsTooLong(fields.instructions) ? current.instructions : fields.instructions,
+      members: current.members.map((member) => ({ agentId: member.agentId })),
+      leadAgentId: current.leadAgentId,
+    };
+  }
+
+  let saving: Promise<unknown> = Promise.resolve();
+  let sent: { channelId: string; draft: ChannelDraft } | null = null;
+  function commit(patch?: (draft: ChannelDraft) => void): Promise<boolean> {
+    const target = channel();
+    if (!target) return Promise.resolve(false);
+    const targetId = target.id;
+    const captured = draftFrom(target);
+    const next = saving
+      .catch(() => undefined)
+      .then(() => {
+        const current = channel();
+        const previous = sent?.channelId === targetId ? sent.draft : captured;
+        const draft =
+          current?.id === targetId
+            ? draftFrom(current)
+            : {
+                ...captured,
+                members: previous.members.map((member) => ({ ...member })),
+                leadAgentId: previous.leadAgentId,
+              };
+        patch?.(draft);
+        sent = { channelId: targetId, draft };
+        return channels.command({
+          type: "save",
+          operationId: crypto.randomUUID(),
+          channelId: targetId,
+          draft,
+          update: true,
+        });
+      });
+    saving = next;
+    return next;
+  }
+
+  function saveName(): void {
+    const current = channel();
+    if (!current) return;
+    const value = fields.name.trim() || current.name;
+    setFields((state) => {
+      state.name = value;
+    });
+    void commit().then((saved) => {
+      if (saved && channel()?.id === current.id && fields.name === value)
+        setDirty((state) => {
+          state.name = false;
+        });
+    });
+  }
+
+  function saveText(key: "title" | "instructions"): () => void {
+    return () => {
+      const current = channel();
+      if (!current) return;
+      const value = fields[key];
+      if (key === "instructions" && instructionsTooLong(value)) return;
+      void commit().then((saved) => {
+        if (saved && channel()?.id === current.id && fields[key] === value)
+          setDirty((state) => {
+            state[key] = false;
+          });
+      });
+    };
+  }
+
+  const browserOptions = createMemo(
+    () => ["kind:members", ...(channel()?.members ?? []).map((member) => `agent:${member.agentId}`), "kind:none"],
+    {
+      equals: (before, after) => before.length === after.length && before.every((item, index) => item === after[index]),
+    },
+  );
+  const browserValue = () => {
+    const browser = channel()?.browser;
+    if (browser?.kind === "member") return `agent:${browser.agentId}`;
+    return `kind:${browser?.kind ?? "members"}`;
+  };
+  function browserLabel(value: string): string {
+    if (value === "kind:members") return t("channel.settings.browserEveryone");
+    if (value === "kind:none") return t("channel.settings.browserNone");
+    const agentId = value.slice("agent:".length);
+    return agentList().find((agent) => agent.id === agentId)?.name ?? t("channel.members.unavailable", { id: agentId });
+  }
+  function chooseBrowser(value: string | null): void {
+    if (!value || value === browserValue()) return;
+    const browser: ChannelBrowser =
+      value === "kind:members" || value === "kind:none"
+        ? { kind: value === "kind:members" ? "members" : "none" }
+        : { kind: "member", agentId: value.slice("agent:".length) };
+    void commit((draft) => {
+      draft.browser = browser;
+    });
+  }
+
+  const pictureChannel = () => (channels.pictureSupported() ? channel() : undefined);
+
+  async function selectIcon(icon: ChannelIcon): Promise<void> {
+    const current = channel();
+    if (!current) return;
+    const saved = await commit((draft) => {
+      draft.icon = icon;
+    });
+    if (saved && current.imageUrl) await channels.setImage(current.id, null);
+  }
+
+  async function resetPicture(): Promise<void> {
+    const current = channel();
+    if (!current) return;
+    const saved =
+      !current.icon ||
+      (await commit((draft) => {
+        draft.icon = null;
+      }));
+    if (saved && current.imageUrl) await channels.setImage(current.id, null);
+  }
+
+  return (
+    <div class="channel-editor">
+      <Show when={pictureChannel()}>
+        {(current) => (
+          <ChannelPictureEditor
+            members={current().members}
+            agents={agentList()}
+            icon={current().icon}
+            imageUrl={current().imageUrl}
+            onSetImage={(image) => channels.setImage(current().id, image)}
+            onSelectIcon={selectIcon}
+            onReset={resetPicture}
+          />
+        )}
+      </Show>
+      <SettingsField label={t("channel.form.nameShort")}>
+        <Input
+          aria-label={t("channel.form.name")}
+          placeholder={t("channel.form.namePlaceholder")}
+          maxlength={INPUT_LIMITS.agentName}
+          value={fields.name}
+          onValueChange={(name) => {
+            setFields((state) => {
+              state.name = name;
+            });
+            setDirty((state) => {
+              state.name = true;
+            });
+          }}
+          onBlur={saveName}
+        />
+      </SettingsField>
+      <SettingsField label={t("channel.form.title")}>
+        <Input
+          aria-label={t("channel.form.titleLabel")}
+          placeholder={t("channel.form.titlePlaceholder")}
+          maxlength={INPUT_LIMITS.agentTitle}
+          value={fields.title}
+          onValueChange={(title) => {
+            setFields((state) => {
+              state.title = title;
+            });
+            setDirty((state) => {
+              state.title = true;
+            });
+          }}
+          onBlur={saveText("title")}
+        />
+      </SettingsField>
+      <SettingsField label={t("channel.form.instructions")}>
+        <ResizableTextarea
+          class="settings-instructions-input"
+          rows="4"
+          aria-label={t("channel.form.instructionsLabel")}
+          resizeLabel={t("channel.form.instructionsResize")}
+          placeholder={t("channel.form.instructionsPlaceholder")}
+          invalid={instructionsTooLong(fields.instructions)}
+          value={fields.instructions}
+          onValueChange={(instructions) => {
+            setFields((state) => {
+              state.instructions = instructions;
+            });
+            setDirty((state) => {
+              state.instructions = true;
+            });
+          }}
+          onBlur={saveText("instructions")}
+        />
+        <InstructionsLimit text={fields.instructions} />
+      </SettingsField>
+      <Show when={channels.browserSupported()}>
+        <SettingsField label={t("channel.settings.browser")}>
+          <Select<string>
+            options={browserOptions()}
+            value={browserValue()}
+            onChange={chooseBrowser}
+            disabled={channel()?.archived === true}
+            itemComponent={(selectProps) => (
+              <SelectItem item={selectProps.item}>{browserLabel(selectProps.item.rawValue)}</SelectItem>
+            )}
+          >
+            <SelectTrigger aria-label={t("channel.settings.browser")}>
+              <SelectValue<string>>
+                {(state) => {
+                  const value = state.selectedOption();
+                  return value && browserLabel(value);
+                }}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent />
+          </Select>
+        </SettingsField>
+      </Show>
+      <Show when={channels.isolationSupported()}>
+        <SwitchField
+          checked={channel()?.isolated === true}
+          onChange={(isolated) =>
+            void commit((draft) => {
+              draft.isolated = isolated;
+            })
+          }
+          label={t("channel.settings.isolated")}
+          description={t("channel.settings.isolatedDescription")}
+        />
+      </Show>
+      <SettingsLinkGroup>
+        <SettingsLinkRow
+          label={t("channel.settings.memories")}
+          value={t("channel.settings.memoryCount", { count: props.memoryCount })}
+          onClick={props.onOpenMemories}
+        />
+        <SettingsLinkRow
+          label={t("channel.settings.routines")}
+          value={t("channel.settings.routineCount", { count: props.routineCount })}
+          onClick={props.onOpenRoutines}
+        />
+      </SettingsLinkGroup>
+      <Show when={channels.contextActionsSupported() && !channel()?.archived && channel()}>
+        {(current) => (
+          <ChannelContextActions
+            channelName={current().name}
+            startNewConversation={() => channels.clearContext(current().id)}
+            compact={() => channels.compactContext(current().id)}
+            deleteHistory={deleteHistoryAction(current().id)}
+          />
+        )}
+      </Show>
+      <section class="channel-members" aria-label={t("channel.members.title")}>
+        <h3 class="channel-members-title">{t("channel.members.title")}</h3>
+        <ItemGroup class="channel-member-list">
+          <For each={members()}>
+            {(entry) => (
+              <ChannelMemberRow
+                agent={entry.agent}
+                fallbackName={t("channel.members.unavailable", { id: entry.agentId })}
+                actions={
+                  <ItemActions>
+                    <Show when={entry.agent}>
+                      {(agent) => (
+                        <Tooltip.Root openDelay={250} closeDelay={75} placement="top" gutter={8}>
+                          <Tooltip.Trigger
+                            type="button"
+                            class={buttonVariants({
+                              variant: "ghost",
+                              size: "icon-xs",
+                              class: "ui-icon-button channel-lead-toggle",
+                            })}
+                            aria-pressed={channel()?.leadAgentId === entry.agentId ? "true" : "false"}
+                            aria-label={
+                              channel()?.leadAgentId === entry.agentId
+                                ? t("channel.members.isLead", { name: agent().name })
+                                : t("channel.members.makeLeadLabel", { name: agent().name })
+                            }
+                            onClick={() =>
+                              void commit((draft) => {
+                                draft.leadAgentId = entry.agentId;
+                              })
+                            }
+                          >
+                            <Crown aria-hidden="true" />
+                          </Tooltip.Trigger>
+                          <Tooltip.Portal>
+                            <Tooltip.Content class="ui-tooltip">
+                              {channel()?.leadAgentId === entry.agentId
+                                ? t("channel.members.lead")
+                                : t("channel.members.makeLead")}
+                            </Tooltip.Content>
+                          </Tooltip.Portal>
+                        </Tooltip.Root>
+                      )}
+                    </Show>
+                    <Button
+                      size="xs"
+                      variant="destructive"
+                      class="channel-member-remove"
+                      aria-label={
+                        entry.agent
+                          ? t("channel.members.remove", { name: entry.agent.name })
+                          : t("channel.members.removeUnavailable", { id: entry.agentId })
+                      }
+                      onClick={() => void commit((draft) => toggleChannelMember(draft, entry.agentId, false))}
+                    >
+                      {t("common.remove")}
+                    </Button>
+                  </ItemActions>
+                }
+              />
+            )}
+          </For>
+          <Popover.Root
+            open={picker.open}
+            onOpenChange={setPickerOpen}
+            placement={picker.placement}
+            flip={false}
+            modal={false}
+          >
+            <Popover.Trigger
+              ref={pickerTrigger}
+              class={buttonVariants({ variant: "ghost", class: "channel-member-add" })}
+              disabled={!available().length}
+            >
+              <Plus aria-hidden="true" />
+              {t("channel.members.add")}
+            </Popover.Trigger>
+            <Popover.Portal>
+              <Popover.Content ref={(element) => (pickerPanel = element)} class="ui-action-menu channel-member-menu">
+                <ContentExitMotion panel={() => pickerPanel} />
+                <Popover.Title class="sr-only">{t("channel.members.add")}</Popover.Title>
+                <label class="search-field channel-member-search">
+                  <Search class="channel-search-icon" aria-hidden="true" />
+                  <Input
+                    ref={(element: HTMLInputElement) => (pickerSearch = element)}
+                    type="search"
+                    aria-label={t("channel.create.searchAgents")}
+                    placeholder={t("channel.create.searchAgents")}
+                    value={picker.search}
+                    onValueChange={(search) =>
+                      setPicker((state) => {
+                        state.search = search;
+                      })
+                    }
+                    onKeyDown={(event: KeyboardEvent) => {
+                      if (event.key === "ArrowDown" && focusFirstOption()) event.preventDefault();
+                    }}
+                  />
+                </label>
+                <Show
+                  when={matching().length}
+                  fallback={
+                    <p class="channel-member-menu-empty" role="status">
+                      {t("channel.create.noMatches")}
+                    </p>
+                  }
+                >
+                  <Listbox.Root
+                    as="div"
+                    ref={(element: HTMLElement) => {
+                      pickerFades.bind(element);
+                      element.addEventListener("keydown", typeIntoSearch, { capture: true });
+                    }}
+                    class={["channel-member-options", pickerFades.classes()]}
+                    onScroll={pickerFades.measure}
+                    aria-label={t("channel.members.add")}
+                    options={matching()}
+                    optionValue="id"
+                    optionTextValue="name"
+                    selectionMode="single"
+                    shouldFocusWrap
+                    shouldSelectOnPressUp
+                    onChange={(keys) => {
+                      const agentId = keys.values().next().value;
+                      if (agentId) addMember(agentId);
+                    }}
+                    renderItem={(item) => (
+                      <Listbox.Item item={item} class="channel-member-option">
+                        <AgentAvatar agent={item.rawValue} />
+                        {item.rawValue.name}
+                      </Listbox.Item>
+                    )}
+                  />
+                </Show>
+              </Popover.Content>
+            </Popover.Portal>
+          </Popover.Root>
+        </ItemGroup>
+        <Show when={!members().length}>
+          <p class="channel-members-note">{t("channel.members.empty")}</p>
+        </Show>
+      </section>
+    </div>
+  );
+}

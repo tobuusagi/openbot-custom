@@ -1,0 +1,36 @@
+import type { PartialTranslation } from "../../message";
+import type { messages as source } from "../en/queue";
+
+export const messages = {
+  "queue.label": "Nachrichtenwarteschlange",
+  "queue.moved": "Die Nachricht wurde in der Warteschlange an Position {position} von {total} verschoben.",
+  "queue.attachment": "Anhang",
+  "queue.hold.named": "Wartet – {name} arbeitet in {channel}",
+  "queue.hold.unnamed": "Wartet – dieser Agent arbeitet in {channel}",
+  "queue.hold.providerRestart": "Wartet – {provider} startet neu, sobald die laufenden Aufgaben beendet sind",
+  "queue.item.label": "Nachricht {position} in der Warteschlange: {preview}",
+  "queue.item.labelEditing": "Nachricht {position} in der Warteschlange, in Bearbeitung: {preview}",
+  "queue.item.editing": "In Bearbeitung",
+  "queue.item.steerLabel": "Nachricht {position} aus der Warteschlange steuern",
+  "queue.item.steerTooltip": "Nachricht steuern",
+  "queue.item.steering": "Wird gesteuert",
+  "queue.item.steer": "Steuern",
+  "queue.item.sendNowLabel": "Agent stoppen und Nachricht {position} aus der Warteschlange jetzt senden",
+  "queue.item.sendNowTooltip": "Agent stoppen und diese Nachricht jetzt senden",
+  "queue.item.sendNow": "Jetzt senden",
+  "queue.item.notSteered": "Nicht gesteuert",
+  "queue.item.steerFallback.providerUnsupported":
+    "Dieser Anbieter kann einen laufenden Durchlauf nicht steuern. Die Nachricht wartet daher in der Warteschlange.",
+  "queue.item.steerFallback.steerFailed":
+    "Die Nachricht konnte nicht gesteuert werden und wartet daher in der Warteschlange.",
+  "queue.item.steerFallback.routineRun": "Gerade läuft eine Routine, daher wartet die Nachricht in der Warteschlange.",
+  "queue.item.runAsTask": "In neuem Thread ausführen",
+  "queue.item.runAsTaskLabel": "Nachricht {position} aus der Warteschlange in einem neuen Thread ausführen",
+  "queue.item.deleteLabel": "Nachricht {position} aus der Warteschlange löschen",
+  "queue.item.deleteTooltip": "Nachricht löschen",
+  "queue.item.editLabel": "Nachricht {position} in der Warteschlange bearbeiten",
+  "queue.item.editTooltip": "Nachricht bearbeiten",
+  "queue.deleteHeld.title": "Nachricht aus der Warteschlange löschen?",
+  "queue.deleteHeld.body": "Ein anderes Gerät bearbeitet diese Nachricht. Der Agent wird sie nicht erhalten.",
+  "queue.deleteHeld.keep": "Behalten",
+} as const satisfies PartialTranslation<typeof source>;

@@ -1,0 +1,298 @@
+import type { RemoteDesktopConnectResult, RemoteDesktopErrorCode, RemoteDesktopSession } from "@openbot/contracts/ipc";
+import { currentText } from "@openbot/ui/text";
+import { createEffect, createMemo, createSignal, flush, onSettled } from "solid-js";
+import { desktopAnalytics } from "../../analytics";
+import { usePlatform } from "../../platform";
+import { createSimpleContext } from "../../simple-context";
+import { serverSupportsCapability } from "../servers/server-capabilities";
+import { useServers } from "../servers/servers-context";
+import { remoteDesktopPort } from "./remote-desktop-port";
+
+const RemoteDesktop = createSimpleContext({
+  name: "Remote desktop",
+  init: () => {
+    const platform = usePlatform();
+    const { servers, activeServer } = useServers();
+    const [remoteDesktopSessions, setRemoteDesktopSessions] = createSignal<RemoteDesktopSession[]>([]);
+    const [remoteDesktopWorkspaceServerId, setRemoteDesktopWorkspaceServerId] = createSignal<string | null>(null);
+    const [remoteDesktopWorkspaceVisible, setRemoteDesktopWorkspaceVisible] = createSignal(false);
+    const [remoteDesktopConnectingServerId, setRemoteDesktopConnectingServerId] = createSignal<string | null>(null);
+    const [remoteDesktopConnectionError, setRemoteDesktopConnectionError] = createSignal<string | null>(null);
+    const [remoteDesktopConnectionErrorCode, setRemoteDesktopConnectionErrorCode] =
+      createSignal<RemoteDesktopErrorCode | null>(null);
+    const [remoteDesktopSessionEstablished, setRemoteDesktopSessionEstablished] = createSignal(false);
+    const [remoteDesktopViewerFailed, setRemoteDesktopViewerFailed] = createSignal(false);
+    let remoteDesktopRestoreTarget: HTMLElement | null = null;
+    let remoteDesktopConnectPromise: Promise<RemoteDesktopSession | undefined> | null = null;
+    let remoteDesktopConnectionRequest = 0;
+
+    function clearRemoteDesktopConnectionError(): void {
+      setRemoteDesktopConnectionError(null);
+      setRemoteDesktopConnectionErrorCode(null);
+    }
+
+    async function connectRemoteDesktop(serverId: string): Promise<RemoteDesktopConnectResult> {
+      const analytics = desktopAnalytics.scope();
+      try {
+        const result = await remoteDesktopPort().remoteDesktop.connect({ serverId });
+        if (result.status === "refused") {
+          analytics.track("remote_desktop_action", {
+            action: "connect",
+            result: "failed",
+            failure_code: result.errorCode,
+          });
+          return result;
+        }
+        const session = result.session;
+        setRemoteDesktopSessions((current) => [...current.filter((item) => item.id !== session.id), session]);
+        analytics.track("remote_desktop_action", {
+          action: "connect",
+          result: "succeeded",
+          transport: session.transport,
+        });
+        return result;
+      } catch (error) {
+        analytics.track("remote_desktop_action", {
+          action: "connect",
+          result: "failed",
+          failure_code: "connection_failed",
+        });
+        throw error;
+      }
+    }
+
+    async function disconnectRemoteDesktop(sessionId: string): Promise<void> {
+      const analytics = desktopAnalytics.scope();
+      try {
+        await remoteDesktopPort().remoteDesktop.disconnect(sessionId);
+        setRemoteDesktopSessions((current) => current.filter((session) => session.id !== sessionId));
+        analytics.track("remote_desktop_action", { action: "disconnect", result: "succeeded" });
+      } catch (error) {
+        analytics.track("remote_desktop_action", {
+          action: "disconnect",
+          result: "failed",
+          failure_code: "disconnect_failed",
+        });
+        throw error;
+      }
+    }
+
+    async function selectRemoteDesktopDisplay(serverId: string, displayId: string): Promise<void> {
+      const analytics = desktopAnalytics.scope();
+      try {
+        await remoteDesktopPort().remoteDesktop.selectDisplay({ serverId, displayId });
+        setRemoteDesktopSessions((current) =>
+          current.map((session) =>
+            session.serverId === serverId ? { ...session, selectedDisplayId: displayId } : session,
+          ),
+        );
+        analytics.track("remote_desktop_action", { action: "select_display", result: "succeeded" });
+      } catch (error) {
+        analytics.track("remote_desktop_action", {
+          action: "select_display",
+          result: "failed",
+          failure_code: "display_select_failed",
+        });
+        throw error;
+      }
+    }
+
+    function latestRemoteDesktopSession(serverId: string): RemoteDesktopSession | undefined {
+      return [...remoteDesktopSessions()]
+        .filter((session) => session.serverId === serverId)
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+    }
+
+    function restoreRemoteDesktopFocus(): void {
+      const target = remoteDesktopRestoreTarget;
+      remoteDesktopRestoreTarget = null;
+      if (target?.isConnected) requestAnimationFrame(() => target.focus());
+    }
+
+    function hideRemoteDesktopWorkspace(): void {
+      setRemoteDesktopWorkspaceVisible(false);
+      restoreRemoteDesktopFocus();
+      if (remoteDesktopViewerFailed()) void disconnectRemoteDesktopWorkspace(false).catch(() => undefined);
+    }
+
+    function reportRemoteDesktopViewerFailed(failed: boolean): void {
+      setRemoteDesktopViewerFailed(failed);
+      if (failed && !remoteDesktopWorkspaceVisible()) {
+        void disconnectRemoteDesktopWorkspace(false).catch(() => undefined);
+      }
+    }
+
+    async function startRemoteDesktopConnection(
+      serverId: string,
+      request: number,
+    ): Promise<RemoteDesktopSession | undefined> {
+      const current = () => request === remoteDesktopConnectionRequest && remoteDesktopWorkspaceServerId() === serverId;
+      try {
+        const result = await connectRemoteDesktop(serverId);
+        if (result.status === "refused") {
+          if (current()) {
+            const text = currentText();
+            setRemoteDesktopConnectionError(text.errorMessage(result.message, text.t("remoteDesktop.startFailed")));
+            setRemoteDesktopConnectionErrorCode(result.errorCode);
+          }
+          return undefined;
+        }
+        if (!current()) {
+          await disconnectRemoteDesktop(result.session.id);
+          return undefined;
+        }
+        setRemoteDesktopSessionEstablished(true);
+        return result.session;
+      } catch (error) {
+        if (current()) {
+          const text = currentText();
+          setRemoteDesktopConnectionError(text.errorMessage(error, text.t("remoteDesktop.startFailed")));
+          setRemoteDesktopConnectionErrorCode(null);
+        }
+        return undefined;
+      } finally {
+        if (request === remoteDesktopConnectionRequest) setRemoteDesktopConnectingServerId(null);
+      }
+    }
+
+    async function openRemoteDesktopWorkspace(serverId: string, trigger: HTMLElement): Promise<void> {
+      const server = servers().find((item) => item.id === serverId);
+      const existingSession = latestRemoteDesktopSession(serverId);
+      if (
+        server?.kind !== "remote" ||
+        !serverSupportsCapability(server, "remote-desktop") ||
+        (!existingSession && server.state !== "online")
+      ) {
+        return;
+      }
+
+      remoteDesktopRestoreTarget = trigger;
+      if (remoteDesktopWorkspaceServerId() !== serverId) setRemoteDesktopViewerFailed(false);
+      setRemoteDesktopWorkspaceServerId(serverId);
+      setRemoteDesktopWorkspaceVisible(true);
+      clearRemoteDesktopConnectionError();
+      if (existingSession) {
+        setRemoteDesktopSessionEstablished(true);
+        return;
+      }
+      if (remoteDesktopConnectPromise && remoteDesktopConnectingServerId() === serverId) {
+        await remoteDesktopConnectPromise;
+        return;
+      }
+
+      const request = ++remoteDesktopConnectionRequest;
+      setRemoteDesktopSessionEstablished(false);
+      setRemoteDesktopConnectingServerId(serverId);
+      const connection = startRemoteDesktopConnection(serverId, request);
+      remoteDesktopConnectPromise = connection;
+      await connection;
+      if (remoteDesktopConnectPromise === connection) remoteDesktopConnectPromise = null;
+    }
+
+    async function retryRemoteDesktopWorkspace(): Promise<void> {
+      const serverId = remoteDesktopWorkspaceServerId();
+      if (!serverId) return;
+      const existingSession = latestRemoteDesktopSession(serverId);
+      const request = ++remoteDesktopConnectionRequest;
+      clearRemoteDesktopConnectionError();
+      setRemoteDesktopSessionEstablished(false);
+      setRemoteDesktopViewerFailed(false);
+      setRemoteDesktopConnectingServerId(serverId);
+      if (existingSession) await disconnectRemoteDesktop(existingSession.id);
+      const connection = startRemoteDesktopConnection(serverId, request);
+      remoteDesktopConnectPromise = connection;
+      await connection;
+      if (remoteDesktopConnectPromise === connection) remoteDesktopConnectPromise = null;
+    }
+
+    async function disconnectRemoteDesktopWorkspace(restoreFocus = true): Promise<void> {
+      const serverId = remoteDesktopWorkspaceServerId();
+      if (!serverId) return;
+      const request = ++remoteDesktopConnectionRequest;
+      clearRemoteDesktopConnectionError();
+      setRemoteDesktopSessionEstablished(false);
+      setRemoteDesktopViewerFailed(false);
+      const session = latestRemoteDesktopSession(serverId);
+      if (session) await disconnectRemoteDesktop(session.id);
+      else await remoteDesktopConnectPromise;
+      if (request !== remoteDesktopConnectionRequest) return;
+      remoteDesktopConnectPromise = null;
+      setRemoteDesktopConnectingServerId(null);
+      setRemoteDesktopWorkspaceVisible(false);
+      setRemoteDesktopWorkspaceServerId(null);
+      if (restoreFocus) restoreRemoteDesktopFocus();
+      else remoteDesktopRestoreTarget = null;
+    }
+    const activeRemoteDesktopSession = createMemo(() => {
+      const server = activeServer();
+      return server ? latestRemoteDesktopSession(server.id) : undefined;
+    });
+    const remoteDesktopWorkspaceServer = createMemo(() => {
+      const serverId = remoteDesktopWorkspaceServerId();
+      return serverId ? servers().find((server) => server.id === serverId) : undefined;
+    });
+    const remoteDesktopWorkspaceSession = createMemo(() => {
+      const serverId = remoteDesktopWorkspaceServerId();
+      return serverId ? latestRemoteDesktopSession(serverId) : undefined;
+    });
+
+    createEffect(
+      () => remoteDesktopWorkspaceVisible(),
+      (visible) => {
+        const frame = platform.appFrame();
+        if (frame) frame.inert = visible;
+      },
+    );
+
+    createEffect(
+      () => {
+        const serverId = remoteDesktopWorkspaceServerId();
+        return {
+          serverId,
+          established: remoteDesktopSessionEstablished(),
+          sessionExists: serverId ? Boolean(latestRemoteDesktopSession(serverId)) : false,
+          connectingServerId: remoteDesktopConnectingServerId(),
+        };
+      },
+      ({ serverId, established, sessionExists, connectingServerId }) => {
+        if (serverId && established && !sessionExists && connectingServerId !== serverId) {
+          setRemoteDesktopSessionEstablished(false);
+          setRemoteDesktopWorkspaceVisible(false);
+          setRemoteDesktopWorkspaceServerId(null);
+          restoreRemoteDesktopFocus();
+        }
+      },
+    );
+
+    onSettled(() => {
+      if (platform.landingPreview) return;
+      const unsubscribe = remoteDesktopPort().remoteDesktop.onEvent((sessions) =>
+        flush(() => setRemoteDesktopSessions(sessions)),
+      );
+      void remoteDesktopPort()
+        .remoteDesktop.list()
+        .then(setRemoteDesktopSessions)
+        .catch(() => undefined);
+      return unsubscribe;
+    });
+
+    return {
+      activeRemoteDesktopSession,
+      remoteDesktopWorkspaceServer,
+      remoteDesktopWorkspaceSession,
+      remoteDesktopWorkspaceVisible,
+      remoteDesktopConnectingServerId,
+      remoteDesktopConnectionError,
+      remoteDesktopConnectionErrorCode,
+      openRemoteDesktopWorkspace,
+      hideRemoteDesktopWorkspace,
+      reportRemoteDesktopViewerFailed,
+      retryRemoteDesktopWorkspace,
+      disconnectRemoteDesktopWorkspace,
+      selectRemoteDesktopDisplay,
+    };
+  },
+});
+
+export const RemoteDesktopProvider = RemoteDesktop.provider;
+export const useRemoteDesktop = RemoteDesktop.use;

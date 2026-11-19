@@ -1,0 +1,9 @@
+[Unit]
+Description=Update OpenBot on request
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/OpenBot/hosted/openbot-hosted-update request
+TimeoutStartSec=45min

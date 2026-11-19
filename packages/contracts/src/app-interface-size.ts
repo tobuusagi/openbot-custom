@@ -1,0 +1,15 @@
+import { isOneOf } from "./runtime-values";
+
+export const APP_INTERFACE_SIZES = [67, 75, 80, 90, 100, 110, 125, 150, 175, 200] as const;
+export type AppInterfaceSize = (typeof APP_INTERFACE_SIZES)[number];
+export const DEFAULT_APP_INTERFACE_SIZE: AppInterfaceSize = 100;
+
+export interface AppInterfaceSizePreference {
+  percent: AppInterfaceSize;
+}
+
+export type SetAppInterfaceSizePreferenceInput = AppInterfaceSizePreference;
+
+export function isAppInterfaceSize(value: unknown): value is AppInterfaceSize {
+  return isOneOf(APP_INTERFACE_SIZES, value);
+}

@@ -1,0 +1,17 @@
+/var/log/openbot/*.log {
+	su syslog adm
+	daily
+	maxsize 200M
+	rotate 30
+	maxage 30
+	dateext
+	dateformat -%Y%m%d-%H%M%S
+	missingok
+	notifempty
+	compress
+	delaycompress
+	sharedscripts
+	postrotate
+		/usr/lib/rsyslog/rsyslog-rotate
+	endscript
+}

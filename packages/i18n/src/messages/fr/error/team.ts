@@ -1,0 +1,228 @@
+import type { PartialTranslation } from "../../../message";
+import type { messages as source } from "../../en/error/team";
+
+export const messages = {
+  "error.team.ownerNotLinked": "Cet hôte n’est pas lié à un compte propriétaire OpenBot.",
+  "error.team.ownerEmailRequired": "Connectez-vous avec l’adresse e-mail OpenBot qui a créé cet hôte.",
+  "error.team.hostNotConfigured": "L’hôte de l’équipe n’est pas configuré.",
+  "error.team.alreadyConfigured": "Le serveur de l’équipe est déjà configuré.",
+  "error.team.identityCreateFailed": "Impossible de créer l’identité de l’équipe.",
+  "error.team.accountChangedDuringCreate": "Le compte connecté a changé pendant la création de ce serveur.",
+  "error.team.notConfigured": "Cet OpenBot n’a pas été configuré.",
+  "error.team.keyRotationMissing": "Aucun changement de clé du serveur n’est en attente.",
+  "error.team.serverNotActive": "Ce serveur n’est plus le serveur actif du compte connecté.",
+  "error.team.logoInvalid": "Choisissez une image PNG, JPEG ou WebP valide de 512 Ko au maximum.",
+  "error.team.ownerMembershipConflict":
+    "L’adhésion du propriétaire dans le plan de contrôle est en conflit avec cet hôte.",
+  "error.team.ownerIdentityMismatch":
+    "L’identité du propriétaire dans le plan de contrôle ne correspond pas à cet hôte.",
+  "error.team.permanentInviteEmail": "Un lien d’invitation permanent ne peut pas avoir d’adresse e-mail.",
+  "error.team.permanentInviteLimit": "Un hôte peut avoir au maximum {limit} liens d’invitation permanents.",
+  "error.team.activeInviteLimit": "Un hôte peut avoir au maximum {limit} invitations actives.",
+  "error.team.inviteInvalid": "L’invitation n’est pas valide ou a expiré.",
+  "error.team.inviteEmailMismatch": "Cette invitation appartient à une autre adresse e-mail.",
+  "error.team.memberDisabled": "Ce membre de l’équipe est désactivé.",
+  "error.team.memberLimit": "Un hôte peut avoir au maximum {limit} membres.",
+  "error.team.accountNotMember": "Ce compte OpenBot n’est pas membre de l’équipe.",
+  "error.team.usernameTaken": "Ce nom d’utilisateur est déjà utilisé.",
+  "error.team.inviteRequiresAccount": "Cette invitation nécessite un compte OpenBot vérifié.",
+  "error.team.loginIncorrect": "Le nom d’utilisateur ou le mot de passe est incorrect.",
+  "error.team.currentPasswordIncorrect": "Le mot de passe actuel est incorrect.",
+  "error.team.memberNotFound": "Membre de l’équipe introuvable.",
+  "error.team.directMessageSelf": "Vous ne pouvez pas ouvrir de message privé avec vous-même.",
+  "error.team.directRecipientUnavailable": "Ce membre de l’équipe n’est pas disponible.",
+  "error.team.ownerCannotChange": "Le compte propriétaire ne peut pas être modifié.",
+  "error.team.ownerCannotRemove": "Le compte propriétaire ne peut pas être supprimé.",
+  "error.team.serverNotConfigured": "Le serveur de l’équipe n’est pas configuré.",
+  "error.team.accountChangedDuringRequest": "Le compte connecté a changé pendant le traitement de la requête.",
+  "error.team.serverFileUnreadable":
+    "Impossible de lire le fichier du serveur d’équipe de cet ordinateur. Déplacez-le avant de configurer un serveur, afin qu’il ne soit pas écrasé.",
+  "error.team.emailInvalid": "Saisissez une adresse e-mail valide.",
+  "error.team.accountNameTooLong": "Le nom du compte est trop long.",
+  "error.team.avatarUrlTooLong": "L’URL de l’avatar du compte est trop longue.",
+  "error.team.avatarUrlInvalid": "L’URL de l’avatar du compte n’est pas valide.",
+  "error.team.serverNameLength": "Le nom du serveur doit contenir entre {min} et {max} caractères.",
+  "error.team.serverNameHostname": "Le nom du serveur doit produire un nom d’hôte public valide.",
+  "error.team.usernameInvalid":
+    "Le nom d’utilisateur doit contenir de 3 à 32 lettres, chiffres, points, tirets ou traits de soulignement.",
+  "error.team.passwordLength": "Le mot de passe doit contenir entre 12 et 256 caractères.",
+  "error.team.bindFailed": "Impossible de lier l’API de l’équipe.",
+  "error.team.signInRequired": "Une connexion à OpenBot est requise.",
+  "error.team.authenticationRequired": "Authentification requise.",
+  "error.team.agentNotFound": "Agent introuvable.",
+  "error.team.routeNotFound": "Route introuvable.",
+  "error.team.requestFailed": "La requête a échoué.",
+  "error.team.tooManySignInAttempts": "Trop de tentatives de connexion. Réessayez plus tard.",
+  "error.team.clientUpdateRequired": "Mettez à jour ce client OpenBot avant de vous connecter à cet hôte.",
+  "error.team.hostUpdateRequired": "Mettez à jour OpenBot sur l’hôte avant de vous connecter.",
+  "error.team.serverSafeMode": "Ce serveur est en mode sans échec, car OpenBot ne démarre pas dessus.",
+  "error.team.serverSafeModeNewerDatabase":
+    "OpenBot {version} sur ce serveur ne peut pas ouvrir ses données, car une version plus récente d’OpenBot les a enregistrées. Une version plus récente d’OpenBot sur le serveur corrige ce problème.",
+  "error.team.serverSafeModeStartFailed":
+    "OpenBot {version} sur ce serveur s’est arrêté après de nombreux échecs de démarrage. Une version plus récente d’OpenBot sur le serveur corrige ce problème.",
+  "error.team.sidebarLayoutUnavailable": "La disposition de la barre latérale n’est pas disponible.",
+  "error.team.providersUnsupported": "Les réglages des fournisseurs ne sont pas pris en charge par cette connexion.",
+  "error.team.providerNotManaged": "OpenBot ne gère pas la CLI de ce fournisseur.",
+  "error.team.channelsUnsupported": "Les discussions de canal ne sont pas prises en charge par cette connexion.",
+  "error.team.channelContextUnsupported":
+    "Cette connexion ne prend pas en charge une nouvelle conversation ni la compaction dans un canal.",
+  "error.team.channelPictureUnsupported": "Les images de canal ne sont pas prises en charge par cette connexion.",
+  "error.team.channelDeleteUnsupported": "La suppression de canaux n’est pas prise en charge par cette connexion.",
+  "error.team.historyDeleteUnsupported":
+    "La suppression de l’historique n’est pas prise en charge par cette connexion.",
+  "error.team.channelTaskCancelUnsupported":
+    "L’annulation des tâches de canal n’est pas prise en charge par cette connexion.",
+  "error.team.membersCannotDeleteChannels": "Les membres ne peuvent pas supprimer de canaux.",
+  "error.team.membersCannotDeleteChannelHistory": "Les membres ne peuvent pas supprimer l’historique du canal.",
+  "error.team.membersCannotArchiveChannels": "Les membres ne peuvent pas archiver de canaux.",
+  "error.team.membersCannotRestoreChannels": "Les membres ne peuvent pas restaurer de canaux.",
+  "error.team.sharedDataUnsupported": "Les données partagées ne sont pas prises en charge par cette connexion.",
+  "error.team.agentInstallUnsupported": "L’ajout d’agents n’est pas pris en charge par cette connexion.",
+  "error.team.agentHideUnsupported": "Le masquage d’agents n’est pas pris en charge par cette connexion.",
+  "error.team.agentColorsUnsupported": "Les couleurs d’agents ne sont pas prises en charge par cette connexion.",
+  "error.team.chatColorsUnsupported": "Les couleurs de discussion ne sont pas prises en charge par cette connexion.",
+  "error.team.routineRunPlaceUnsupported": "Cette connexion ne peut pas changer l’endroit où une routine s’exécute.",
+  "error.team.routinePauseReasonsUnsupported": "Cette connexion ne peut pas montrer pourquoi une routine est en pause.",
+  "error.team.activeQueuesUnsupported": "Cette connexion ne peut pas afficher les files d’attente de tous les agents.",
+  "error.team.routinesOnceUnsupported":
+    "Cette connexion ne peut pas enregistrer les routines qui s’exécutent une fois.",
+  "error.team.routineRunCommandUnsupported":
+    "Cette connexion ne peut pas fournir la commande d’exécution d’une routine.",
+  "error.team.threadQueueUnsupported": "Cette connexion ne peut pas afficher la file d’attente d’un fil annexe.",
+  "error.team.threadRequestsUnsupported":
+    "Cette connexion ne peut pas afficher les demandes d’un fil annexe aux autres agents.",
+  "error.team.hostTurnLimitsUnsupported":
+    "Cette connexion ne peut pas afficher ni modifier les limites de fils du serveur.",
+  "error.team.usageLimitUnsupported":
+    "Cette connexion ne peut pas afficher ni modifier les limites d’utilisation des agents.",
+  "error.team.hermesImportUnsupported": "Cette connexion ne peut pas importer de profils Hermes depuis le serveur.",
+  "error.team.providerDetectionUnsupported":
+    "Cette connexion ne peut pas trouver les serveurs de modèles et les agents du serveur.",
+  "error.team.providerModelSourceUnsupported":
+    "Cette connexion ne peut pas indiquer d’où viennent les modèles d’un fournisseur.",
+  "error.team.routineFlowStopUnsupported": "Cette connexion ne peut pas arrêter une exécution de routine.",
+  "error.team.sidebarFoldersUnsupported":
+    "Les dossiers dans des dossiers ne sont pas pris en charge par cette connexion.",
+  "error.team.libraryFoldersUnsupported":
+    "Les dossiers de la Bibliothèque ne sont pas pris en charge par cette connexion.",
+  "error.team.agentNotificationLevelsUnsupported":
+    "Ce serveur ne peut pas garder votre propre niveau de notifications pour chaque agent. Mettez à jour OpenBot sur l’ordinateur qui l’exécute.",
+  "error.team.sidebarPinsUnsupported":
+    "Ce serveur ne peut pas garder vos discussions épinglées pour tous vos appareils. Mettez à jour OpenBot sur l’ordinateur qui l’exécute.",
+  "error.team.agentInstructionsUnsupported":
+    "La modification des instructions d’agent n’est pas prise en charge par cette connexion.",
+  "error.team.agentPublishUnsupported": "La publication d’agents n’est pas prise en charge par cette connexion.",
+  "error.team.agentUpdateUnsupported": "La mise à jour des agents n’est pas prise en charge par cette connexion.",
+  "error.team.contextResetUnsupported":
+    "Commencer une nouvelle discussion n’est pas pris en charge par cette connexion.",
+  "error.team.contextCompactUnsupported": "Cette connexion ne prend pas en charge la compaction du contexte.",
+  "error.team.messageDeleteUnsupported": "Cette connexion ne permet pas de supprimer des messages.",
+  "error.team.workspaceDirectoryUnsupported": "L’affichage des dossiers n’est pas pris en charge par cette connexion.",
+  "error.team.conversationFileSearchUnsupported":
+    "La recherche de fichiers n’est pas prise en charge par cette connexion.",
+  "error.team.threadMessageSearchUnsupported":
+    "La recherche dans les fils annexes n’est pas prise en charge par cette connexion.",
+  "error.team.sideQuestionUnsupported": "Les questions annexes ne sont pas prises en charge par cette connexion.",
+  "error.team.liveVoiceUnsupported":
+    "Ce serveur ne prend pas en charge la voix en direct Codex. Mettez à jour OpenBot sur l’ordinateur qui l’exécute.",
+  "error.team.routineFlowsUnsupported":
+    "Ce serveur ne prend pas en charge les flux de routines. Mettez à jour OpenBot sur l’ordinateur qui l’exécute.",
+  "error.team.routineCanvasTooLarge":
+    "Ce canevas de routines est trop volumineux pour être envoyé à cet appareil. Raccourcissez les instructions des routines sur l’ordinateur qui exécute le serveur.",
+  "error.team.conversationPageTooLarge":
+    "Un message de cette conversation est trop volumineux pour être envoyé à cet appareil. Ouvrez la conversation sur l’ordinateur qui exécute le serveur.",
+  "error.team.agentImportUnsupported": "L’importation d’agents n’est pas prise en charge par cette connexion.",
+  "error.team.instanceTransferUnsupported": "Cette connexion ne prend pas en charge le transfert d’agents.",
+  "error.team.liveActivityUnsupported": "Cet hôte ne peut pas mettre à jour l’activité en direct d’un téléphone.",
+  "error.team.pushNotificationsUnsupported": "Cet hôte ne peut pas envoyer de notifications à un téléphone.",
+  "error.team.agentUpdateTargetRequired": "Un agent à mettre à jour est requis.",
+  "error.team.queueEditUnsupported": "Ce client ne prend pas en charge la modification de la file d’attente.",
+  "error.team.skillsUnsupported": "Les compétences ne sont pas prises en charge par cette connexion.",
+  "error.team.hostIdentityUnsupported":
+    "Les modifications de l’identité du serveur ne sont pas prises en charge par cette connexion.",
+  "error.team.hostUpdateUnsupported": "Les mises à jour de l’hôte ne sont pas prises en charge par cette connexion.",
+  "error.team.hostTimezoneUnsupported": "Cette connexion ne prend pas en charge le fuseau horaire du serveur.",
+  "error.team.hostRestartUnsupported": "Cette connexion ne prend pas en charge le redémarrage du serveur.",
+  "error.team.hostKeyRotationUnsupported": "Cette connexion ne prend pas en charge le changement de clé du serveur.",
+  "error.team.localServersUnsupported": "Cette connexion ne prend pas en charge les serveurs sur cet ordinateur.",
+  "error.team.routineResultsUnsupported": "Cette connexion ne prend pas en charge les destinations des routines.",
+  "error.team.agentMemoryLimitUnsupported": "Cette connexion ne prend pas en charge la limite de souvenirs des agents.",
+  "error.team.agentFoldersUnsupported": "Cette connexion ne prend pas en charge les dossiers des agents.",
+  "error.team.folderUnavailable": "Ce dossier n’est pas disponible sur l’ordinateur hôte.",
+  "error.team.memoryReviewUnsupported": "Cette connexion ne prend pas en charge la revue des souvenirs.",
+  "error.team.skillLearningUnsupported":
+    "L’apprentissage des compétences n’est pas pris en charge par cette connexion.",
+  "error.team.browsingMemoryUnsupported":
+    "Cette connexion ne prend pas en charge l'apprentissage à partir de la navigation.",
+  "error.team.promptCacheTtlUnsupported": "Cette connexion ne prend pas en charge la durée du cache de prompt.",
+  "error.team.claudeUserSetupUnsupported":
+    "Cette connexion ne prend pas en charge l’option de configuration Claude Code.",
+  "error.team.claudeCompactWindowUnsupported":
+    "Cette connexion ne prend pas en charge la taille de compactage de Claude.",
+  "error.team.providerEnvironmentUnsupported": "Cette connexion ne prend pas en charge les variables de fournisseur.",
+  "error.team.modelVisibilityUnsupported": "Cette connexion ne prend pas en charge la liste des modèles.",
+  "error.team.providerDefaultUnsupported": "Cette connexion ne prend pas en charge le fournisseur par défaut.",
+  "error.team.attachmentNameRequired": "Un nom de pièce jointe sûr est requis.",
+  "error.team.attachmentNotFound": "Pièce jointe introuvable.",
+  "error.team.sharedFileTooLarge": "Le fichier partagé dépasse la limite de 100 Mo.",
+  "error.team.workspaceFileTooLarge": "Le fichier de l’espace de travail dépasse la limite de 100 Mo.",
+  "error.team.browserViewUnavailable": "La vue du navigateur en direct n’est pas disponible.",
+  "error.team.browserSessionNotFound": "Session de vue du navigateur introuvable.",
+  "error.team.mcpUnsupported": "Les serveurs MCP ne sont pas pris en charge par cette connexion.",
+  "error.team.mcpServerListNeedsUpdate":
+    "Mettez à jour OpenBot sur cet appareil pour utiliser plus de {limit} serveurs MCP sur ce serveur.",
+  "error.team.storageUnsupported": "Le stockage n’est pas pris en charge par cette connexion.",
+  "error.team.machineResourcesUnsupported":
+    "L’utilisation de la machine n’est pas prise en charge par cette connexion.",
+  "error.team.machineAlertMemberInvalid":
+    "Seul un propriétaire ou un admin de ce serveur peut recevoir les alertes de la machine.",
+  "error.team.hostedSitesUnsupported": "Les sites ne sont pas pris en charge par cette connexion.",
+  "error.team.hostedSitesUnregistered": "Ce serveur n’est pas enregistré auprès d’OpenBot : il n’a donc pas de sites.",
+  "error.team.hostedSiteNotFound": "Site introuvable.",
+  "error.team.markUnreadUnsupported": "Ce client ne permet pas de marquer des conversations comme non lues.",
+  "error.team.inviteServiceUnavailable": "Le service d’invitation n’est pas disponible.",
+  "error.team.logoNotFound": "Logo du serveur introuvable.",
+  "error.team.updateRequired": "Mise à jour requise.",
+  "error.team.defaultProviderRequiresV4": "Le fournisseur par défaut de l’hôte nécessite Team API v4.",
+  "error.team.newAgentProviderLocalOnly":
+    "Un nouvel agent démarrerait sur un fournisseur que seul l’hôte peut utiliser. Changez le fournisseur par défaut de l’hôte.",
+  "error.team.hostAnalyticsUnsupported": "Les statistiques de l’hôte ne sont pas prises en charge par ce client.",
+  "error.team.profileGenerationUnsupported": "La génération de profil n’est pas prise en charge par ce client.",
+  "error.team.searchQueryRequired": "Une requête de recherche valide est requise.",
+  "error.team.agentAnalyticsUnsupported": "Les statistiques des agents ne sont pas prises en charge par ce client.",
+  "error.team.membersCannotDeleteAgents": "Les membres ne peuvent pas supprimer d’agents.",
+  "error.team.membersCannotHideAgents": "Les membres ne peuvent pas masquer ni restaurer d’agents.",
+  "error.team.avatarType": "Choisissez une image PNG, JPEG ou WebP.",
+  "error.team.avatarNotFound": "Avatar de l’agent introuvable.",
+  "error.team.secureAuthUnsupported": "L’authentification sécurisée n’est pas prise en charge par ce client.",
+  "error.team.agentSettingsUnsupported": "Les réglages des agents ne sont pas pris en charge par cette connexion.",
+  "error.team.adminRequired": "Un accès administrateur est requis.",
+  "error.team.mcpAccessStale": "Quelqu’un a modifié l’accès à ce serveur MCP. Refaites votre modification.",
+  "error.team.mcpServerNotYours":
+    "Seule la personne qui a ajouté ce serveur MCP, ou un administrateur, peut le modifier.",
+  "error.team.ownerRequired": "Seul le propriétaire de ce serveur peut faire cela.",
+  "error.team.requestTooLarge": "Le corps de la requête est trop volumineux.",
+  "error.team.signInRelayUnsupported":
+    "Ce serveur ne peut pas relayer les connexions. Mettez à jour OpenBot sur l’hôte.",
+  "error.team.connectorsUnsupported":
+    "Les connexions de ce serveur ne peuvent pas être gérées d’ici. Mettez à jour OpenBot sur l’hôte.",
+  "error.team.discordAccessUnsupported":
+    "Ce serveur ne peut pas définir de rôles Discord. Mettez à jour OpenBot sur ce serveur.",
+  "error.team.connectorPageRefused": "Le serveur a envoyé une page qu’OpenBot n’ouvre pas.",
+  "error.team.signInRelayUnknown": "Cette connexion est terminée ou n’existe pas.",
+  "error.team.signInRelayUsed": "Cette connexion a déjà été envoyée.",
+  "error.team.signInRelayMismatch": "Cette adresse ne vient pas de cette connexion.",
+  "error.team.signInRelayLinkUnknown": "Aucun agent de ce serveur n’a affiché ce lien de connexion.",
+  "error.team.hostPersonalityUnsupported": "Cette connexion ne prend pas en charge la personnalité du serveur.",
+  "error.team.agentWaitsUnsupported": "Cette connexion ne prend pas en charge les attentes ouvertes.",
+  "error.team.pendingApprovalUnsupported": "Cette connexion ne permet pas de lire une approbation complète.",
+  "error.team.phoneFeedbackUnsupported":
+    "Cette connexion ne permet pas d'envoyer un rapport depuis l'app du téléphone.",
+  "error.team.messagePinsUnsupported": "Cette connexion ne prend pas en charge les messages épinglés.",
+  "error.team.queuedMessageThreadUnsupported":
+    "Cette connexion ne prend pas en charge l’exécution d’un message en file d’attente dans un nouveau fil.",
+  "error.team.backgroundProcessesUnsupported": "Cette connexion ne prend pas en charge les processus en arrière-plan.",
+  "error.team.providerUseUnsupported":
+    "Cette connexion ne prend pas en charge l’activation et la désactivation des fournisseurs.",
+  "error.team.providerUseInvalid": "Ce fournisseur n’a pas d’interrupteur d’activation.",
+} as const satisfies PartialTranslation<typeof source>;

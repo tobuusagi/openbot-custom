@@ -1,0 +1,12 @@
+[Unit]
+Description=Apply a staged OpenBot update
+Before=openbot.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/OpenBot/hosted/openbot-hosted-update boot
+TimeoutStartSec=15min
+
+[Install]
+WantedBy=multi-user.target

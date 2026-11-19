@@ -1,0 +1,369 @@
+import { isWorkflowStepKind, type WorkflowNode } from "@openbot/contracts/ipc";
+import * as Clipboard from "expo-clipboard";
+import { router, Stack, useLocalSearchParams } from "expo-router";
+import { Typography } from "heroui-native";
+import EllipsisVertical from "lucide-react-native/icons/ellipsis-vertical";
+import Play from "lucide-react-native/icons/play";
+import { useState } from "react";
+import { Alert, Pressable, View } from "react-native";
+import { useCSSVariable, useUniwind } from "uniwind";
+import { SettingsRow, SettingsSection } from "@/features/settings/components/settings-content";
+import { WorkflowFlowView } from "@/features/workflows/components/workflow-flow-view";
+import { WorkflowGitHubEventRow } from "@/features/workflows/components/workflow-github-event-row";
+import { AndroidBarIcon, viewMenuActions } from "@/features/workflows/components/workflow-header-actions";
+import { WorkflowRunRow } from "@/features/workflows/components/workflow-run-row";
+import { WorkflowRunStepRow } from "@/features/workflows/components/workflow-run-step-row";
+import { type WorkflowStepMenu, workflowStepRows } from "@/features/workflows/components/workflow-steps-list";
+import { useWorkflowCommands } from "@/features/workflows/model/use-workflow-commands";
+import { useWorkflowStepActions } from "@/features/workflows/model/use-workflow-step-actions";
+import { useWorkflowDetail, useWorkflowGitHubHistory, useWorkflowRuns } from "@/features/workflows/model/use-workflows";
+import { useWorkflowEditorView } from "@/features/workflows/model/workflow-editor-view";
+import { githubTrigger as githubTriggerSettings, triggerDeliveries } from "@/features/workflows/model/workflow-github";
+import { latestSteps, stepLabel, stepText, triggerType } from "@/features/workflows/model/workflow-steps";
+import {
+  useMobileWorkspaceActions,
+  useMobileWorkspaceSelector,
+} from "@/features/workspace/context/mobile-workspace-context";
+import { LargeTitleScrollView } from "@/shared/components/large-title";
+import { type MenuAction, MenuView } from "@/shared/components/menu-view";
+import { toolbarMenuItems } from "@/shared/components/toolbar-menu-items";
+import { formatUpdatedAt } from "@/shared/lib/format-updated-at";
+import { haptics } from "@/shared/lib/haptics";
+import { isAndroid } from "@/shared/lib/platform";
+import { currentText, useText } from "@/shared/lib/text";
+import { typeScale } from "@/shared/lib/type-scale";
+
+const NO_IDS: readonly string[] = [];
+const LATEST_RUNS = 3;
+const LATEST_EVENTS = 3;
+
+export function WorkflowScreen() {
+  const { t, format, errorMessage } = useText();
+  const { serverId, workflowId } = useLocalSearchParams<{ serverId: string; workflowId: string }>();
+  const detail = useWorkflowDetail(serverId, workflowId);
+  const runs = useWorkflowRuns(serverId, workflowId);
+  const agents = useMobileWorkspaceSelector((current) => current.agents);
+  const serverAgents = agents.filter((agent) => agent.serverId === serverId);
+  const pinned = useMobileWorkspaceSelector((current) => current.pinnedWorkflowIds[serverId] ?? NO_IDS).includes(
+    workflowId,
+  );
+  const { deleteWorkflow } = useMobileWorkspaceActions();
+  const commands = useWorkflowCommands(serverId);
+  const [starting, setStarting] = useState(false);
+  const { theme } = useUniwind();
+  const foreground = String(useCSSVariable("--openbot-text-primary"));
+  const view = useWorkflowEditorView((state) => state.view);
+  const setView = useWorkflowEditorView((state) => state.setView);
+  const workflow = detail.data;
+  const title = workflow?.summary.title ?? t("mobile.app.route.workflow");
+  const runList = runs.data?.runs ?? [];
+  const latest = runList[0];
+  const moreRuns = runList.length > LATEST_RUNS || Boolean(runs.data?.nextBefore);
+  const trigger = workflow?.graph.nodes.find((node) => node.kind === "trigger");
+  const triggerState = workflow?.triggers.find((state) => state.nodeId === trigger?.id);
+  const githubTrigger = trigger && triggerType(trigger) === "github" ? trigger : undefined;
+  const github = useWorkflowGitHubHistory(serverId, workflowId, Boolean(githubTrigger));
+  const githubHistory = githubTrigger ? github.data : undefined;
+  const events = githubTrigger && githubHistory ? triggerDeliveries(githubHistory.deliveries, githubTrigger.id) : [];
+  const stepActions = useWorkflowStepActions(serverId, workflowId);
+  const byId = new Map(workflow?.graph.nodes.map((node) => [node.id, node]) ?? []);
+  const soloSteps = [...latestSteps(runs.data?.soloSteps ?? []).values()].filter((step) => byId.has(step.nodeId));
+
+  const startAndOpen = async (start: () => Promise<string | null>) => {
+    setStarting(true);
+    const runId = await start();
+    setStarting(false);
+    if (runId) commands.openRun(workflowId, runId);
+  };
+  const runNow = () => startAndOpen(() => commands.run(workflowId));
+  const stepMenu: WorkflowStepMenu = {
+    actions: (node: WorkflowNode) =>
+      node.kind === "trigger" || !isWorkflowStepKind(node.kind) || workflow?.needsNewerApp
+        ? []
+        : [
+            { id: "run-from", title: t("mobile.workflow.action.runFrom"), image: "play" },
+            { id: "run-step", title: t("mobile.workflow.action.runStep") },
+          ],
+    onAction: (node, actionId) => {
+      if (actionId === "run-from") void startAndOpen(() => commands.run(workflowId, node.id));
+      else if (actionId === "run-step") void commands.runStep(workflowId, node.id);
+    },
+  };
+  const confirmDelete = () => {
+    void haptics.notification("warning");
+    Alert.alert(t("mobile.workflow.delete.title", { name: title }), t("mobile.workflow.delete.body"), [
+      { text: t("common.cancel"), style: "cancel" },
+      {
+        text: t("mobile.workflow.delete.confirm"),
+        style: "destructive",
+        onPress: () =>
+          void deleteWorkflow(workflowId, serverId).then(
+            () => router.back(),
+            (error: unknown) => {
+              const text = currentText();
+              Alert.alert(
+                text.t("mobile.workflow.delete.failed"),
+                text.errorMessage(error, text.t("mobile.workflow.alert.tryAgain")),
+              );
+            },
+          ),
+      },
+    ]);
+  };
+
+  const pinLabel = pinned ? t("mobile.workflow.action.unpin") : t("mobile.workflow.action.pin");
+  const menuActions: MenuAction[] = [
+    ...(workflow?.needsNewerApp
+      ? []
+      : [{ id: "edit", title: t("mobile.workflow.action.edit"), image: "pencil" } satisfies MenuAction]),
+    { id: "pin", title: pinLabel, image: pinned ? "pin.slash" : "pin" },
+    ...viewMenuActions(view, t),
+  ];
+  const onMenu = (id: string) => {
+    if (id === "edit") commands.edit(workflowId);
+    else if (id === "pin") commands.togglePin(workflowId);
+    else if (id === "view-flow" || id === "view-list") {
+      void haptics.selection();
+      setView(id === "view-flow" ? "flow" : "list");
+    }
+  };
+  const runLabel = starting ? t("mobile.workflow.detail.starting") : t("mobile.workflow.action.run");
+  return (
+    <>
+      {workflow ? (
+        isAndroid ? (
+          <Stack.Screen
+            options={{
+              headerRight: () => (
+                <View className="flex-row items-center">
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={runLabel}
+                    accessibilityState={{ disabled: starting }}
+                    disabled={starting}
+                    android_ripple={{ borderless: true, radius: 20 }}
+                    style={{ opacity: starting ? 0.38 : 1 }}
+                    onPress={() => void runNow()}
+                  >
+                    <AndroidBarIcon>
+                      <Play color={foreground} size={20} strokeWidth={2} />
+                    </AndroidBarIcon>
+                  </Pressable>
+                  <MenuView
+                    colorScheme={theme === "dark" ? "dark" : "light"}
+                    actions={menuActions}
+                    onPressAction={(event) => onMenu(event.nativeEvent.event)}
+                  >
+                    <View accessible accessibilityRole="button" accessibilityLabel={t("mobile.workflow.detail.more")}>
+                      <AndroidBarIcon>
+                        <EllipsisVertical color={foreground} size={22} strokeWidth={2} />
+                      </AndroidBarIcon>
+                    </View>
+                  </MenuView>
+                </View>
+              ),
+            }}
+          />
+        ) : (
+          <Stack.Toolbar placement="right">
+            <Stack.Toolbar.Button
+              icon="play.fill"
+              accessibilityLabel={runLabel}
+              disabled={starting}
+              onPress={() => void runNow()}
+            />
+            <Stack.Toolbar.Menu icon="ellipsis" accessibilityLabel={t("mobile.workflow.detail.more")}>
+              {toolbarMenuItems(menuActions, onMenu)}
+            </Stack.Toolbar.Menu>
+          </Stack.Toolbar>
+        )
+      ) : null}
+      <LargeTitleScrollView
+        title={title}
+        caption={workflow ? t("mobile.workflow.detail.steps", { count: workflow.summary.steps }) : undefined}
+        contentContainerClassName="gap-7 px-4 pt-3"
+        barButtonsRight={2}
+      >
+        {!workflow ? (
+          <Typography.Paragraph className="px-1 text-text-secondary" style={typeScale.preview}>
+            {detail.isError
+              ? errorMessage(detail.error, t("mobile.workflow.detail.loadFailed"))
+              : t("mobile.workflow.list.loading")}
+          </Typography.Paragraph>
+        ) : (
+          <>
+            {workflow.needsNewerApp ? (
+              <Typography.Paragraph className="px-1 text-text-secondary" style={typeScale.caption}>
+                {t("mobile.workflow.detail.newerApp")}
+              </Typography.Paragraph>
+            ) : null}
+            {latest?.run.status === "approval" ? (
+              <SettingsSection>
+                <SettingsRow onPress={() => commands.openRun(workflowId, latest.run.id)}>
+                  <Typography.Paragraph className="font-medium text-warning-text">
+                    {t("mobile.workflow.detail.waits", { number: latest.run.number })}
+                  </Typography.Paragraph>
+                </SettingsRow>
+              </SettingsSection>
+            ) : null}
+            {view === "flow" ? (
+              <View className="gap-2">
+                <Typography type="body-xs" className="px-4 text-grouped-secondary">
+                  {t("mobile.workflow.detail.stepsTitle")}
+                </Typography>
+                <WorkflowFlowView graph={workflow.graph} agents={serverAgents} menu={stepMenu} />
+              </View>
+            ) : (
+              <SettingsSection title={t("mobile.workflow.detail.stepsTitle")}>
+                {workflowStepRows(workflow.graph, serverAgents, t, stepMenu)}
+              </SettingsSection>
+            )}
+            {soloSteps.length > 0 ? (
+              <SettingsSection
+                title={t("mobile.workflow.detail.soloSteps")}
+                footer={t("mobile.workflow.detail.soloHint")}
+              >
+                {soloSteps.map((step) => {
+                  const node = byId.get(step.nodeId);
+                  return node ? (
+                    <WorkflowRunStepRow
+                      key={step.id}
+                      node={node}
+                      step={step}
+                      agents={serverAgents}
+                      busy={stepActions.busy}
+                      onDecide={stepActions.decide}
+                      onRetry={stepActions.retry}
+                      onStop={stepActions.stop}
+                    />
+                  ) : null;
+                })}
+              </SettingsSection>
+            ) : null}
+            {trigger ? (
+              <SettingsSection title={t("mobile.workflow.detail.trigger")}>
+                <SettingsRow
+                  disclosure={false}
+                  supportingText={
+                    triggerState?.nextDueAt
+                      ? t("mobile.workflow.detail.nextRun", {
+                          time: format.date(new Date(triggerState.nextDueAt), {
+                            weekday: "short",
+                            hour: "numeric",
+                            minute: "2-digit",
+                          }),
+                        })
+                      : undefined
+                  }
+                >
+                  <Typography.Paragraph>{stepLabel(trigger, serverAgents, t)}</Typography.Paragraph>
+                  {githubTrigger ? (
+                    <Typography.Paragraph className="text-grouped-secondary" style={typeScale.caption}>
+                      {stepText(githubTrigger, t)}
+                    </Typography.Paragraph>
+                  ) : null}
+                </SettingsRow>
+                {githubTrigger && !workflow.needsNewerApp ? (
+                  <SettingsRow
+                    disclosure={false}
+                    disabled={starting || !githubTriggerSettings(githubTrigger).repository}
+                    supportingText={t("mobile.workflow.github.runLastEventHint")}
+                    onPress={() => void startAndOpen(() => commands.runLastEvent(workflowId, githubTrigger.id))}
+                  >
+                    <Typography.Paragraph className="text-accent-text">
+                      {t("mobile.workflow.github.runLastEvent")}
+                    </Typography.Paragraph>
+                  </SettingsRow>
+                ) : null}
+                {triggerState?.webhookUrl ? (
+                  <SettingsRow
+                    supportingText={triggerState.webhookUrl}
+                    onPress={() => {
+                      const url = triggerState.webhookUrl;
+                      if (!url) return;
+                      void Clipboard.setStringAsync(url).then(() => haptics.notification("success"));
+                    }}
+                    accessibilityLabel={t("mobile.workflow.detail.copyWebhook")}
+                  >
+                    <Typography.Paragraph>{t("mobile.workflow.detail.copyWebhook")}</Typography.Paragraph>
+                  </SettingsRow>
+                ) : null}
+              </SettingsSection>
+            ) : null}
+            {githubHistory ? (
+              <SettingsSection title={t("mobile.workflow.github.history.title")}>
+                {events.length > 0 ? (
+                  events
+                    .slice(0, LATEST_EVENTS)
+                    .map((delivery) => (
+                      <WorkflowGitHubEventRow
+                        key={delivery.id}
+                        delivery={delivery}
+                        history={githubHistory}
+                        runs={runList.map((item) => item.run)}
+                        onOpenRun={(runId) => commands.openRun(workflowId, runId)}
+                      />
+                    ))
+                ) : (
+                  <SettingsRow disclosure={false}>
+                    <Typography.Paragraph className="text-text-secondary">
+                      {t("mobile.workflow.github.history.none")}
+                    </Typography.Paragraph>
+                  </SettingsRow>
+                )}
+                {events.length > LATEST_EVENTS ? (
+                  <SettingsRow onPress={() => commands.openGitHubEvents(workflowId)}>
+                    <Typography.Paragraph>{t("mobile.workflow.github.history.all")}</Typography.Paragraph>
+                  </SettingsRow>
+                ) : null}
+              </SettingsSection>
+            ) : null}
+            <SettingsSection title={t("mobile.workflow.detail.runs")}>
+              {runList.length > 0 ? (
+                runList
+                  .slice(0, LATEST_RUNS)
+                  .map((item) => (
+                    <WorkflowRunRow
+                      key={item.run.id}
+                      detail={item}
+                      onPress={() => commands.openRun(workflowId, item.run.id)}
+                    />
+                  ))
+              ) : (
+                <SettingsRow disclosure={false}>
+                  <Typography.Paragraph className="text-text-secondary">
+                    {runs.isError
+                      ? errorMessage(runs.error, t("mobile.workflow.detail.runsFailed"))
+                      : runs.data
+                        ? t("mobile.workflow.detail.noRuns")
+                        : t("mobile.workflow.list.loading")}
+                  </Typography.Paragraph>
+                </SettingsRow>
+              )}
+              {moreRuns ? (
+                <SettingsRow onPress={() => commands.openRuns(workflowId)}>
+                  <Typography.Paragraph>{t("mobile.workflow.detail.allRuns")}</Typography.Paragraph>
+                </SettingsRow>
+              ) : null}
+            </SettingsSection>
+            <SettingsSection
+              footer={t("mobile.workflow.detail.revision", {
+                revision: workflow.revision,
+                time: formatUpdatedAt(workflow.summary.updatedAt, format),
+              })}
+            >
+              <SettingsRow onPress={() => commands.openVersions(workflowId)}>
+                <Typography.Paragraph>{t("mobile.workflow.version.history")}</Typography.Paragraph>
+              </SettingsRow>
+              <SettingsRow disclosure={false} onPress={confirmDelete}>
+                <Typography.Paragraph className="text-danger-text">
+                  {t("mobile.workflow.delete.confirm")}
+                </Typography.Paragraph>
+              </SettingsRow>
+            </SettingsSection>
+          </>
+        )}
+      </LargeTitleScrollView>
+    </>
+  );
+}

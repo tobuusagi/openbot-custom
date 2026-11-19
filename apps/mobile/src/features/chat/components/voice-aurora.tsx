@@ -1,0 +1,124 @@
+import { Canvas, Fill, Shader, Skia, type SkRuntimeEffect } from "@shopify/react-native-skia";
+import { useEffect, useMemo } from "react";
+import { type SharedValue, useDerivedValue, useFrameCallback, useSharedValue } from "react-native-reanimated";
+import { useReducedMotion } from "@/shared/lib/motion";
+import { useAppForeground } from "@/shared/lib/use-app-foreground";
+import type { VoicePalette } from "../model/voice-palette";
+
+const SOURCE = `
+uniform float2 resolution;
+uniform float time;
+uniform float level;
+uniform float presence;
+uniform float3 c0;
+uniform float3 c1;
+uniform float3 c2;
+uniform float3 c3;
+
+float lobe(float2 uv, float centre, float width, float reach) {
+  float dx = (uv.x - centre) / width;
+  return exp(-dx * dx) * exp(-uv.y / max(reach, 0.001));
+}
+
+float reachOf(float2 uv, float index, float phase) {
+  float voice = level * (0.78 + 0.22 * sin(time * 1.8 + index * 1.9));
+  float idle = 0.07 + 0.022 * sin(time * 0.9 + index);
+  float wave = 1.0 + 0.11 * sin(uv.x * 5.0 + time * 0.95 + phase);
+  return presence * (idle + 0.46 * voice) * wave;
+}
+
+half4 main(float2 position) {
+  float2 uv = float2(position.x / resolution.x, 1.0 - position.y / resolution.y);
+
+  float3 k0 = mix(c0, c1, 0.5 + 0.5 * sin(time * 0.35));
+  float3 k1 = mix(c1, c2, 0.5 + 0.5 * sin(time * 0.35 + 1.57));
+  float3 k2 = mix(c2, c3, 0.5 + 0.5 * sin(time * 0.35 + 3.14));
+  float3 k3 = mix(c3, c0, 0.5 + 0.5 * sin(time * 0.35 + 4.71));
+
+  float w0 = lobe(uv, 0.5 + 0.32 * sin(time * 0.53), 0.35 + 0.055 * sin(time * 0.71), reachOf(uv, 0.0, 0.0));
+  float w1 = lobe(uv, 0.5 + 0.37 * sin(time * 0.41 + 2.1), 0.31, reachOf(uv, 1.0, 1.3));
+  float w2 = lobe(uv, 0.5 + 0.28 * sin(time * 0.67 + 4.2), 0.29 + 0.045 * sin(time * 0.5), reachOf(uv, 2.0, 2.6));
+  float w3 = lobe(uv, 0.5 + 0.18 * sin(time * 0.37 + 1.3), 0.41, reachOf(uv, 3.0, 3.9));
+
+  float weight = w0 + w1 + w2 + w3;
+  float3 tint = (k0 * w0 + k1 * w1 + k2 * w2 + k3 * w3) / max(weight, 0.0001);
+  float rays = 0.92 + 0.08 * sin(uv.x * 28.0 + 1.8 * sin(uv.x * 7.0 + time * 0.7));
+  float alpha = 1.0 - exp(-weight * 1.6);
+  alpha = alpha * (1.0 - 0.18 * alpha) * rays;
+  alpha = pow(alpha, 1.4);
+
+  float core = exp(-uv.y / (0.035 + 0.05 * level)) * (0.42 + 0.38 * level) * presence;
+  tint = mix(tint, min(tint * 1.3 + 0.12, float3(1.0)), core * 0.5);
+  alpha = alpha + core * 0.24;
+
+  alpha *= presence * smoothstep(1.0, 0.45, uv.y);
+  float noise = fract(sin(dot(position, float2(12.9898, 78.233))) * 43758.5453);
+  alpha = clamp(alpha + (noise - 0.5) / 255.0, 0.0, 1.0);
+  return half4(half3(tint * alpha), half(alpha));
+}
+`;
+
+let effect: SkRuntimeEffect | null | undefined;
+function auroraEffect(): SkRuntimeEffect | null {
+  if (effect === undefined) effect = Skia.RuntimeEffect.Make(SOURCE);
+  return effect;
+}
+const ATTACK_PER_SECOND = 8;
+const RELEASE_PER_SECOND = 2.75;
+const STILL_LEVEL = 0.25;
+
+export function VoiceAurora({
+  width,
+  height,
+  level,
+  presence,
+  palette,
+}: {
+  width: number;
+  height: number;
+  level: SharedValue<number>;
+  presence: SharedValue<number>;
+  palette: VoicePalette;
+}) {
+  const reducedMotion = useReducedMotion();
+  const foreground = useAppForeground();
+  const time = useSharedValue(0);
+  const smoothed = useSharedValue(0);
+  const frame = useFrameCallback(({ timeSincePreviousFrame }) => {
+    const seconds = (timeSincePreviousFrame ?? 16) / 1000;
+    time.set(time.get() + seconds);
+    const target = level.get();
+    const current = smoothed.get();
+    const rate = target > current ? ATTACK_PER_SECOND : RELEASE_PER_SECOND;
+    smoothed.set(current + (target - current) * Math.min(1, seconds * rate));
+  }, false);
+  useEffect(() => {
+    frame.setActive(foreground && !reducedMotion);
+    return () => frame.setActive(false);
+  }, [foreground, frame, reducedMotion]);
+  const colors = useMemo(() => {
+    const [c0, c1, c2, c3] = palette;
+    return { c0: [...c0], c1: [...c1], c2: [...c2], c3: [...c3] };
+  }, [palette]);
+  const uniforms = useDerivedValue(() => ({
+    resolution: [width, height],
+    time: time.get(),
+    level: reducedMotion ? STILL_LEVEL : smoothed.get(),
+    presence: presence.get(),
+    ...colors,
+  }));
+  const shader = auroraEffect();
+  if (!shader) return null;
+  return (
+    <Canvas
+      pointerEvents="none"
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      style={{ position: "absolute", left: 0, right: 0, bottom: 0, height }}
+    >
+      <Fill>
+        <Shader source={shader} uniforms={uniforms} />
+      </Fill>
+    </Canvas>
+  );
+}

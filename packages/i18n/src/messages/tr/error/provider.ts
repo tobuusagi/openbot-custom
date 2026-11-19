@@ -1,0 +1,604 @@
+import type { PartialTranslation } from "../../../message";
+import type { messages as source } from "../../en/error/provider";
+
+export const messages = {
+  "error.provider.mcpConfig":
+    "OpenBot, MCP sunucularını Codex yapılandırmasına kaydedemedi. Codex config.toml dosyanızın geçerli ve yazılabilir olduğunu denetleyin, ardından OpenBot'u yeniden başlatın.",
+  "error.provider.computerUseConfig":
+    "OpenBot, Bilgisayar Kullanımını Codex yapılandırmasına kaydedemedi. Codex config.toml dosyanızın geçerli ve yazılabilir olduğunu denetleyin, ardından OpenBot'u yeniden başlatın. Onsuz devam etmek için ekip arkadaşı ayarlarından Bilgisayar Kullanımını kapatabilirsiniz.",
+  "error.provider.codexUnresponsive": "Codex yanıt vermeyi bıraktı, bu yüzden OpenBot işlemini sonlandırdı.",
+  "error.provider.acpUnresponsive": "{provider} zamanında yanıt vermedi, bu yüzden OpenBot işlemini sonlandırdı.",
+  "error.provider.acpSignInLost":
+    "{provider} oturumunu kaybetti, bu yüzden OpenBot işlemini sonlandırdı. Mesajınızı yeniden gönderin.",
+  "error.provider.acpRefusedUntilRestart":
+    "{provider} bir mesajı reddetti, bu yüzden OpenBot işlemini sonlandırdı. Mesajınızı yeniden gönderin.",
+  "error.provider.acpServerLost": "{provider} bağlantısını kaybetti. Mesajınızı yeniden gönderin.",
+  "error.provider.acpServerLostEnded": "{provider} bağlantısını kaybetti, bu yüzden OpenBot işlemini sonlandırdı.",
+  "error.provider.acpSettingsTimedOut": "{provider} zamanında yanıt vermedi. Biraz sonra yeniden deneyin.",
+  "error.provider.acpPlanUsedUp":
+    "{provider}, planınızın kullanım hakkının bittiğini bildiriyor. Başka bir model seçin veya {provider} planınızı yükseltin.",
+  "error.provider.acpMcpNotLoaded":
+    "{provider}, OpenBot araçlarını yüklemedi; bu yüzden bu ajan onları kullanamıyor ve takım arkadaşlarına ulaşamıyor. Bir {provider} ekip politikası yerel MCP sunucularını engelleyebilir. Ekip yöneticinizden bunlara izin vermesini isteyin, ardından yeniden deneyin.",
+  "error.provider.acpOwnMcpServerFailed":
+    "{provider}, {name} MCP sunucusunu başlatamadı, bu yüzden yanıt durdu. Bu sunucu OpenBot'ta değil, kendi {provider} ayarlarınızda. Sunucuyu orada kaldırın veya onarın, ardından yeni bir sohbet başlatın.",
+  "error.provider.endpointsReadOnly":
+    "Kayıtlı uç noktalar OpenBot'un daha yeni bir sürümü tarafından yazılmış veya dosya okunamıyor. Bunları değiştirmek için OpenBot'u güncelleyin.",
+  "error.provider.endpointNoSecureStorage":
+    "Bu bilgisayarda güvenli depolama alanı yok, bu nedenle bir API anahtarı veya üstbilgi kaydedilemez. Bunları kaldırın veya kimlik bilgisi gerektirmeyen bir uç nokta kullanın.",
+  "error.provider.endpointDuplicate":
+    "Bu sağlayıcı kimliğine sahip bir uç nokta zaten kayıtlı. Önce onu kaldırın veya başka bir kimlik kullanın.",
+  "error.provider.endpointNotSaved": "Bu uç nokta kayıtlı değil. Listeyi yenileyip tekrar deneyin.",
+  "error.provider.endpointKeyForNewAddress":
+    "Adres yeni bir ana makineye veya bağlantı noktasına sahip. Kayıtlı olanların oraya gitmemesi için API anahtarını ve üstbilgileri tekrar girin.",
+  "error.provider.endpointSecretUnreadable":
+    "Bu bilgisayar kayıtlı API anahtarını ve üstbilgileri okuyamıyor. Hiçbirinin kaybolmaması için API anahtarını ve üstbilgileri tekrar girin.",
+  "error.provider.discoveryTimeout": "{host} zamanında yanıt vermedi.",
+  "error.provider.discoveryUnreachable": "OpenBot {host} adresine bağlanamadı.",
+  "error.provider.discoveryRedirect": "{host} bir yönlendirme gönderdi. Sunucunun nihai adresini girin.",
+  "error.provider.discoveryRefused": "{host} isteği reddetti. API anahtarını ve üstbilgileri denetleyin.",
+  "error.provider.discoveryHttp": "{host} HTTP {status} ile yanıt verdi.",
+  "error.provider.discoveryTooLarge": "{host} kaynağından gelen model listesi çok büyük.",
+  "error.provider.discoveryInvalid": "{host} OpenAI uyumlu bir model listesi göndermedi.",
+  "error.provider.detectionSettingsReadOnly":
+    "Algılama ayarları OpenBot'un daha yeni bir sürümü tarafından yazılmış veya dosya okunamıyor. Bunları değiştirmek için OpenBot'u güncelleyin.",
+  "error.provider.detectionEntryInvalid":
+    "Bir adres şifre içermeyen bir http:// veya https:// URL'si olmalı ve bir klasör mutlak bir yol olmalıdır.",
+  "error.provider.detectionEntriesTooMany": "Çok fazla adres veya klasör var.",
+  "error.provider.credentialFileUnreadable": "Sağlayıcı kimlik bilgisi dosyası okunamıyor.",
+  "error.provider.credentialFileTooLarge": "Sağlayıcı kimlik bilgisi dosyası çok büyük.",
+  "error.provider.environmentNameInvalid":
+    "{name} geçerli bir değişken adı değil. Harf, rakam ve _ kullanın ve rakamla başlamayın.",
+  "error.provider.environmentNameReserved": "OpenBot bu sağlayıcı için {name} değerini ayarlar. Bu değişkeni kaldırın.",
+  "error.provider.environmentNameDuplicate": "{name} listede birden fazla kez var.",
+  "error.provider.environmentValueTooLong": "{name} değeri çok uzun.",
+  "error.provider.environmentTooMany": "Bir sağlayıcının en fazla {limit} değişkeni olabilir.",
+  "error.provider.environmentSecretsTooLarge":
+    "Gizli değerler toplamda çok uzun. Daha kısa ya da daha az değer kaydedin.",
+  "error.provider.archiveSpecialFile": "Çalışma zamanı arşivi bir bağlantı veya özel dosya içeriyor.",
+  "error.provider.archiveUnsafePath": "Çalışma zamanı arşivi güvenli olmayan bir yol içeriyor.",
+  "error.provider.runtimeSpecialFile": "Çalışma zamanı bir bağlantı veya özel dosya içeriyor.",
+  "error.provider.codexArchivePath": "Codex arşivi beklenmeyen bir yola sahip.",
+  "error.provider.codexVersionUnexpected": "Beklenmeyen Codex çalışma zamanı sürümü.",
+  "error.provider.claudeArchivePath": "Claude arşivi beklenmeyen bir yola sahip.",
+  "error.provider.claudePackageMismatch": "Claude paketi çalışma zamanı kataloğuyla eşleşmiyor.",
+  "error.provider.claudeChecksum": "Claude çalışma zamanı sağlama toplamı (checksum) eşleşmiyor.",
+  "error.provider.claudeLicenseChecksum": "Claude lisansı sağlama toplamı (checksum) eşleşmiyor.",
+  "error.provider.opencodeArchivePath": "OpenCode arşivi beklenmeyen bir yola sahip.",
+  "error.provider.opencodePackageMismatch": "OpenCode paketi çalışma zamanı kataloğuyla eşleşmiyor.",
+  "error.provider.opencodeChecksum": "OpenCode çalışma zamanı sağlama toplamı (checksum) eşleşmiyor.",
+  "error.provider.opencodeLicenseChecksum": "OpenCode lisansı sağlama toplamı (checksum) eşleşmiyor.",
+  "error.provider.grokChecksum": "Grok çalışma zamanı sağlama toplamı (checksum) eşleşmiyor.",
+  "error.provider.grokLicenseChecksum": "Grok lisansı sağlama toplamı (checksum) eşleşmiyor.",
+  "error.provider.grokNoticesChecksum": "Grok bildirimleri sağlama toplamı (checksum) eşleşmiyor.",
+  "error.provider.bunArchivePath": "Bun arşivi beklenmeyen bir yola sahip.",
+  "error.provider.bunPackageMismatch": "Bun paketi çalışma zamanı kataloğuyla eşleşmiyor.",
+  "error.provider.bunChecksum": "Bun çalışma zamanı sağlama toplamı (checksum) eşleşmiyor.",
+  "error.provider.bunLicenseChecksum": "Bun lisansı sağlama toplamı (checksum) eşleşmiyor.",
+  "error.provider.bunxDamaged": "Bun paket yöneticisi çalıştırıcısı eksik veya hasarlı.",
+  "error.provider.releaseSourcesUnreachable":
+    "OpenBot sağlayıcı sürüm kaynaklarına ulaşamadı. Bağlantıyı kontrol edip tekrar deneyin.",
+  "error.provider.runtimesUnsupported": "Sağlayıcı çalışma zamanları bu platformda kullanılamıyor.",
+  "error.provider.closing": "OpenBot kapanıyor.",
+  "error.provider.removeWhileOn": "İndirmesini kaldırmadan önce sağlayıcıyı kapatın.",
+  "error.provider.removeWhileDownloading": "İndirmenin bitmesini bekleyin, sonra kaldırın.",
+  "error.provider.removeIncomplete": "Bir program bu CLI'nin dosyalarını kullanıyor. Kapatın ve yeniden deneyin.",
+  "error.provider.removeDownloadsFailed": "Şu sağlayıcıların CLI indirmeleri kaldırılamadı: {providers}.",
+  "error.provider.cliOverride": "OpenBot'ta güncelleme yapmadan önce açık CLI yolu geçersiz kılmasını kaldırın.",
+  "error.provider.runtimeUpdateIncomplete": "Çalışma zamanı güncellemesi tamamlanmadı.",
+  "error.provider.downloadHttp": "Çalışma zamanı indirmesi HTTP {status} ile başarısız oldu.",
+  "error.provider.downloadNoData": "Çalışma zamanı indirmesi veri döndürmedi.",
+  "error.provider.downloadStalled":
+    "Bir dakika boyunca veri gelmediği için indirme durdu. İnternet bağlantısını kontrol edin, ardından yeniden deneyin.",
+  "error.provider.downloadSize": "Çalışma zamanı indirmesi beklenmeyen bir boyuta sahip.",
+  "error.provider.downloadIntegrity": "Çalışma zamanı indirmesi bütünlük denetiminde başarısız oldu.",
+  "error.provider.runtimeReplacing": "Başka bir örnek onun yerini aldığından çalışma zamanı yüklenemedi.",
+  "error.provider.runtimeFilesInUse":
+    "Başka bir program dosyalarını açık tuttuğu için çalışma zamanı yüklenemedi. Programı kapatıp tekrar deneyin.",
+  "error.provider.metadataHttp": "Çalışma zamanı meta veri indirmesi HTTP {status} ile başarısız oldu.",
+  "error.provider.metadataIntegrity": "Çalışma zamanı meta verileri bütünlük denetiminde başarısız oldu.",
+  "error.provider.diskSpace": "Bu sağlayıcı için yeterli boş disk alanı yok.",
+  "error.provider.unexpectedVersion": "Sağlayıcı çalışma zamanı beklenmeyen bir sürüm döndürdü.",
+  "error.provider.metadataNoData": "Çalışma zamanı meta veri indirmesi veri döndürmedi.",
+  "error.provider.metadataTooLarge": "Çalışma zamanı meta verileri çok büyük.",
+  "error.provider.requestFailed": "OpenBot {url} adresini indiremedi. {reason}",
+  "error.provider.installRecordMismatch": "Çalışma zamanı kurulum kaydı eşleşmiyor.",
+  "error.provider.runtimeChecksum": "Sağlayıcı çalışma zamanı sağlama toplamı (checksum) eşleşmiyor.",
+  "error.provider.codexReleaseShape": "Codex sürümü beklenmeyen bir yapıya sahip.",
+  "error.provider.codexReleaseNoDownload": "Codex sürümü bu bilgisayar için doğrulanabilir bir indirmeye sahip değil.",
+  "error.provider.claudeReleaseShape": "Claude sürümü beklenmeyen bir yapıya sahip.",
+  "error.provider.grokReleaseVersion": "Grok sürümü beklenmeyen bir sürüme sahip.",
+  "error.provider.blockedListShape": "Engellenen sürümler listesi beklenmeyen bir yapıya sahip.",
+  "error.provider.releaseNoDownload": "{name} sürümü doğrulanabilir bir indirmeye sahip değil.",
+  "error.provider.releaseSizeUnknown": "Sürüm indirmesinin bilinen bir boyutu yok.",
+  "error.provider.releaseMetadataNotObject": "Sürüm meta verileri bir JSON nesnesi değil.",
+  "error.provider.releaseCheckHttp": "Sürüm kontrolü HTTP {status} ile başarısız oldu.",
+  "error.provider.releaseMetadataTooLarge": "Sürüm meta verileri çok büyük.",
+  "error.provider.idInvalid": "Bir sağlayıcı kimliği küçük harfler, rakamlar, `-` veya `_` olmalıdır.",
+  "error.provider.baseUrlInvalid": "Temel URL bir URL değil.",
+  "error.provider.baseUrlProtocol": "Temel URL http:// veya https:// ile başlamalıdır.",
+  "error.provider.baseUrlCredentials":
+    "Temel URL kullanıcı adı veya şifre içermemelidir. Kimlik bilgisini bir üstbilgiye koyun.",
+  "error.provider.modelsRequired": "En az bir model gereklidir.",
+  "error.provider.modelsTooMany": "Çok fazla model var.",
+  "error.provider.modelIdCharacter": "Bir model kimliği kullanılamayan bir karaktere sahip.",
+  "error.provider.modelIdDuplicate": "İki model aynı kimliğe sahip.",
+  "error.provider.contextWindowInvalid":
+    "Bir modelin bağlam penceresi {min} ile {max} arasında tam sayı bir token sayısı olmalıdır.",
+  "error.provider.maxOutputInvalid":
+    "Bir modelin en fazla çıktısı {min} ile {max} arasında tam sayı bir token sayısı olmalıdır.",
+  "error.provider.reasoningEffortsInvalid": "Bir modelin efor düzeyleri geçerli değil.",
+  "error.provider.inputsInvalid": "Bir modelin girdi türleri geçerli değil.",
+  "error.provider.headersTooMany": "Çok fazla üstbilgi var.",
+  "error.provider.headerNameCharacter": "Bir üstbilgi adı HTTP'nin izin vermediği bir karaktere sahip.",
+  "error.provider.headerNameTooLong": "Bir üstbilgi adı çok uzun.",
+  "error.provider.headerNameDuplicate": "İki üstbilgi aynı ada sahip.",
+  "error.provider.headerValueInvalid": "Bir üstbilgi değeri eksik veya çok uzun.",
+  "error.provider.headerValueMissing": "{name} başlığı için bir değer girin.",
+  "error.provider.apiKeyTooLong": "API anahtarı çok uzun.",
+  "error.provider.localOnly": "Sağlayıcılar yalnızca ajanları çalıştıran bilgisayarda değiştirilebilir.",
+  "error.provider.keyRequired": "Bir sağlayıcı anahtarı gereklidir.",
+  "error.provider.keyTooLong": "Sağlayıcı anahtarı çok uzun.",
+  "error.provider.keyInvalidCharacters":
+    "Sağlayıcı anahtarı, bir anahtarda bulunamayacak bir boşluk veya karakter içeriyor.",
+  "error.provider.noModel": "Seçilen sağlayıcının kullanılabilir modeli yok.",
+  "error.provider.noModelNamed": "{provider} sağlayıcısının kullanılabilir modeli yok.",
+  "error.provider.acpNoModels": "ACP CLI hiçbir ACP modeli tanıtmadı. OpenBot bir yedek model tahmin etmeyecektir.",
+  "error.provider.endpointRemoveBusy": "Bu uç noktayı kaldırmadan önce etkin turun ve kuyruğun bitmesini bekleyin.",
+  "error.provider.codexOutdated": "Codex CLI {version} çok eski. OpenBot 0.156.0 veya daha yenisini gerektirir.",
+  "error.provider.codexNotStarted": "Codex CLI bulundu ancak başlatılamadı.",
+  "error.provider.codexNotStartedHint":
+    "Codex CLI bulundu ancak başlatılamadı. Yeni bir terminalde `codex --version` komutunu çalıştırın.",
+  "error.provider.codexManagedNotStarted": "ChatGPT indirildi ancak başlatılamadı. OpenBot içinde yeniden indirin.",
+  "error.provider.codexMissing": "ChatGPT indirilmedi. Devam etmek için OpenBot içinde indirin.",
+  "error.provider.claudeOutdated": "Claude Code {version} çok eski. OpenBot 2.1.232 veya daha yenisini gerektirir.",
+  "error.provider.claudeNotStarted": "Claude CLI bulundu ancak başlatılamadı.",
+  "error.provider.claudeNotStartedHint":
+    "Claude CLI bulundu ancak başlatılamadı. Yeni bir terminalde `claude --version` komutunu çalıştırın.",
+  "error.provider.claudeManagedNotStarted": "Claude indirildi ancak başlatılamadı. OpenBot içinde yeniden indirin.",
+  "error.provider.claudeMissing": "Claude indirilmedi. Devam etmek için OpenBot içinde indirin.",
+  "error.provider.grokOutdated": "Grok CLI {version} çok eski. OpenBot 1.0.5 veya daha yenisini gerektirir.",
+  "error.provider.grokNotStarted": "Grok CLI bulundu ancak başlatılamadı.",
+  "error.provider.grokNotStartedHint":
+    "Grok CLI bulundu ancak başlatılamadı. Yeni bir terminalde `grok --version` komutunu çalıştırın.",
+  "error.provider.grokMissing": "Grok indirilmedi. Devam etmek için OpenBot içinde indirin.",
+  "error.provider.opencodeNotStarted":
+    "OpenCode başlatılamadı. Bir terminalde `opencode --version` komutunu çalıştırın.",
+  "error.provider.opencodeMissing": "OpenCode indirilmedi. Devam etmek için OpenBot içinde indirin.",
+  "error.provider.codexVersionUnreadable": "Codex CLI sürümü okunamıyor.",
+  "error.provider.claudeVersionUnreadable": "Claude CLI sürümü okunamıyor.",
+  "error.provider.grokVersionUnreadable": "Grok CLI sürümü okunamıyor.",
+  "error.provider.opencodeVersionUnreadable": "OpenCode CLI sürümü okunamıyor.",
+  "error.provider.bunVersionUnreadable": "Bun çalışma zamanı sürümü okunamıyor.",
+  "error.provider.connectBeforeProfile": "Bir profil oluşturmadan önce seçilen sağlayıcıyı bağlayın.",
+  "error.provider.cliNotReady": "{provider} CLI hazır değil veya oturum açılmamış.",
+  "error.provider.cliTimedOut":
+    "{provider} zamanında yanıt vermedi. Bilgisayar meşgul olabilir. OpenBot tekrar deneyecek.",
+  "error.provider.cliTimedOutRefresh":
+    "{provider} zamanında yanıt vermedi. Bilgisayar meşgul olabilir. Tekrar denemek için sağlayıcıları yenileyin.",
+  "error.provider.stoppedBeforeStart": "{provider}, bu mesaj başlamadan önce durdu. Mesajı yeniden gönderin.",
+  "error.provider.sessionStartTimedOut":
+    "{provider} yeni bir sohbeti zamanında açamadı, bu yüzden bu mesaj başlamadı. OpenBot'u çalıştıran bilgisayarda Sağlayıcılar sayfasını açın, {provider} öğesini seçin ve Yeniden başlat'a tıklayın. Sonra tekrar deneyin.",
+  "error.provider.serviceUnreachable":
+    "{provider} hizmetine bağlanamıyor. İnternet bağlantınızı kontrol edin. OpenBot tekrar deneyecek.",
+  "error.provider.serviceUnreachableRefresh":
+    "{provider} hizmetine bağlanamıyor. İnternet bağlantınızı kontrol edin, ardından sağlayıcıları yenileyin.",
+  "error.provider.acpStartTimedOut":
+    "{provider} {seconds} sn içinde başlatmayı tamamlamadı. Bilgisayar meşgul olabilir.",
+  "error.provider.acpModelsTimedOut":
+    "{provider} {seconds} sn içinde modellerini listelemedi. Bilgisayar meşgul olabilir.",
+  "error.provider.startStopped":
+    "{provider} art arda birkaç kez başlamadı, bu yüzden OpenBot denemeyi bıraktı. Tekrar denemek için sağlayıcıları yenileyin.",
+  "error.provider.startPaused":
+    "{provider} art arda birkaç kez başlamadı. OpenBot bir sonraki mesajda veya rutinde yeniden deneyecek. Şimdi denemek için sağlayıcıları yenileyin.",
+  "error.provider.tempDiskSpace":
+    "{provider} başlamak için en az 1 GB boş disk alanı gerektirir. Yer açın, ardından sağlayıcıları yenileyin.",
+  "error.provider.noCodeSignIn": "{provider} için kodla oturum açılamaz.",
+  "error.provider.codeLoginNoLink": "Sağlayıcı bir oturum açma bağlantısı göstermedi. Tekrar deneyin.",
+  "error.provider.hostSignInEnded": "{provider} oturum açma işlemi tamamlanmadı. Tekrar deneyin.",
+  "error.provider.codeLoginNotWaiting": "Hiçbir oturum açma işlemi bir kod beklemiyor. Oturum açmayı tekrar başlatın.",
+  "error.provider.codeLoginBadCode": "Oturum açma sayfasının gösterdiği kodu yapıştırın.",
+  "error.provider.codeLoginRefused": "Sağlayıcı kodu kabul etmedi. Oturum açmayı tekrar başlatın.",
+  "error.provider.codeLoginUnsupported":
+    "Bu sunucu yapıştırılan bir kodla oturum açamaz. Sunucu bilgisayarında, onun tarayıcısında oturum açın.",
+  "error.provider.claudeLoginNotSaved":
+    "Claude oturum açma bilgisini Mac'e kaydedemedi. OpenBot'un çalıştığı Mac'i yeniden başlatın, sonra Claude'u tekrar bağlayın.",
+  "error.provider.cliBusyRetry":
+    "{provider} CLI bir tur üzerinde çalışıyor. Bitmesini bekleyin, ardından tekrar deneyin.",
+  "error.provider.cliSigningIn":
+    "{provider} CLI oturum açıyor. Oturum açmayı tamamlayın veya iptal edin, ardından güncelleyin.",
+  "error.provider.cliBusyUpdate":
+    "{provider} CLI bir tur üzerinde çalışıyor. Bitmesini bekleyin, ardından güncelleyin.",
+  "error.provider.cliSelectFailed": "OpenBot kurulu yönetilen CLI'yi seçemedi.",
+  "error.provider.noAuthenticatedAccount": "{provider} kimliği doğrulanmış bir hesap döndürmedi.",
+  "error.provider.codexModelProvider":
+    "Bu bilgisayardaki Codex başka bir model sağlayıcısı kullanıyor ve bu sağlayıcı ChatGPT oturumu veya OpenAI API anahtarı kullanmıyor. ChatGPT ajanları bu sağlayıcıyı şimdi kullanabilir. ChatGPT hesabınızı kullanmak için Codex model sağlayıcısını yeniden OpenAI olarak ayarlayın.",
+  "error.provider.signInExpired": "{provider} oturumunuzun süresi doldu. Devam etmek için yeniden oturum açın.",
+  "error.provider.cliActivateFailed": "OpenBot yönetilen CLI'yi etkinleştiremedi.",
+  "error.provider.noMainlandChinaSignIn": "{provider} için Çin anakarası oturum açma yok.",
+  "error.provider.cliNewVersionNotStarted": "Yeni sürüm başlamadı.",
+  "error.provider.cliBusyReconnect":
+    "{provider} CLI bir tur üzerinde çalışıyor. Bitmesini bekleyin, ardından tekrar bağlanın.",
+  "error.provider.cliBusySignOut":
+    "{provider} CLI bir tur üzerinde çalışıyor. Bitmesini bekleyin, sonra bağlantıyı kesin.",
+  "error.provider.opencodeCredentialsRejected":
+    "Model sağlayıcısı API anahtarını reddetti. Ayarlar'da OpenCode anahtarını veya `opencode auth login` ile sağlayıcının anahtarını düzeltin. Ardından tekrar deneyin ya da başka bir model seçin.\n{detail}",
+  "error.provider.opencodeAuthRequired":
+    'OpenCode, "{provider}" model sağlayıcısında oturum açmamış. Ücretsiz etiketli bir model seçin veya sağlayıcıyı bağlayın: OpenCode ayarlarına bir OpenCode Go anahtarı yapıştırın ya da bir terminalde `opencode auth login` komutunu çalıştırın. Ardından tekrar deneyin.',
+  "error.provider.opencodeAuthRequiredUnknown":
+    "OpenCode, bu modelin sağlayıcısında oturum açmamış. Ücretsiz etiketli bir model seçin veya sağlayıcıyı bağlayın: OpenCode ayarlarına bir OpenCode Go anahtarı yapıştırın ya da bir terminalde `opencode auth login` komutunu çalıştırın. Ardından tekrar deneyin.",
+  "error.provider.opencodeProviderRefused":
+    "\"{provider}\" model sağlayıcısı isteği reddetti. OpenCode'un bu sağlayıcı için bir anahtarı var, bu yüzden neden ağınız olabilir: bazı sağlayıcılar VPN'leri, proxy'leri veya bazı ülkeleri engeller. VPN'i kapatın veya farklı bir ağ kullanın, ardından tekrar deneyin. Hata devam ederse anahtar yanlış olabilir: bir terminalde `opencode auth login` komutunu çalıştırın ve anahtarı yeniden girin.",
+  "error.provider.opencodeFreeModelRefused":
+    "OpenCode bu ücretsiz modeli reddetti. Bazı ücretsiz modeller her ülkede kullanılamaz. Ücretsiz etiketli başka bir model seçin veya OpenCode ayarlarına bir OpenCode Go anahtarı yapıştırıp bir OpenCode Go modeli seçin.",
+  "error.provider.customEndpointKeyRefused":
+    '"{provider}" uç noktası API anahtarını veya başlıklarını reddetti. Bunları Sunucu ayarları → Sağlayıcılar bölümünde yeniden girin, ardından tekrar deneyin.',
+  "error.provider.customEndpointAccessRefused":
+    '"{provider}" uç noktası isteği reddetti. API anahtarı veya başlıkları yanlış olabilir ya da hesabı bu modeli kullanamıyor olabilir. Bunları Sunucu ayarları → Sağlayıcılar bölümünde kontrol edin veya başka bir model seçin. Ardından tekrar deneyin.',
+  "error.provider.customEndpointKeyMissing":
+    '"{provider}" uç noktası bir API anahtarı gerektiriyor. Anahtarı Sunucu ayarları → Sağlayıcılar bölümünde ekleyin, ardından tekrar deneyin.',
+  "error.provider.customEndpointEffortRefused":
+    '"{provider}" uç noktası bu modelin akıl yürütme eforunu reddetti. Sunucu ayarları → Sağlayıcılar bölümünde "{provider}" öğesini düzenleyin. Efor altında yalnızca bu modelin kabul ettiği düzeyleri bırakın veya Akıl yürütme yok seçeneğini seçin. Ardından tekrar deneyin.',
+  "error.provider.opencodeKeyExpired":
+    "OpenCode API anahtarınızın süresi doldu. OpenCode Console'da yeni bir anahtar oluşturun, OpenCode ayarlarına yapıştırın, ardından tekrar deneyin.",
+  "error.provider.opencodeKeyRefused":
+    "OpenCode Go kayıtlı API anahtarınızı reddetti. Anahtarın süresi dolmuş olabilir. OpenCode Console'da yeni bir anahtar oluşturun, OpenCode ayarlarına yapıştırın, ardından tekrar deneyin.",
+  "error.provider.opencodeGoRequestRefused":
+    "OpenCode Go isteği reddetti. Yeni bir API anahtarı bunu düzeltmez. OpenCode Go planınız etkin olmayabilir veya OpenCode Go ağınızı engelliyor olabilir: bazı hizmetler VPN'leri, proxy'leri veya bazı ülkeleri engeller. Planınızın OpenCode Console'da etkin olduğundan emin olun ya da VPN'i kapatın, sonra yeniden deneyin. Başka bir model de seçebilirsiniz.",
+  "error.provider.opencodeServiceFailure":
+    "Yerel hizmeti başarısız olduğu için OpenCode bu turu tamamlayamadı. Tekrar deneyin. Hata devam ederse Ayarlar'dan OpenCode'a yeniden bağlanın.",
+  "error.provider.opencodeRateLimited":
+    "Model sağlayıcısı hız sınırı nedeniyle isteği reddetti. Birkaç dakika bekleyin veya başka bir model seçip tekrar deneyin.\n{detail}",
+  "error.provider.opencodeBilling":
+    "Model sağlayıcısı hesabın faturalandırması nedeniyle isteği reddetti. Beklemek bunu düzeltmez. Sağlayıcı hesabına bir ödeme yöntemi veya bakiye ekleyin ya da başka bir model seçin.\n{detail}",
+  "error.provider.opencodeInvalidUpload":
+    "OpenCode'un model sağlayıcısı geçersiz bir yükleme isteği bildirdi. Başka bir model seçin ve devam edin. Kayıtlı rutinleri yeniden oluşturmadan önce denetleyin.\n{detail}",
+  "error.provider.opencodeUnreadableContent":
+    "Bu model, bu sohbetteki bir dosyayı veya görseli okuyamıyor. OpenBot, sohbet geçmişiyle yeni bir OpenCode oturumu başlattı. Mesajınızı dosya olmadan yeniden gönderin veya dosya okuyabilen bir model seçin. Bu modeli özel bir sağlayıcıya eklediyseniz, ayarlarında “Kabul eder” altındaki “Görseller” seçeneğini kaldırın.",
+  "error.provider.opencodeOutOfMemory":
+    "Model sunucusunun belleği bu sohbet için yetmedi. Yeni bir sohbet başlatın ya da modeli daha küçük bir bağlam uzunluğuyla yükleyin ve OpenBot'taki sağlayıcı ayarlarına aynı pencereyi girin.",
+  "error.provider.opencodeContextTooSmall":
+    "Bu sohbet modelin bağlam penceresine sığmıyor. Ollama veya LM Studio'da modeli daha büyük bir bağlam uzunluğuyla yükleyin ve OpenBot'taki sağlayıcı ayarlarına aynı pencereyi girin. Ya da daha büyük bir model seçin.",
+  "error.provider.opencodeFreeLimit":
+    "Ücretsiz OpenCode modelleri kullanım sınırına ulaştı. Tüm ücretsiz modeller bu sınırı paylaşır. Devam etmek için OpenCode ayarlarına bir OpenCode Go anahtarı yapıştırın veya başka bir sağlayıcının modelini seçin.",
+  "error.provider.opencodeProviderFailed":
+    "Model sağlayıcısı kendi tarafında başarısız oldu. Bağlantınız bunun nedeni değildir. Daha sonra tekrar deneyin veya başka bir model seçin.\n{detail}",
+  "error.provider.opencodeModelUnavailable":
+    "Bu model sizin için kullanılamıyor. Bu ajan için başka bir model seçin.\n{detail}",
+  "error.provider.opencodeIncompleteReply":
+    "Modelin yanıtı yarıda kesildi veya geçerli değildi. Mesajınızı tekrar gönderin veya başka bir model seçin.\n{detail}",
+  "error.provider.opencodeOutputLimit":
+    "Modelin yanıtı üç kez çıktı sınırını aştı, bu yüzden tur durdu. Daha düşük bir efor veya başka bir model seçin, sonra mesajınızı yeniden gönderin.",
+  "error.provider.opencodeOutputLimitEndpoint":
+    "Modelin yanıtı üç kez çıktı sınırını aştı, bu yüzden tur durdu. Ayarlar'da Özel sağlayıcı'yı açın, bu uç noktada Düzenle'ye tıklayın ve bu model için daha büyük bir En fazla çıktı değeri girin. Ya da daha düşük bir efor veya başka bir model seçin.",
+  "error.provider.opencodeReasoningOverlap":
+    "OpenCode bu efor düzeyinde bu modelin akıl yürütmesini okuyamadı. Daha düşük bir efor ya da başka bir model seçin, sonra mesajınızı yeniden gönderin.",
+  "error.provider.opencodeModelNotServed":
+    "Model sağlayıcısı bu modeli şu anda hesabınıza sunmuyor. Başka bir model seçin, ardından mesajınızı yeniden gönderin.",
+  "error.provider.opencodeNetwork":
+    "OpenCode model sağlayıcısına bağlanamadı. OpenBot'u çalıştıran bilgisayarın ağ bağlantısını kontrol edin, ardından tekrar deneyin.\n{detail}",
+  "error.provider.codexStateBusy":
+    "ChatGPT önceki bir başlatmadan sonra yerel geçmişini hâlâ hazırlıyor. Birkaç dakika bekleyin, sonra yeniden deneyin.",
+  "error.provider.codexThreadInUse":
+    "Bu sohbet başka bir Codex uygulamasında açık; örneğin Codex masaüstü uygulaması, Codex CLI veya bir IDE uzantısı. Bir Codex sohbetine aynı anda yalnızca bir uygulama yazabilir. Sohbeti o uygulamada kapatın, sonra mesajınızı yeniden gönderin.",
+  "error.provider.realtimeLimitZero":
+    "OpenBot'un gerçek zamanlı CPU sınırı 0 olduğu için Linux sağlayıcıyı durdurdu. Bu sınır sisteminizden geliyor. rtkit'i kurup başlatın (`rtkit-daemon`), `systemctl --user restart xdg-desktop-portal` komutunu çalıştırın, ardından OpenBot'u yeniden başlatın. rtkit eksikken yalnızca xdg-desktop-portal'ı yeniden başlatmak işe yaramaz.",
+  "error.provider.cpuUnsupported":
+    "Bu bilgisayarın işlemcisi bu sağlayıcıyı çalıştıramıyor. Başka bir sağlayıcı kullanın.",
+  "error.provider.opencodeDatabaseNewer":
+    "Daha yeni bir OpenCode sürümü veritabanını değiştirdiği için OpenCode veritabanını açamadı. OpenCode'u 2 veya daha yeni bir sürüme güncelleyin, sonra yeniden deneyin.",
+  "error.provider.opencodeNoAnswer":
+    "OpenCode modeli turu yanıt vermeden bitirdi. Tekrar deneyin veya başka bir model seçin.",
+  "error.provider.opencodeReasoningWithoutAnswer":
+    "OpenCode modeli turu akıl yürütmesinden sonra yanıt vermeden bitirdi. Tekrar deneyin veya başka bir model seçin.",
+  "error.provider.acpNoAnswer":
+    "{provider} turu yanıt vermeden bitirdi. Mesajı yeniden gönderin veya yeni bir sohbet başlatın.",
+  "error.provider.noAnswerAfterSteps":
+    "{provider} bazı adımları uyguladı, sonra turu yanıt vermeden bitirdi. Aynı isteği yeniden göndermeden önce ajana ne yaptığını sorun.",
+  "error.provider.acpRefusedNoReason": "{provider} yanıt vermeden durdu. Mesajı yeniden gönderin.",
+  "error.provider.channelNoAnswer":
+    "{provider} turu yanıt vermeden bitirdi. Kanalda görevi yeniden çalıştırmak için Devam et'e, başka bir üyeye vermek için Yeniden ata'ya tıklayın.",
+  "error.provider.chatgptPageFailed": "OpenBot ChatGPT bağlantı sayfasını açamadı.",
+  "error.provider.noneReady": "Hiçbir ajan sağlayıcısı hazır değil.",
+  "error.provider.claudeTurnActive": "Bağlamını yenilemeden önce etkin Claude turunun bitmesini bekleyin.",
+  "error.provider.codexLoginRequired":
+    "Codex için ChatGPT aboneliğiyle oturum açmanız gerekir. `codex login` komutunu çalıştırın.",
+  "error.provider.cliUpdateFailed": "OpenBot {provider} CLI'sini güncelleyemedi. {reason}",
+  "error.provider.tryAgain": "Tekrar deneyin.",
+  "error.provider.noAgentProcess": "{provider} bu ajan için çalışan bir işleme sahip değil.",
+  "error.provider.stoppedBeforeAgentProcess": "{provider} ajanın işlemi başlamadan önce durdu.",
+  "error.provider.archiveUnreadable": "Çalışma zamanı arşivi okunamıyor veya desteklenmeyen bir biçim kullanıyor.",
+  "error.provider.antigravityMissing": "Gemini indirilmedi. Devam etmek için OpenBot içinde indirin.",
+  "error.provider.antigravityNotStarted": "Gemini sunucusu bulundu ancak sürümü okunamıyor.",
+  "error.provider.antigravityOverrideInvalid":
+    "OPENBOT_ANTIGRAVITY_PATH içindeki Gemini sunucusu yok veya çalıştırılabilir değil. Yolu düzeltin ya da değişkeni kaldırın, ardından OpenBot'u yeniden başlatın.",
+  "error.provider.antigravityVersionUnreadable": "Gemini sunucu sürümü okunamıyor.",
+  "error.provider.antigravitySignIn": "Gemini'yi kullanmak için Google ile oturum açın.",
+  "error.provider.antigravityModelAtCapacity":
+    "Google'ın şu anda bu Gemini modeli için boş kapasitesi yok. Sebep planınızın kotası değil. Birkaç dakika sonra yeniden deneyin ya da başka bir model seçin.\n{detail}",
+  "error.provider.antigravityRateLimited":
+    "Bir hız sınırına veya planın kotasına ulaşıldığı için Gemini isteği reddetti. Birkaç dakika bekleyin ya da başka bir model seçin, sonra yeniden deneyin.\n{detail}",
+  "error.provider.antigravityQuotaReached":
+    "Google, bir Gemini kullanım sınırına ulaşıldığını bildiriyor. Sınır tek bir model için olabilir; bu yüzden planınızın kullanım sayfası hâlâ kalan hak gösterebilir. Başka bir Gemini modeli seçin ya da sıfırlanmayı bekleyin.\n{detail}",
+  "error.provider.antigravityModelUnavailable":
+    "Gemini şu anda bu modeli kullanamıyor. Başka bir model seçin, sonra yeniden deneyin.\n{detail}",
+  "error.provider.antigravityServiceFailure":
+    "Google'ın Gemini hizmeti isteği tamamlamadı. Birkaç dakika sonra yeniden deneyin.\n{detail}",
+  "error.provider.antigravitySignInRefused":
+    "Google bu istek için Gemini oturum açma bilgisini kabul etmedi. Mesajınızı yeniden gönderin. Hata devam ederse Ayarlar'dan Gemini'ye yeniden bağlanın.\n{detail}",
+  "error.provider.antigravityRequestRejected":
+    "Gemini bu isteği reddetti. Başka bir model seçin, sonra mesajınızı yeniden gönderin. Yine başarısız olursa yeni bir sohbet başlatın.\n{detail}",
+  "error.provider.antigravityNetwork":
+    "Gemini'nin Google ile bağlantısı kesildi. Mesajınızı yeniden gönderin. ({cause})",
+  "error.provider.antigravitySessionRejected":
+    "Gemini bu isteği reddetti ve nedenini belirtmedi. Buna sohbet geçmişindeki bir öğe, örneğin ajanın açtığı bir görsel neden olabilir. OpenBot, sohbet geçmişiyle yeni bir Gemini oturumu başlattı. Yeniden deneyin. Hata sürerse başka bir model seçin.",
+  "error.provider.antigravityHistoryUnreadable":
+    "Gemini bu sohbetin kayıtlı geçmişini okuyamadı. OpenBot, sohbet geçmişiyle yeni bir Gemini oturumu başlattı. Mesajınızı yeniden gönderin.",
+  "error.provider.antigravityLocationUnsupported":
+    "Google, bu ajanı çalıştıran bilgisayarın ağ konumundan Gemini'nin çalışmasına izin vermiyor. Gemini'yi başka bir bilgisayarda kullanın veya bu ajan için başka bir sağlayıcı seçin.\n{detail}",
+  "error.provider.antigravityConnectionLost":
+    "Gemini, aracısıyla bağlantısını kaybetti ve durdu. Devam etmek için bir mesaj gönderin.",
+  "error.provider.grokServiceFailure":
+    "Grok hizmeti yoğun veya bir hata veriyor. Birkaç dakika sonra yeniden deneyin ya da başka bir model seçin.",
+  "error.provider.grokConnectionFailed":
+    "Grok hizmetine bağlanamıyor. İnternet bağlantınızı kontrol edin, ardından mesajı yeniden gönderin.",
+  "error.provider.antigravityRemoteWindowsSignIn":
+    "Windows ana bilgisayarında Gemini, Google sayfasını ana bilgisayarın kendisinde açar. Gemini'yi ana bilgisayarda bağlayın.",
+  "error.provider.cursorArchivePath": "Cursor arşivi beklenmeyen bir dosya içeriyor.",
+  "error.provider.cursorChecksum": "Cursor çalışma zamanı sağlama toplamı (checksum) eşleşmiyor.",
+  "error.provider.cursorReleaseShape": "Cursor sürümü beklenmeyen bir yapıya sahip.",
+  "error.provider.cursorMissing": "Cursor indirilmedi. Devam etmek için OpenBot içinde indirin.",
+  "error.provider.cursorNotStarted": "Cursor ajanı bulundu ancak sürümü okunamıyor.",
+  "error.provider.cursorVersionUnreadable": "Cursor ajan sürümü okunamıyor.",
+  "error.provider.cursorSignIn": "Cursor'ı kullanmak için Cursor ile oturum açın veya CURSOR_API_KEY ayarlayın.",
+  "error.provider.cursorSignInUnusable":
+    "Cursor, oturum bilgilerinizle sunucusuna bağlanamadı. İnternet bağlantınızı kontrol edin, ardından Cursor'da yeniden oturum açın.",
+  "error.provider.clineArchivePath": "Cline arşivi beklenmeyen bir yola sahip.",
+  "error.provider.clinePackageMismatch": "Cline paketi çalışma zamanı kataloğuyla eşleşmiyor.",
+  "error.provider.clineChecksum": "Cline çalışma zamanı sağlama toplamı (checksum) eşleşmiyor.",
+  "error.provider.clineLicenseChecksum": "Cline lisansı sağlama toplamı (checksum) eşleşmiyor.",
+  "error.provider.clineMissing": "Cline indirilmedi. Devam etmek için OpenBot içinde indirin.",
+  "error.provider.clineOutdated": "Cline CLI {version} çok eski. OpenBot 3.0.68 veya daha yenisini gerektirir.",
+  "error.provider.clineNotStarted": "Cline başlatılamadı. Bir terminalde `cline --version` komutunu çalıştırın.",
+  "error.provider.clineVersionUnreadable": "Cline CLI sürümü okunamıyor.",
+  "error.provider.clineSignIn": "Cline'ı kullanmak için Cline ile oturum açın veya CLINE_API_KEY ayarlayın.",
+  "error.provider.kimiArchivePath": "Kimi arşivi beklenmeyen bir yola sahip.",
+  "error.provider.kimiChecksum": "Kimi çalışma zamanı sağlama toplamı (checksum) eşleşmiyor.",
+  "error.provider.kimiLicenseChecksum": "Kimi lisansı sağlama toplamı (checksum) eşleşmiyor.",
+  "error.provider.kimiMissing": "Kimi indirilmedi. Devam etmek için OpenBot içinde indirin.",
+  "error.provider.kimiOutdated": "Kimi CLI {version} çok eski. OpenBot 1.52.0 veya daha yenisini gerektirir.",
+  "error.provider.kimiNotStarted": "Kimi başlatılamadı. Bir terminalde `kimi --version` komutunu çalıştırın.",
+  "error.provider.kimiVersionUnreadable": "Kimi CLI sürümü okunamıyor.",
+  "error.provider.kimiSignIn": "Kimi'yi kullanmak için Kimi Code ile oturum açın.",
+  "error.provider.devinSignIn": "Devin'i kullanmak için Devin ile oturum açın.",
+  "error.provider.copilotSignIn":
+    "GitHub Copilot'ı kullanmak için GitHub ile oturum açın veya COPILOT_GITHUB_TOKEN ayarlayın.",
+  "error.provider.mistralSignIn":
+    "Mistral'ı kullanmak için Mistral ile oturum açın veya MISTRAL_API_KEY değişkenini ayarlayın.",
+  "error.provider.hermesMissing": "Hermes Agent yüklü değil. Yükleyin ve yeniden deneyin.",
+  "error.provider.hermesNotStarted":
+    "Hermes Agent başlatılamadı. Bir terminalde `hermes --version` komutunu çalıştırın.",
+  "error.provider.hermesVersionUnreadable": "Hermes Agent sürümü okunamıyor.",
+  "error.provider.hermesSignIn":
+    "Hermes'i kullanmak için Nous Portal ile oturum açın veya bir terminalde `hermes setup` komutunu çalıştırın.",
+  "error.provider.hermesTurnFailed":
+    "Hermes bu turu bitiremedi. Yanıtı bir neden veriyorsa onu izleyin. Vermiyorsa bu ajanın bir MCP sunucusu kullanılamıyor olabilir: Pazaryeri, Uygulamalar bölümünden kontrol edin, sonra mesajınızı yeniden gönderin.",
+  "error.provider.hermesRefused":
+    "Hermes bu mesajı başlamadan önce reddetti. Yeniden gönderin. Hermes her mesajı reddediyorsa bu ajanı çalıştıran bilgisayarda OpenBot'u yeniden başlatın.",
+  "error.provider.hermesConnectionLost":
+    "Hermes bu mesaj sırasında bağlantısını kaybetti, bu yüzden işin bitip bitmediğini bilmiyor. Mesajı yeniden göndermeden önce ajanın ne yaptığını kontrol edin.",
+  "error.provider.copilotThinkingRejected":
+    "GitHub Copilot bu modeli kullanamadı: model, düşünme ayarını kabul etmedi. Bu ajan için başka bir model seçin, sonra mesajınızı yeniden gönderin.",
+  "error.provider.usageLimitReached": "Hesap kullanım sınırına ulaştı.",
+  "error.provider.claudeContextFull":
+    "Bu sohbet Claude için çok uzun hale geldi. OpenBot sohbet geçmişiyle yeni bir Claude Code oturumu başlattı. Tekrar deneyin.",
+  "error.provider.claudeApiKeyNoCredit":
+    "Anthropic API anahtarında API kredisi yok. Claude planı, API anahtarıyla yapılan istekleri ödemez. Anthropic Console'da kredi ekleyin ya da Ayarlar'da Claude'da oturum açıp ajanın model menüsünde Claude hesabını seçin.",
+  "error.provider.claudeAccountNoCredit":
+    "Claude hesabınızın kredi bakiyesi çok düşük. Hızlı mod gibi bazı istekler, Claude planınızda kullanım kalsa da kullanım kredisi harcar. Claude hesabınıza kullanım kredisi ekleyin ya da ajanın model menüsünde başka bir model seçin.",
+  "error.provider.claudeServiceBlocked":
+    "Claude hizmeti bu isteği engelledi. Bu genellikle Claude tarafında kısa süreli bir sorundur, hesabınızla ilgili değildir. Mesajı birkaç dakika sonra yeniden gönderin.",
+  "error.provider.foreignReasoning":
+    "Farklı bir hesap veya API anahtarı aldığı için {provider} bu sohbetteki önceki akıl yürütmeyi kabul etmedi. OpenBot sohbet geçmişiyle yeni bir {provider} oturumu başlattı. Tekrar deneyin.",
+  "error.provider.blankHistoryText":
+    "Kayıtlı geçmişinde boş bir mesaj olduğu için model bu sohbeti kabul etmedi. OpenBot sohbet geçmişiyle yeni bir {provider} oturumu başlattı. Tekrar deneyin.",
+  "error.provider.codexHistoryItemMissing":
+    "Kayıtlı geçmişindeki bir öğe eksik olduğu için Codex bu sohbete devam edemedi. OpenBot sohbet geçmişiyle yeni bir Codex oturumu başlattı. Tekrar deneyin.",
+  "error.provider.codexRequestRefused":
+    "{provider}, bu sohbetin isteğini reddetti ve nedenini belirtmedi. Bu, çok sayıda görsel içeren uzun bir sohbette olabilir. OpenBot, sohbet geçmişiyle yeni bir {provider} oturumu başlattı. Tekrar deneyin.",
+  "error.provider.codexAudioRefused":
+    "Bu model ses dinleyemez, bu yüzden bu sohbetteki sesi kabul etmedi. OpenBot, sohbet geçmişiyle yeni bir Codex oturumu başlattı. Devam etmek için isteğinizi yeniden gönderin ve ajandan ses olmadan çalışmasını isteyin. Sesi kontrol etmek için ajanın model menüsünde ses dinleyebilen bir model seçin.",
+  "error.provider.imageTooSmall":
+    "Görsel çok küçük olduğu için model bu sohbetteki bir görseli kabul etmedi. OpenBot, sohbet geçmişiyle yeni bir {provider} oturumu başlattı. Tekrar deneyin.",
+  "error.provider.imageTooLarge":
+    "Görsel çok büyük olduğu için model bu sohbetteki bir görseli kabul etmedi. OpenBot, sohbet geçmişiyle yeni bir {provider} oturumu başlattı. Tekrar deneyin.",
+  "error.provider.imageCountLimit":
+    "Sohbette çok fazla görsel olduğu için model bu sohbeti kabul etmedi. OpenBot, sohbet geçmişiyle yeni bir {provider} oturumu başlattı. Tekrar deneyin.",
+  "error.provider.imageUnreadable":
+    "Model bu sohbetteki bir görseli okuyamadı. OpenBot, sohbet geçmişiyle yeni bir {provider} oturumu başlattı. Tekrar deneyin. Bir görsel gönderdiyseniz, başka bir görsel gönderin.",
+  "error.provider.requestTooLarge":
+    "Bu sohbet, modele gönderilemeyecek kadar büyüdü. Bunun nedeni çoğu zaman sohbetteki görsellerdir. OpenBot, sohbet geçmişiyle yeni bir {provider} oturumu başlattı. Tekrar deneyin.",
+  "error.provider.opencodeSessionRejected":
+    "OpenCode isteği reddetti ve nedenini belirtmedi. Bu, uzun bir sohbette veya model değişikliğinden sonra olabilir. OpenBot, sohbet geçmişiyle yeni bir OpenCode oturumu başlattı. Yeniden deneyin. Hata sürerse başka bir model veya daha düşük bir efor seçin.",
+  "error.provider.opencodeCompactionFailed":
+    "Model, bağlam penceresinde yer açmak için bu uzun sohbeti özetleyemedi. OpenBot, sohbet geçmişiyle yeni bir OpenCode oturumu başlattı. Yeniden deneyin. Hata sürerse daha güçlü bir model seçin.",
+  "error.provider.museMcpStartupFault":
+    "Muse bir MCP sunucusunu başlatamadı ve bu oturumda MCP’yi engelledi. OpenBot, sohbet geçmişiyle yeni bir Muse oturumu başlattı. Tekrar deneyin. Hata devam ederse bu ajan için Bilgisayar Kullanımı’nı veya başarısız olan MCP sunucusunu kapatın.",
+  "error.provider.claudeSessionMissing":
+    "Claude Code bu sohbetin kayıtlı oturumunu bulamadı. OpenBot sohbet geçmişiyle yeni bir Claude Code oturumu başlattı. Tekrar deneyin.",
+  "error.provider.grokSignIn": "Grok'u kullanmak için `grok login` komutunu çalıştırın veya XAI_API_KEY ayarlayın.",
+  "error.provider.acpSignInTimedOut": "Oturum açma zaman aşımına uğradı.",
+  "error.provider.acpSignInStopped": "Oturum açma tamamlanmadan önce durdu.",
+  "error.provider.geminiBrowserUnavailable":
+    "Gemini oturum açma sayfasını açamadı. Bir tarayıcı ve xdg-utils yükleyin, ardından bu ana makinede bir masaüstü oturumundan bağlanın. Masaüstü olmayan bir sunucu bu oturum açma işlemini tamamlayamaz.",
+  "error.provider.geminiBrowserOpenFailed":
+    "Gemini oturum açma sayfasını tarayıcınızda açamadı. Varsayılan tarayıcınızı kontrol edin, ardından yeniden bağlanın.",
+  "error.provider.acpSignInFailed": "Oturum açma tamamlanmadı.",
+  "error.provider.acpSignInFailedReason": "Oturum açma tamamlanmadı: {reason}",
+  "error.provider.acpSignInNetwork":
+    "Oturum açma, sağlayıcının sunucusuna ulaşamadı. OpenBot'u çalıştıran bilgisayarın ağ bağlantısını ve DNS ayarlarını kontrol edip yeniden deneyin.",
+  "error.provider.acpSignOutFailed": "Oturum kapatma tamamlanmadı.",
+  "error.provider.acpSignOutFailedReason": "Oturum kapatma tamamlanmadı: {reason}",
+  "error.provider.acpSignInMethodMissing":
+    "Bu sağlayıcı bu bilgisayarda bu oturum açma yöntemini sunmuyor. Sağlayıcıyı güncelleyin, ardından tekrar deneyin.",
+  "error.provider.httpsSignInLinkOnly": "Tarayıcıda yalnızca HTTPS oturum açma bağlantıları açılabilir.",
+  "error.provider.geminiKeyRefused":
+    "Gemini kayıtlı API anahtarını reddetti. Ayarlar'da anahtarı değiştirin veya kaldırın, ardından yeniden bağlanın.",
+  "error.provider.geminiKeyRateLimited":
+    "Kayıtlı Gemini API anahtarınız bir hız sınırına veya kotasına ulaştığı için Gemini isteği reddetti. Anahtar, Google planınızın yerine kullanılıyor. Birkaç dakika bekleyin ya da başka bir model seçin, sonra yeniden deneyin. Google planınızı kullanmak için Ayarlar'da anahtarı kaldırın.\n{detail}",
+  "error.provider.geminiKeyQuotaZero":
+    "Kayıtlı Gemini API anahtarınızın bu model için kotası yok. Anahtar, Google planınızın yerine kullanılıyor. Başka bir model seçin ya da Google planınızı kullanmak için Ayarlar'da anahtarı kaldırın.\n{detail}",
+  "error.provider.geminiAccountSettingsUnreadable":
+    "Gemini bu hesabın ayar dosyasını açamıyor, bu yüzden oturum açamıyor. Bu hesabı kaldırın ve yeniden ekleyin.",
+  "error.provider.geminiSettingsUnreadable":
+    "Gemini bu bilgisayarda ayar dosyasını açamıyor, bu yüzden oturum açamıyor. Gemini kullanan diğer uygulamaları kapatın, ardından OpenBot'u kapatıp yeniden açın.",
+  "error.provider.geminiVerificationRequired":
+    "Gemini'nin yanıt verebilmesi için Google'ın hesabınızı doğrulaması gerekiyor. Google hesabınızı bir tarayıcıda doğrulayın, ardından mesajınızı yeniden gönderin.",
+  "error.provider.keyProviderRefused":
+    "{provider} kayıtlı API anahtarını reddetti. Ayarlar'da anahtarı değiştirin veya kaldırın, ardından yeniden deneyin.",
+  "error.provider.keyProviderNoBalance":
+    "Kayıtlı API anahtarının {provider} hesabında bakiye yok. Hesaba kredi ekleyin, ardından yeniden deneyin.",
+  "error.provider.keyProviderLowCredit":
+    "Kayıtlı API anahtarının {provider} hesabında bu modelin yanıtı için yeterli kredi yok. Hesaba kredi ekleyin veya başka bir model seçin, ardından yeniden deneyin.",
+  "error.provider.modelServiceRefused":
+    "Model hizmeti isteği reddetti. Başka bir model seçin veya hizmette bu modele erişiminizi kontrol edin.",
+  "error.provider.modelServiceRefusedReason":
+    "Model hizmeti isteği reddetti: {reason}. Başka bir model seçin veya hizmette bu modele erişiminizi kontrol edin.",
+  "error.provider.messageTooLarge":
+    "OpenBot, {limit} MB'tan daha büyük bir mesaj gönderdiği için {provider} sağlayıcısını durdurdu.",
+  "error.provider.customAgentIdInvalid":
+    "Bir ajan kimliği küçük harfler, rakamlar veya `-` olmalıdır ve yerleşik bir sağlayıcının kimliği olamaz.",
+  "error.provider.customAgentEnvInvalid":
+    "Bir değişken adı harfler, rakamlar veya `_` olmalı ve bir rakamla başlamamalıdır. Her adı bir kez, en fazla 16 ad kullanın.",
+  "error.provider.customAgentUsagePromptInvalid": "Kullanım komutu en fazla 256 karakterlik tek bir satır olmalıdır.",
+  "error.provider.customAgentCommandInvalid":
+    "Komut tam bir yol, ~/ ile başlayan bir yol veya boşluk içermeyen bir komut adı olmalıdır.",
+  "error.provider.customAgentArgsInvalid":
+    "Bir bağımsız değişken satır sonu içeremez. En fazla 32 bağımsız değişken kullanın.",
+  "error.provider.customAgentWindowsScript":
+    "Bir .cmd veya .bat komutu bağımsız değişkenlerinde yalnızca harfler, rakamlar ve - _ . , : = @ + / \\ alabilir.",
+  "error.provider.customAgentNotFound": "OpenBot {command} komutunu bulamıyor. Komutun tam yolunu girin.",
+  "error.provider.customAgentCheckTimedOut": "Ajan 20 saniye içinde yanıt vermedi.",
+  "error.provider.customAgentCheckStopped": "Ajan yanıt vermeden önce durdu.",
+  "error.provider.customAgentProtocolVersion": "Ajan ACP sürüm {version} kullanıyor. OpenBot sürüm 1 kullanır.",
+  "error.provider.customAgentCheckFailed": "Ajan bir ACP ajanı olarak yanıt vermedi.",
+  "error.provider.customAgentRemoveBusy": "Bu özel ajanı kaldırmadan önce etkin turun ve kuyruğun bitmesini bekleyin.",
+  "error.provider.customAgentNone": "Hiçbir özel ajan kayıtlı değil.",
+  "error.provider.customAgentMissing": "Bu özel ajan şu anda kayıtlı değil. Başka bir model seçin.",
+  "error.provider.customAgentSignIn": "Ajanın kendi komutuyla oturum açın, ardından tekrar deneyin.",
+  "error.provider.customAgentsReadOnly":
+    "Kayıtlı özel ajanlar OpenBot'un daha yeni bir sürümü tarafından yazılmış veya dosya okunamıyor. Bunları değiştirmek için OpenBot'u güncelleyin.",
+  "error.provider.customAgentNoSecureStorage":
+    "Bu bilgisayarda güvenli depolama alanı yok, bu nedenle ortam değerleri kaydedilemez. Bunları kaldırıp tekrar deneyin.",
+  "error.provider.customAgentNotSaved": "Bu özel ajan kayıtlı değil. Listeyi yenileyip tekrar deneyin.",
+  "error.provider.customAgentWorkspaceOnly":
+    "{reason}. “Yalnızca çalışma alanı” bunu engelliyor. “Tam erişim”i deneyin.",
+  "error.provider.customAgentTooMany": "En fazla {count} özel ajan kaydedebilirsiniz.",
+  "error.provider.customAgentEnvValueMissing": "{name} için bir değer girin.",
+  "error.provider.off": "{provider}, OpenBot'ta kapalı. Önce sağlayıcı ayarlarından açın.",
+  "error.provider.inUse": "Bir ajan {provider} kullanıyor. Bu sağlayıcıyı kapatmadan önce ajanın modelini değiştirin.",
+  "error.provider.useBusy":
+    "Sağlayıcı denetiminin veya oturum açma işleminin bitmesini bekleyin, ardından tekrar deneyin.",
+  "error.provider.useSettingsReadOnly":
+    "Kayıtlı sağlayıcı ayarları okunamıyor. Bunları değiştirmeden önce OpenBot'u güncelleyin.",
+  "error.provider.useChangeFailed": "OpenBot sağlayıcı ayarını değiştiremedi.",
+  "error.provider.accountsUnsupported": "{provider} yalnızca bir hesap destekler.",
+  "error.provider.accountNeedsConnection": "Başka bir hesap eklemeden önce {provider} sağlayıcısına bağlanın.",
+  "error.provider.usageResetUnsupported": "{provider} kullanım sınırlarını sıfırlayamaz.",
+  "error.provider.signOutUnsupported": "OpenBot {provider} oturumunun bağlantısını kesemiyor.",
+  "error.provider.usageResetNotConnected": "Kullanımını sıfırlamadan önce bu {provider} hesabında yeniden oturum açın.",
+  "error.provider.accountLimit": "{provider} en fazla {limit} hesap destekler.",
+  "error.provider.accountNotFound": "Bu {provider} hesabı bu bilgisayarda yok. Yenileyip tekrar deneyin.",
+  "error.provider.accountAlreadyAdded": "Bu {provider} hesabı zaten bağlı.",
+  "error.provider.accountDefault": "İlk {provider} hesabı kaldırılamaz.",
+  "error.provider.accountUsesKey":
+    "Bu {provider} hesabı kayıtlı API anahtarını kullanır ve oturum açma içermez. Anahtarı Sunucu ayarları → Sağlayıcılar bölümünde değiştirin.",
+  "error.provider.accountNeedsKey":
+    "Yeni bir {provider} hesabı için API anahtarı gerekir. Bu cihazda OpenBot'u güncelleyin, sonra hesabı yeniden ekleyin.",
+  "error.provider.accountKeyRefused":
+    "{provider} bu API anahtarını kabul etmedi. Anahtarı kontrol edin, sonra tekrar deneyin.",
+  "error.provider.accountKeyUnreachable":
+    "OpenBot, API anahtarını kontrol etmek için {provider} hizmetine ulaşamadı. İnternet bağlantısını kontrol edin, sonra tekrar deneyin.",
+  "error.provider.accountKeySignedOut":
+    "{provider} bu hesabın API anahtarını artık kabul etmiyor. Hesaba yeni bir anahtar verin.",
+  "error.provider.accountInUse": "Bu hesabı kullanan bir ajan çalışıyor. Ajan durduğunda tekrar deneyin.",
+  "error.provider.accountsReadOnly":
+    "Kayıtlı sağlayıcı hesapları okunamıyor. Bunları değiştirmeden önce OpenBot'u güncelleyin.",
+  "error.provider.accountSignedOut": "Bu {provider} hesabının oturumu kapalı. Tekrar oturum açın.",
+  "error.provider.sessionSettingUnavailable": "Bu ayar mevcut sağlayıcı oturumunda kullanılamıyor.",
+  "error.provider.sessionSettingInvalid": "Bu değer bu ayar için kullanılamıyor.",
+  "error.provider.sessionSettingsBusy": "Bir oturum ayarını değiştirmeden önce mevcut turun bitmesini bekleyin.",
+  "error.provider.piOutdated": "Pi {version} çok eski. Yerel RPC ve MCP desteği için Pi 1.1.0 veya sonrasını yükleyin.",
+  "error.provider.nativeMissing": "{provider} CLI yüklü değil. Ayarlar'dan indirin.",
+  "error.provider.nativeNotStarted": "{provider} CLI başlatılamadı.",
+  "error.provider.nativeVersionUnreadable": "{provider} CLI sürümü okunamadı.",
+  "error.provider.piSessionBusy": "Mevcut Pi turunun bitmesini bekleyin.",
+  "error.provider.acpSessionBusy": "{provider} durdurulan turu hâlâ bitiriyor. Biraz sonra yeniden deneyin.",
+  "error.provider.acpModelNotOffered":
+    "{provider} şu anda {model} modelini sunmuyor. Bu ajan için başka bir model seçip yeniden deneyin.",
+  "error.provider.piStopped": "Pi çalışmıyor. Pi'yi bağlayıp tekrar deneyin.",
+  "error.provider.piSessionMissing": "Pi oturum dosyası bu bilgisayarda yok.",
+  "error.provider.piResumeCancelled": "Pi oturumu sürdürmeyi iptal etti. Tekrar deneyin.",
+  "error.provider.piSessionIdentity": "Pi farklı bir oturum döndürdü. Kayıtlı oturum değiştirilmedi.",
+  "error.provider.piExtensionFailed":
+    "Pi bir uzantıyı yükleyemediği için durdu. Bu uzantıyı kaldırın veya güncelleyin, ardından tekrar deneyin. {detail}",
+  "error.provider.piThreadStopped":
+    "Pi bu turu bitirmeden beklenmedik şekilde durdu. Devam etmek için bir mesaj gönderin.",
+  "error.provider.piModelInvalid": "Sağlayıcısını içeren bir Pi modeli seçin.",
+  "error.provider.piToolInvalid": "Araç geçersiz bir sonuç döndürdü.",
+  "error.provider.piSignIn": "Ana makinede Pi içinde /login komutunu kullanın. Oturum açma tamamlanınca Pi'yi kapatın.",
+  "error.provider.museBusy": "Muse oturumu meşgul.",
+  "error.provider.museStopped": "Muse istemcisi çalışmıyor.",
+  "error.provider.museUnexpectedProvider": "Muse beklenmeyen bir model sağlayıcısı döndürdü.",
+  "error.provider.museNoActiveTurn": "Muse'un yönlendirilecek etkin bir turu yok.",
+  "error.provider.museInvalidProtocol": "Muse geçersiz bir protokol yanıtı döndürdü.",
+  "error.provider.museNotStarted": "Muse başlamadı.",
+  "error.provider.museNativeWindows": "Muse, Windows'ta yerel bir yürütülebilir dosya gerektirir.",
+  "error.provider.museStartTimeout": "Muse başlatması zaman aşımına uğradı.",
+  "error.provider.museStartStopped": "Muse başlatma sırasında durdu.",
+  "error.provider.museProtocolVersion": "Desteklenmeyen Muse protokol sürümü.",
+  "error.provider.museHistoryRequired": "Muse oturum geçmişini saklamalıdır.",
+  "error.provider.museRequestUnsupported": "Desteklenmeyen Muse sunucu isteği.",
+  "error.provider.museConnectionFailed":
+    "Muse bağlantısı başarısız oldu. Kayıtlı geçmişini kurtarmak için konuşmayı sürdürün.",
+  "error.provider.museUnknownSession": "Bilinmeyen Muse oturumu.",
+  "error.provider.museInvalidToolResult": "Geçersiz OpenBot aracı sonucu.",
+  "error.provider.museMcpRequired": "Muse oturum MCP sunucularını desteklemelidir.",
+  "error.provider.museSessionMismatch": "Muse farklı bir oturum döndürdü.",
+  "error.provider.museCompactRejected": "Muse sıkıştırmayı kabul etmedi.",
+  "error.provider.museTurnMismatch": "Muse farklı bir tur döndürdü.",
+  "error.provider.museHistoryMismatch": "Muse geçmişi oturumlar arasında karıştı.",
+  "error.provider.museRecoveryFailed": "Muse eksik olayları kurtaramadı.",
+  "error.provider.museHistoryStalled": "Muse geçmiş imleci ilerlemedi.",
+  "error.provider.museApprovalUnavailable": "Muse bu onay yanıtını sunmadı.",
+  "error.provider.museHistoryOwner": "Muse geçmişi başka bir oturuma ait.",
+  "error.provider.museHistoryMissing": "Muse oturum geçmişini döndürmedi.",
+  "error.provider.museEmptyInput": "Muse metin veya görsel gerektirir.",
+  "error.provider.museMethodUnsupported": "Muse {method} yöntemini desteklemiyor.",
+  "error.provider.museTurnFailed": "Muse turu başarısız oldu.",
+  "error.provider.museModelUnavailable":
+    "Muse bu modeli kullanamıyor. Muse, bu ajanın çalıştığı ülkede kullanılamıyor olabilir ya da bu hesabın modele erişimi olmayabilir. Başka bir model seçip yeniden deneyin.\n{detail}",
+  "error.provider.museProfileUnsupported":
+    "Muse, harici araçlara erişim olmadan profil oluşturamaz. Profili oluşturmak için başka bir sağlayıcı kullanın, ardından ajan için Muse'u seçin.",
+  "error.provider.museAuthUnverified":
+    "Muse kimlik doğrulaması doğrulanmadı. Ana makinede bağlanın veya bir Meta API anahtarı ayarlayın.",
+  "error.provider.museSignIn": "Devam etmek için ana makinede Muse'da oturum açın.",
+  "error.provider.inceptionSignIn": "Devam etmek için bir Inception API anahtarı ekleyin.",
+  "error.provider.deepseekSignIn": "Devam etmek için bir DeepSeek API anahtarı ekleyin.",
+  "error.provider.openrouterSignIn": "Devam etmek için bir OpenRouter API anahtarı ekleyin.",
+  "error.provider.terminalLoginFailed":
+    "Oturum açma terminali açılamadı. Bu ana makinede sağlayıcı CLI'sini açıp orada oturum açın, ardından sağlayıcıları yenileyin.",
+  "error.provider.nativeArchiveInvalid": "Sağlayıcı indirmesi geçerli bir kurulum içermiyor.",
+  "error.provider.nativeChecksum": "Sağlayıcı kurulumu bütünlük denetimini geçemedi.",
+  "error.provider.registryUnavailable": "ACP kayıt defteri kullanılamıyor. Tekrar deneyin.",
+  "error.provider.registryInvalid": "ACP kayıt defteri geçersiz veri döndürdü.",
+  "error.provider.registryMissing": "Bu ajan ACP kayıt defterinde yok.",
+  "error.provider.registryBusy": "Bu ajan için zaten bir kurulum sürüyor.",
+  "error.provider.registryCancelled": "Ajan kurulumu iptal edildi.",
+  "error.provider.registryPrerequisite": "Bu ajanı kurmadan önce ana makineye {tool} yükleyin.",
+  "error.provider.registryBindingChanged": "Özel ajan kurulum sırasında değişti. Tekrar deneyin.",
+  "error.provider.registryInstallFailed": "Ajan kurulumu başarısız oldu. Önceki kurulum değişmedi.",
+  "error.provider.hermesInstallFailed": "Hermes Agent kurulmadı. Yeniden deneyin veya kurulum kılavuzunu kullanın.",
+  "error.provider.hermesNeedsGitCurl": "Hermes Agent için git ve curl gerekir. Bunları kurun, sonra yeniden deneyin.",
+  "error.provider.registryRemoveBusy":
+    "Kaldırmadan önce ajan kurulumunun ve etkin ACP çalışmasının bitmesini bekleyin.",
+} as const satisfies PartialTranslation<typeof source>;

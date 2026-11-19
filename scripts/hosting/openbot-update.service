@@ -1,0 +1,12 @@
+[Unit]
+Description=Stage an OpenBot update
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/OpenBot/hosted/openbot-hosted-update check
+Nice=19
+IOSchedulingClass=idle
+CPUWeight=idle
+TimeoutStartSec=30min

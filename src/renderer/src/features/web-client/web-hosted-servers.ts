@@ -1,0 +1,108 @@
+import {
+  type HostedServerCheckout,
+  type HostedServerSummary,
+  parseHostedServerCatalog,
+  parseHostedServerCheckout,
+  parseHostedServerList,
+  parseHostedServerSummary,
+  parseServerClaim,
+} from "@openbot/contracts/hosted-servers";
+import type { HostedServersDesktopApi } from "@openbot/contracts/ipc";
+import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
+import { currentText } from "@openbot/ui/text";
+import type { AddServerResume } from "../servers/AddServerOverlay";
+import { savedPromotionCode } from "./web-billing";
+
+const REQUEST_TIMEOUT_MS = 15_000;
+const SERVER_CLAIMS_PATH = "v2/server-claims";
+
+export function createWebHostedServerCalls(
+  accountFetch: typeof fetch,
+  navigate: (url: string) => void = (url) => window.location.assign(url),
+): HostedServersDesktopApi {
+  async function send(
+    path: string,
+    init: { method?: "POST" | "DELETE"; body?: string; headers?: Record<string, string> } = {},
+  ): Promise<Response> {
+    const post = init.body !== undefined;
+    const url = path === SERVER_CLAIMS_PATH ? `/api/browser/${path}` : `/api/browser/v2/hosting/${path}`;
+    const response = await accountFetch(url, {
+      method: init.method ?? (post ? "POST" : "GET"),
+      credentials: "same-origin",
+      cache: "no-store",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      headers: post ? { "Content-Type": "application/json", "X-OpenBot-Browser": "1", ...init.headers } : {},
+      ...(post ? { body: init.body } : {}),
+    }).catch(() => {
+      throw new Error(errorMessage(null));
+    });
+    if (!response.ok) throw new Error(errorMessage(await response.json().catch(() => null)));
+    return response;
+  }
+
+  async function request<T>(
+    path: string,
+    decode: (value: unknown) => T | null,
+    init: { body?: string; headers?: Record<string, string> } = {},
+  ): Promise<T> {
+    const value = await (await send(path, init)).json().catch(() => null);
+    const decoded = decode(value);
+    if (!decoded) throw new Error(currentText().sourceText("error.auth.invalidHostedServer"));
+    return decoded;
+  }
+
+  function open(checkout: HostedServerCheckout): HostedServerSummary {
+    if (checkout.checkoutUrl) navigate(checkout.checkoutUrl);
+    return checkout.server;
+  }
+
+  const serverPath = (serverId: string, action: string) => `servers/${encodeURIComponent(serverId)}/${action}`;
+
+  return {
+    async lifecycle(input) {
+      await send(serverPath(input.serverId, "lifecycle"), { body: JSON.stringify(input) });
+    },
+    list: () => request("servers", parseHostedServerList),
+    plans: () => request("plans", parseHostedServerCatalog),
+    createServerClaim: () => request(SERVER_CLAIMS_PATH, parseServerClaim, { body: "{}" }),
+    async create({ requestId, ...input }) {
+      const body = JSON.stringify({ ...input, ...savedPromotionCode() });
+      return open(
+        await request("servers", parseHostedServerCheckout, { body, headers: { "Idempotency-Key": requestId } }),
+      );
+    },
+    openCheckout: async (serverId) =>
+      open(
+        await request(serverPath(serverId, "checkout"), parseHostedServerCheckout, {
+          body: JSON.stringify(savedPromotionCode()),
+        }),
+      ),
+    wake: (serverId) => request(serverPath(serverId, "wake"), parseHostedServerSummary, { body: "{}" }),
+    restart: (serverId) => request(serverPath(serverId, "restart"), parseHostedServerSummary, { body: "{}" }),
+    async delete({ serverId, confirmName }) {
+      await send(`servers/${encodeURIComponent(serverId)}`, {
+        method: "DELETE",
+        body: JSON.stringify({ confirmName }),
+      });
+    },
+  };
+}
+
+function errorMessage(value: unknown): string {
+  if (isDynamicRecord(value) && isDynamicRecord(value.error) && isString(value.error.message))
+    return value.error.message;
+  return currentText().t("webClient.error.requestFailed");
+}
+
+const WEB_APP_HOSTING_PARAM = "hosting";
+const WEB_APP_HOSTED_SERVER_PARAM = "hosted_server";
+
+export function takeHostingReturn(): AddServerResume | null {
+  const url = new URL(window.location.href);
+  if (url.searchParams.get(WEB_APP_HOSTING_PARAM) !== "checkout") return null;
+  const serverId = url.searchParams.get(WEB_APP_HOSTED_SERVER_PARAM);
+  const paid = url.searchParams.get("cancelled") !== "1";
+  for (const name of [WEB_APP_HOSTING_PARAM, WEB_APP_HOSTED_SERVER_PARAM, "cancelled"]) url.searchParams.delete(name);
+  window.history.replaceState(window.history.state, "", url);
+  return serverId ? { serverId, paid } : null;
+}

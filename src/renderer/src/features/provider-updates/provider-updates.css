@@ -1,0 +1,81 @@
+.provider-update-toast-logo {
+  width: var(--openbot-icon-md);
+  height: var(--openbot-icon-md);
+  overflow: visible;
+  fill: var(--openbot-provider-current);
+}
+
+.ui-toaster [data-sonner-toast] [data-action]:has(.provider-update-toast-action[data-idle="true"]) {
+  display: none;
+}
+
+.ui-toaster
+  .provider-update-toast[data-sonner-toast][data-styled="true"]:has(.provider-update-toast-action[data-idle="true"]) {
+  padding-bottom: var(--openbot-space-3);
+}
+
+.provider-update-toast[data-sonner-toast][data-styled="true"] [data-description]:has(.provider-update-toast-progress) {
+  display: flex;
+  flex-direction: column;
+}
+
+.provider-update-toast-line {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.provider-update-toast-line[data-failed="true"] {
+  display: -webkit-box;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+.provider-update-toast-line[data-failed="true"][data-expanded="true"] {
+  display: block;
+  -webkit-line-clamp: none;
+  line-clamp: none;
+}
+
+.provider-update-toast .provider-update-toast-details {
+  margin-top: var(--openbot-space-1);
+  color: inherit;
+  font-size: inherit;
+  text-decoration: underline;
+}
+
+.provider-update-toast-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--openbot-space-3);
+  margin-top: var(--openbot-space-2);
+}
+
+.provider-update-toast-bar {
+  flex: 1;
+  min-width: 0;
+}
+
+.provider-update-toast-bar[data-provider] .ui-progress-fill {
+  background: var(--openbot-provider-current);
+}
+
+.provider-update-toast-percent {
+  --digit-dur: var(--openbot-duration-fast);
+  --digit-distance: var(--openbot-space-1);
+  --digit-blur: 0px;
+  --digit-ease: ease-out;
+  display: inline-flex;
+  justify-content: flex-end;
+  width: 4ch;
+  color: var(--openbot-text-primary);
+  font-size: var(--openbot-text-sm);
+  font-variant-numeric: tabular-nums;
+}

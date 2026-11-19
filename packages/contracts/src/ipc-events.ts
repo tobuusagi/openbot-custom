@@ -1,0 +1,332 @@
+import {
+  isRoutinePausedByRun,
+  isRoutineRunFields,
+  isRoutineSchedule,
+  ROUTINE_MISSED_POLICIES,
+  ROUTINE_RUN_PLACES,
+  type RoutineLimitPolicy,
+  type RoutineMissedPolicy,
+  type RoutinePausedByRun,
+  type RoutineRunFields,
+  type RoutineRunPlace,
+  type RoutineSchedule,
+} from "./ipc-routines";
+import { API_KEY_NAME_PATTERN } from "./ipc-vault";
+import { isDynamicRecord, isNumber, isOneOf, isString } from "./runtime-values";
+
+export type EventJsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | EventJsonValue[]
+  | { readonly [key: string]: EventJsonValue };
+
+export const EVENT_DELIVERY_ID_MAX_LENGTH = 512;
+
+export type EventScalar = string | number | boolean | null;
+
+export interface EventStatus {
+  supported: boolean;
+  connected: boolean;
+}
+
+export interface EventFilter {
+  pointer: string;
+  value: EventScalar;
+}
+
+export interface RoutineScheduleTrigger {
+  kind: "schedule";
+  schedule: RoutineSchedule;
+}
+
+export interface RoutineWebhookTrigger {
+  kind: "webhook";
+  url: string | null;
+  eventType: string | null;
+  filters: EventFilter[];
+}
+
+export type RoutineWebhookTriggerInput = Omit<RoutineWebhookTrigger, "url">;
+
+export type EventRoutineTrigger = RoutineScheduleTrigger | RoutineWebhookTrigger;
+export type EventRoutineTriggerInput = RoutineScheduleTrigger | RoutineWebhookTriggerInput;
+
+export type EventRoutineOwner = { kind: "agent"; id: string } | { kind: "channel"; id: string };
+
+export interface EventRoutine {
+  id: string;
+  owner: EventRoutineOwner;
+  name: string;
+  instruction: string;
+  active: boolean;
+  timezone: string;
+  trigger: EventRoutineTrigger;
+  limitPolicy?: RoutineLimitPolicy;
+  missedPolicy?: RoutineMissedPolicy;
+  runIn?: RoutineRunPlace;
+  pausedByRun?: RoutinePausedByRun;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SaveEventRoutineInput {
+  id?: string;
+  owner: EventRoutineOwner;
+  name: string;
+  instruction: string;
+  active: boolean;
+  timezone: string;
+  trigger: EventRoutineTriggerInput;
+  limitPolicy?: RoutineLimitPolicy;
+  missedPolicy?: RoutineMissedPolicy;
+  runIn?: RoutineRunPlace;
+}
+
+export interface SaveEventRoutineResult {
+  routine: EventRoutine;
+  secret: string | null;
+}
+
+export interface WebhookSecret {
+  secret: string;
+}
+
+export interface AgentWebhookSecret {
+  name: string;
+}
+
+export interface SetWebhookSecretInput extends EventRoutineRef {
+  secret: string;
+}
+
+export interface ListEventRoutinesInput {
+  owner: EventRoutineOwner;
+}
+
+export interface EventRoutineRef {
+  id: string;
+  owner: EventRoutineOwner;
+}
+
+export interface ListEventActivityInput {
+  owner: EventRoutineOwner;
+  routineId: string;
+  limit?: number;
+}
+
+export interface ListEventRoutineRunsInput {
+  owner: EventRoutineOwner;
+  routineId: string;
+  limit?: number;
+}
+
+export interface EventRoutineRun extends RoutineRunFields {
+  deliveryId?: string | null;
+  requestMessageId?: string | null;
+}
+
+export interface EventEnvelope {
+  version: 1;
+  id: string;
+  routineId: string;
+  type: string;
+  occurredAt: string;
+  receivedAt: string;
+  data: EventJsonValue;
+}
+
+export type WebhookReceiptReason = "event-type" | "filter" | "inactive";
+
+export interface EventActivity {
+  kind: "received";
+  id: string;
+  deliveryId: string;
+  eventType: string;
+  status: "started" | "ignored";
+  reason: WebhookReceiptReason | null;
+  runId: string | null;
+  occurredAt: string;
+}
+
+export interface WebhookTestResult {
+  eventType: string;
+  status: "started" | "ignored";
+  reason: WebhookReceiptReason | null;
+  runId: string | null;
+}
+
+function isEventStatus(value: unknown): value is EventStatus {
+  return isDynamicRecord(value) && typeof value.supported === "boolean" && typeof value.connected === "boolean";
+}
+
+export function isEventJsonValue(
+  value: unknown,
+  depth = 0,
+  budget: { remaining: number } = { remaining: 10_000 },
+): value is EventJsonValue {
+  if (depth > 32 || budget.remaining <= 0) return false;
+  budget.remaining -= 1;
+  if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+  if (isNumber(value)) return Number.isFinite(value);
+  if (Array.isArray(value)) {
+    return value.length <= 10_000 && value.every((item) => isEventJsonValue(item, depth + 1, budget));
+  }
+  return (
+    isDynamicRecord(value) &&
+    Object.keys(value).length <= 10_000 &&
+    Object.values(value).every((item) => isEventJsonValue(item, depth + 1, budget))
+  );
+}
+
+function isScalar(value: unknown): value is EventScalar {
+  return (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "boolean" ||
+    (isNumber(value) && Number.isFinite(value))
+  );
+}
+
+function isTimestamp(value: unknown): value is string {
+  return isString(value) && !Number.isNaN(Date.parse(value));
+}
+
+function isNullableString(value: unknown): value is string | null {
+  return value === null || isString(value);
+}
+
+export function isEventFilterPointer(value: unknown): value is string {
+  return (
+    isString(value) && value.length <= 2048 && (value === "" || (value.startsWith("/") && !/~(?![01])/u.test(value)))
+  );
+}
+
+export function isEventFilter(value: unknown): value is EventFilter {
+  return isDynamicRecord(value) && isEventFilterPointer(value.pointer) && isScalar(value.value);
+}
+
+export function isEventRoutineOwner(value: unknown): value is EventRoutineOwner {
+  return isDynamicRecord(value) && (value.kind === "agent" || value.kind === "channel") && isString(value.id);
+}
+
+function isRoutineWebhookTriggerInput(value: unknown): value is RoutineWebhookTriggerInput {
+  return (
+    isDynamicRecord(value) &&
+    value.kind === "webhook" &&
+    isNullableString(value.eventType) &&
+    Array.isArray(value.filters) &&
+    value.filters.every(isEventFilter)
+  );
+}
+
+function isRoutineScheduleTrigger(value: unknown): value is RoutineScheduleTrigger {
+  return isDynamicRecord(value) && value.kind === "schedule" && isRoutineSchedule(value.schedule);
+}
+
+export function isEventRoutineTriggerInput(value: unknown): value is EventRoutineTriggerInput {
+  return isRoutineWebhookTriggerInput(value) || isRoutineScheduleTrigger(value);
+}
+
+export function isEventRoutineTrigger(value: unknown): value is EventRoutineTrigger {
+  return (
+    isRoutineScheduleTrigger(value) ||
+    (isDynamicRecord(value) && isNullableString(value.url) && isRoutineWebhookTriggerInput(value))
+  );
+}
+
+function isEventRoutine(value: unknown): value is EventRoutine {
+  return (
+    isDynamicRecord(value) &&
+    isString(value.id) &&
+    isEventRoutineOwner(value.owner) &&
+    isString(value.name) &&
+    isString(value.instruction) &&
+    typeof value.active === "boolean" &&
+    isString(value.timezone) &&
+    isEventRoutineTrigger(value.trigger) &&
+    (value.limitPolicy === undefined || value.limitPolicy === "wait" || value.limitPolicy === "skip") &&
+    (value.missedPolicy === undefined || isOneOf(ROUTINE_MISSED_POLICIES, value.missedPolicy)) &&
+    (value.runIn === undefined || isOneOf(ROUTINE_RUN_PLACES, value.runIn)) &&
+    (value.pausedByRun === undefined || isRoutinePausedByRun(value.pausedByRun)) &&
+    isTimestamp(value.createdAt) &&
+    isTimestamp(value.updatedAt)
+  );
+}
+
+function isSaveEventRoutineResult(value: unknown): value is SaveEventRoutineResult {
+  return isDynamicRecord(value) && isEventRoutine(value.routine) && isNullableString(value.secret);
+}
+
+function isWebhookSecret(value: unknown): value is WebhookSecret {
+  return isDynamicRecord(value) && isString(value.secret) && value.secret.length > 0;
+}
+
+function isAgentWebhookSecret(value: unknown): value is AgentWebhookSecret {
+  return isDynamicRecord(value) && isString(value.name) && API_KEY_NAME_PATTERN.test(value.name);
+}
+
+function isDeliveryId(value: unknown): value is string {
+  return isString(value) && value.length > 0 && value.length <= EVENT_DELIVERY_ID_MAX_LENGTH;
+}
+
+export function isEventActivity(value: unknown): value is EventActivity {
+  if (!isDynamicRecord(value) || !isString(value.id) || !isTimestamp(value.occurredAt)) return false;
+  return (
+    value.kind === "received" &&
+    isDeliveryId(value.deliveryId) &&
+    isString(value.eventType) &&
+    (value.status === "started" || value.status === "ignored") &&
+    (value.reason === null ||
+      value.reason === "event-type" ||
+      value.reason === "filter" ||
+      value.reason === "inactive") &&
+    isNullableString(value.runId)
+  );
+}
+
+function isWebhookTestResult(value: unknown): value is WebhookTestResult {
+  return (
+    isDynamicRecord(value) &&
+    isString(value.eventType) &&
+    (value.status === "started" || value.status === "ignored") &&
+    (value.reason === null ||
+      value.reason === "event-type" ||
+      value.reason === "filter" ||
+      value.reason === "inactive") &&
+    isNullableString(value.runId)
+  );
+}
+
+function decodeList<T>(guard: (value: unknown) => value is T, message: string): (value: unknown) => T[] {
+  return (value) => {
+    if (!Array.isArray(value) || !value.every(guard)) throw new Error(message);
+    return value;
+  };
+}
+
+function decodeOne<T>(guard: (value: unknown) => value is T, message: string): (value: unknown) => T {
+  return (value) => {
+    if (!guard(value)) throw new Error(message);
+    return value;
+  };
+}
+
+export const decodeEventStatus = decodeOne(isEventStatus, "Invalid event status response.");
+export const decodeEventActivity = decodeList(isEventActivity, "Invalid event activity response.");
+export const decodeEventRoutines = decodeList(isEventRoutine, "Invalid event routine response.");
+export const decodeSaveEventRoutineResult = decodeOne(isSaveEventRoutineResult, "Invalid event routine response.");
+export const decodeWebhookSecret = decodeOne(isWebhookSecret, "Invalid webhook secret response.");
+export const decodeAgentWebhookSecret = decodeOne(isAgentWebhookSecret, "Invalid webhook secret response.");
+export const decodeWebhookTestResult = decodeOne(isWebhookTestResult, "Invalid webhook test response.");
+function isEventRoutineRun(value: unknown): value is EventRoutineRun {
+  return (
+    isRoutineRunFields(value) &&
+    isDynamicRecord(value) &&
+    (value.deliveryId === undefined || value.deliveryId === null || isString(value.deliveryId)) &&
+    (value.requestMessageId === undefined || value.requestMessageId === null || isString(value.requestMessageId))
+  );
+}
+
+export const decodeEventRoutineRuns = decodeList(isEventRoutineRun, "Invalid routine run response.");

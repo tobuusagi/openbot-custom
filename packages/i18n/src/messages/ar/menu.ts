@@ -1,0 +1,41 @@
+import type { PartialTranslation } from "../../message";
+import type { messages as source } from "../en/menu";
+
+export const messages = {
+  "menu.stopAllAgents": "إيقاف كل الوكلاء",
+  "menu.checkForUpdates": "التحقق من التحديثات…",
+  "menu.preferences": "الإعدادات…",
+  "menu.actualSize": "الحجم الفعلي",
+  "menu.zoomIn": "تكبير",
+  "menu.zoomOut": "تصغير",
+  "menu.copyLink": "نسخ الرابط",
+  "menu.copyImage": "نسخ الصورة",
+  "menu.quit": "إنهاء OpenBot",
+  "menu.quitConfirmTitle": "هل تريد إنهاء OpenBot؟",
+  "menu.quitConfirmBody": "يتوقف الوكلاء والمهام الدورية حتى تفتح OpenBot مرة أخرى.",
+  "menu.quitConfirm": "إنهاء",
+  "menu.quitHint": "اضغط ⌘Q مطولًا أو مرتين للإنهاء",
+  "menu.closeWorkingTitle": {
+    zero: "لا يعمل أي وكيل",
+    one: "وكيل واحد لا يزال يعمل",
+    two: "وكيلان لا يزالان يعملان",
+    few: "{count} وكلاء لا يزالون يعملون",
+    many: "{count} وكيلًا لا يزالون يعملون",
+    other: "{count} وكيل لا يزالون يعملون",
+  },
+  "menu.closeWorkingBody":
+    "إذا أنهيت OpenBot، يتوقف الوكلاء. أبقه قيد التشغيل ليُكملوا عملهم. لإظهار النافذة مرة أخرى، افتح OpenBot.",
+  "menu.closeKeepRunning": "إبقاء التشغيل",
+  "menu.trayOpen": "فتح OpenBot",
+  "menu.trayQuit": "إنهاء OpenBot",
+  "menu.trayTooltip": "OpenBot",
+  "menu.hideDynamicIsland": "إخفاء Dynamic Island",
+  "menu.undo": "تراجع",
+  "menu.redo": "إعادة",
+  "menu.cut": "قص",
+  "menu.copy": "نسخ",
+  "menu.paste": "لصق",
+  "menu.pasteAndMatchStyle": "لصق ومطابقة النمط",
+  "menu.delete": "حذف",
+  "menu.selectAll": "تحديد الكل",
+} as const satisfies PartialTranslation<typeof source>;

@@ -1,0 +1,8 @@
+[Unit]
+Description=Update OpenBot instance %i
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/openbot-docker/instances/openbot-instance update-request %i
+TimeoutStartSec=45min

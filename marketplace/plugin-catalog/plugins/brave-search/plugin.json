@@ -1,0 +1,50 @@
+{
+  "slug": "brave-search",
+  "name": "Brave Search",
+  "tagline": "Private web search",
+  "description": "Brave Search lets agents search the web and local results without tracking. An API key from the Brave Search API dashboard is passed to the local server as one environment variable.",
+  "category": "research",
+  "creatorName": "Brave",
+  "iconUrl": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/9e/b3/b2/9eb3b277-5183-0072-1921-39787c42ab35/AppIcon-0-0-1x_U007epad-0-1-0-sRGB-85-220.png/512x512bb.jpg",
+  "version": "1.0.0",
+  "prompts": [
+    { "id": "prompt-search", "text": "What are reviewers saying about this framework version?" },
+    { "id": "prompt-news", "text": "Find today's announcements for this product area." },
+    { "id": "prompt-compare", "text": "Compare these two vendors with cited sources." }
+  ],
+  "apps": [
+    {
+      "id": "app-brave-search-mcp",
+      "name": "Brave Search",
+      "description": "Web and local search, over a local MCP server with a Brave API key.",
+      "iconUrl": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/9e/b3/b2/9eb3b277-5183-0072-1921-39787c42ab35/AppIcon-0-0-1x_U007epad-0-1-0-sRGB-85-220.png/512x512bb.jpg",
+      "server": {
+        "name": "brave-search",
+        "transport": "stdio",
+        "command": "npx",
+        "args": ["-y", "@brave/brave-search-mcp-server"],
+        "auth": [
+          {
+            "id": "brave-key",
+            "kind": "key",
+            "label": "API key",
+            "fields": [
+              {
+                "id": "token",
+                "label": "API key",
+                "env": "BRAVE_API_KEY",
+                "hint": "Brave Search API dashboard → API keys"
+              }
+            ],
+            "docsUrl": "https://brave.com/search/api/",
+            "docsLabel": "Get a key"
+          }
+        ]
+      }
+    }
+  ],
+  "skills": [],
+  "websiteUrl": "https://brave.com",
+  "privacyPolicyUrl": "https://brave.com/privacy/",
+  "termsUrl": "https://brave.com/terms-of-use/"
+}

@@ -1,0 +1,324 @@
+import {
+  analyticsRange,
+  type ClientAgentSummary,
+  type HostAnalytics,
+  type HostAnalyticsInput,
+  WORKFLOWS_USAGE_ID,
+} from "@openbot/contracts/ipc";
+import type { AppTextKey } from "@openbot/i18n";
+import {
+  Button,
+  ErrorReference,
+  IconButton,
+  RefreshCw,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@openbot/ui";
+import { AgentUsageReport } from "@openbot/ui/features/usage/AgentUsageReport";
+import {
+  type UsageAgentLabel,
+  type UsageMetric,
+  type UsagePeriod,
+  usageMetricLabels,
+  usageMetrics,
+  usagePeriodDays,
+  usagePeriodLabels,
+  usagePeriods,
+} from "@openbot/ui/features/usage/usage-format";
+import { PageHeader } from "@openbot/ui/features/window/PageHeader";
+import { useText } from "@openbot/ui/text";
+import { errorReference } from "@openbot/user-errors";
+import type { JSX } from "@solidjs/web";
+import { createEffect, createStore, onSettled, Show } from "solid-js";
+import { desktopAnalytics } from "../../analytics";
+import { createPageHeaderFrame } from "../window/page-header-frame";
+import { type UsagePort, usagePort } from "./usage-port";
+
+interface AgentUsagePanelProps {
+  agentId?: string | undefined;
+  agentName?: string;
+  serverId: string;
+  hostName: string;
+  onBack: () => void;
+  port?: UsagePort;
+  machine?: JSX.Element;
+}
+interface UsageState {
+  range: HostAnalyticsInput;
+  result: HostAnalytics | null;
+  phase: "loading" | "ready" | "unsupported" | "error";
+  errorReference: string | null;
+  agents: ClientAgentSummary[];
+  metric: UsageMetric;
+  period: UsagePeriod;
+  serverId: string;
+}
+
+function usageRange(days: number, agentId: string | undefined): HostAnalyticsInput {
+  const { startDate, endDate, timeZone } = analyticsRange("", days);
+  return agentId === undefined ? { startDate, endDate, timeZone } : { startDate, endDate, timeZone, agentId };
+}
+
+export function AgentUsagePanel(props: AgentUsagePanelProps) {
+  const { t } = useText();
+  const port = () => props.port ?? usagePort();
+  const [state, setState] = createStore<UsageState>({
+    range: usageRange(usagePeriodDays["30d"], props.agentId),
+    agents: [],
+    result: null,
+    phase: "loading",
+    errorReference: null,
+    metric: "cost",
+    period: "30d",
+    serverId: props.serverId,
+  });
+  let generation = 0;
+  async function load(range = state.range, background = false): Promise<void> {
+    const request = ++generation;
+    const serverId = props.serverId;
+    const agentId = range.agentId;
+    if (!background)
+      setState((draft) => {
+        draft.phase = "loading";
+        draft.result = null;
+      });
+    try {
+      const [result, agents] = await Promise.all([
+        port().agent.getHostAnalytics({ ...range }, serverId),
+        port().agent.listAgents(serverId),
+      ]);
+      if (request === generation && props.serverId === serverId && state.range.agentId === agentId)
+        setState((draft) => {
+          draft.agents = agents;
+          draft.serverId = serverId;
+          draft.result = result;
+          draft.phase = result ? "ready" : "unsupported";
+        });
+    } catch (error) {
+      if (background && state.result) return;
+      if (request === generation && props.serverId === serverId && state.range.agentId === agentId)
+        setState((draft) => {
+          draft.result = null;
+          draft.phase = "error";
+          draft.errorReference = errorReference(error);
+        });
+    }
+  }
+  createEffect(
+    () => [props.agentId, props.serverId],
+    () => {
+      setState((draft) => {
+        if (props.agentId === undefined) delete draft.range.agentId;
+        else draft.range.agentId = props.agentId;
+        draft.agents = [];
+      });
+    },
+  );
+  createEffect(
+    () => [state.range.agentId, props.serverId, state.period] as const,
+    ([agentId, , range]) => {
+      desktopAnalytics.track("usage_viewed", {
+        scope: agentId ? "agent" : "server",
+        range,
+        filtered: agentId !== props.agentId,
+      });
+    },
+  );
+  createEffect(
+    () => [state.range.agentId, props.serverId, state.range.startDate, state.range.endDate],
+    () => {
+      void load();
+    },
+  );
+  onSettled(() => {
+    const unsubscribe = port().agent.onScopedEvent(({ serverId, event }) => {
+      if (
+        serverId === props.serverId &&
+        event.type === "turn-completed" &&
+        (!state.range.agentId || event.agentId === state.range.agentId)
+      )
+        void load(state.range, true);
+    });
+    const reconnect = port().servers.onEvent((servers) => {
+      if (servers.some((server) => server.id === props.serverId && server.state === "online"))
+        void load(state.range, true);
+    });
+    return () => {
+      generation++;
+      unsubscribe();
+      reconnect();
+    };
+  });
+  const agentLabel = (id: string): UsageAgentLabel => {
+    if (id === WORKFLOWS_USAGE_ID) return { name: t("usage.panel.workflows"), provider: "" };
+    const agent = state.agents.find((candidate) => candidate.id === id);
+    return {
+      name: agent?.name ?? (id === props.agentId ? props.agentName : undefined) ?? id,
+      provider: agent?.provider ?? "",
+    };
+  };
+  let reportBody: HTMLDivElement | undefined;
+  const headerFrame = createPageHeaderFrame();
+  return (
+    <section class="agent-usage" aria-label={t("usage.panel.label")}>
+      <PageHeader
+        class="agent-usage-header"
+        title={t("usage.panel.title")}
+        hostName={props.hostName}
+        onBack={props.onBack}
+        frame={headerFrame()}
+      >
+        <div class="agent-usage-controls">
+          {props.machine}
+          <Select
+            options={[
+              "all",
+              ...[
+                ...new Set([
+                  ...state.agents.map((agent) => agent.id),
+                  ...(state.result?.agents.some((agent) => agent.agentId === WORKFLOWS_USAGE_ID)
+                    ? [WORKFLOWS_USAGE_ID]
+                    : []),
+                  ...(state.range.agentId ? [state.range.agentId] : []),
+                ]),
+              ].map((id) => `agent:${id}`),
+            ]}
+            value={state.range.agentId ? `agent:${state.range.agentId}` : "all"}
+            onChange={(value) => {
+              if (value)
+                setState((draft) => {
+                  if (value === "all") delete draft.range.agentId;
+                  else draft.range.agentId = value.slice(6);
+                });
+            }}
+            itemComponent={(itemProps) => (
+              <SelectItem item={itemProps.item}>
+                {itemProps.item.rawValue === "all"
+                  ? t("usage.panel.allAgents")
+                  : agentLabel(itemProps.item.rawValue.slice(6)).name}
+              </SelectItem>
+            )}
+          >
+            <SelectTrigger aria-label={t("usage.panel.agents")} size="sm">
+              <SelectValue<string>>
+                {(selection) =>
+                  selection.selectedOption() === "all"
+                    ? t("usage.panel.allAgents")
+                    : agentLabel(selection.selectedOption().slice(6)).name
+                }
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent />
+          </Select>
+          <UsageSelect
+            label={t("usage.panel.metric")}
+            options={usageMetrics}
+            optionLabels={usageMetricLabels}
+            value={state.metric}
+            onChange={(value) => {
+              setState((draft) => {
+                draft.metric = value;
+              });
+            }}
+          />
+          <UsageSelect
+            label={t("usage.panel.period")}
+            options={usagePeriods}
+            optionLabels={usagePeriodLabels}
+            value={state.period}
+            onChange={(value) => {
+              setState((draft) => {
+                draft.period = value;
+                draft.range = usageRange(usagePeriodDays[value], draft.range.agentId);
+              });
+            }}
+          />
+          <IconButton
+            variant="outline"
+            label={t("usage.panel.refresh")}
+            disabled={state.phase === "loading"}
+            onClick={() => void load()}
+          >
+            <RefreshCw />
+          </IconButton>
+        </div>
+      </PageHeader>
+      <div ref={reportBody} class="agent-usage-body">
+        <Show when={state.phase === "loading"}>
+          <div class="agent-usage-loading" role="status">
+            <span>{t("usage.panel.loading")}</span>
+            <div class="agent-usage-placeholder" />
+          </div>
+        </Show>
+        <Show when={state.phase === "unsupported"}>
+          <p class="agent-usage-notice" role="status">
+            {t("usage.panel.unsupported")}
+          </p>
+        </Show>
+        <Show when={state.phase === "error"}>
+          <div class="agent-usage-notice">
+            <p role="alert">
+              {t("usage.panel.loadFailed")}
+              <ErrorReference reference={state.errorReference} />
+            </p>
+            <Button variant="secondary" onClick={() => void load()}>
+              {t("common.retry")}
+            </Button>
+          </div>
+        </Show>
+        <Show
+          when={
+            state.serverId === props.serverId &&
+            state.result &&
+            state.result.agentId === state.range.agentId &&
+            state.result.startDate === state.range.startDate &&
+            state.result.endDate === state.range.endDate &&
+            state.result
+          }
+        >
+          {(result) => (
+            <AgentUsageReport
+              result={result()}
+              metric={state.metric}
+              agentLabel={agentLabel}
+              onReady={() => {
+                if (reportBody) reportBody.scrollTop = 0;
+              }}
+            />
+          )}
+        </Show>
+      </div>
+    </section>
+  );
+}
+
+function UsageSelect<Value extends string>(props: {
+  label: string;
+  options: readonly Value[];
+  optionLabels: Record<Value, AppTextKey>;
+  value: Value;
+  onChange: (value: Value) => void;
+}) {
+  const { t } = useText();
+  const optionLabel = (value: Value): AppTextKey => props.optionLabels[value];
+  return (
+    <Select<Value>
+      options={[...props.options]}
+      value={props.value}
+      onChange={(value) => {
+        if (value) props.onChange(value);
+      }}
+      itemComponent={(itemProps) => (
+        <SelectItem item={itemProps.item}>{t(optionLabel(itemProps.item.rawValue))}</SelectItem>
+      )}
+    >
+      <SelectTrigger size="sm" aria-label={props.label}>
+        <SelectValue<Value>>{(selection) => t(optionLabel(selection.selectedOption()))}</SelectValue>
+      </SelectTrigger>
+      <SelectContent />
+    </Select>
+  );
+}

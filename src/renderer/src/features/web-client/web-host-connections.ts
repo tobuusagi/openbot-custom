@@ -1,0 +1,449 @@
+import {
+  type AgentEvent,
+  type AgentNotificationLevelsSnapshot,
+  type ClientAgentSummary,
+  isClientAgentSummary,
+  type ServerNotificationLevel,
+  type SetAgentNotificationLevelInput,
+  type TeamRealtimeEvent,
+} from "@openbot/contracts/ipc";
+import { guardedListDecoder } from "@openbot/contracts/ipc-decoding";
+import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
+import { AGENT_NOTIFICATION_LEVELS_CAPABILITY } from "@openbot/contracts/team-protocol/agent-notification-levels-v1";
+import { SERVER_SAFE_MODE_CAPABILITY } from "@openbot/contracts/team-protocol/server-safe-mode-v1";
+import { runTeamEffect } from "@openbot/team-client";
+import { agentEventCanNotify } from "@openbot/team-client/agent-notifications";
+import type { RemoteTeamHost } from "@openbot/team-client/remote-directory";
+import type { createRemoteTeamPeer, RemoteTeamPeerActions } from "@openbot/team-client/remote-peer";
+import { createRemoteConnectionRecovery } from "@openbot/team-client/remote-recovery";
+import {
+  listAgentNotificationLevels,
+  setAgentNotificationLevel,
+  setOwnServerNotificationLevel,
+} from "@openbot/team-client/team-admin-requests";
+import type { TeamApiRequest } from "@openbot/team-client/team-api-requests";
+import { currentText } from "@openbot/ui/text";
+import { referenceFrom } from "@openbot/user-errors";
+import { Effect } from "effect";
+import { readWebHostCompatibility } from "./web-host-compatibility";
+import {
+  type acquireWebHostLock,
+  decodeWebHostTabMessage,
+  type WebHostState,
+  type WebHostTabMessage,
+} from "./web-host-lock";
+
+const RELEASED_HOST_REST_MS = 30_000;
+
+type Peer = ReturnType<typeof createRemoteTeamPeer>;
+type PeerActions = Parameters<typeof createRemoteTeamPeer>[0];
+
+interface WebHostHandover {
+  peer: Peer;
+  actions: PeerActions;
+  releaseLock: () => void;
+}
+
+export class WebHostRequestError extends Error {
+  constructor(
+    message: string,
+    readonly reference: string | null,
+  ) {
+    super(message);
+  }
+}
+
+interface HostEntry {
+  host: RemoteTeamHost;
+  stop: AbortController;
+  releaseLock: (() => void) | null;
+  peer: Peer | null;
+  actions: PeerActions | null;
+  recovery: ReturnType<typeof createRemoteConnectionRecovery> | null;
+  connecting: Promise<unknown> | null;
+  endingSessions: Set<Promise<void>>;
+  incompatible: boolean;
+  capabilities: readonly string[] | null;
+  agents: ClientAgentSummary[];
+  agentsRevision: number;
+}
+
+export type WebHostNotice = Extract<
+  AgentEvent,
+  {
+    type:
+      | "prompt"
+      | "approval"
+      | "browser-takeover-requested"
+      | "turn-completed"
+      | "error"
+      | "agent-input-resolved"
+      | "browser-takeover-resolved";
+  }
+>;
+
+export function isWebHostNotice(event: AgentEvent | TeamRealtimeEvent): event is WebHostNotice {
+  return (
+    agentEventCanNotify(event) || event.type === "agent-input-resolved" || event.type === "browser-takeover-resolved"
+  );
+}
+
+export interface WebHostConnections {
+  setHosts(hosts: readonly RemoteTeamHost[]): void;
+  select(hostId: string | null): Promise<void>;
+  handOver(hostId: string): WebHostHandover | null;
+  holdSelected(hostId: string, held: boolean): void;
+  reportSelected(hostId: string, state: WebHostState): void;
+  refresh(): void;
+  agentNotificationLevels(hostId: string): Promise<AgentNotificationLevelsSnapshot>;
+  notificationSettings(hostId: string): Promise<WebHostNotificationSettings>;
+  setAgentNotificationLevel(
+    hostId: string,
+    input: SetAgentNotificationLevelInput,
+  ): Promise<AgentNotificationLevelsSnapshot>;
+  setOwnServerNotificationLevel(
+    hostId: string,
+    level: ServerNotificationLevel | null,
+  ): Promise<AgentNotificationLevelsSnapshot>;
+  dispose(): Promise<void>;
+}
+
+export interface WebHostNotificationSettings {
+  agents: ClientAgentSummary[];
+  levels: AgentNotificationLevelsSnapshot | null;
+}
+
+export function createWebHostConnections(options: {
+  accountId: string;
+  channel: BroadcastChannel;
+  actions: Pick<RemoteTeamPeerActions, "getBootstrap" | "endSession">;
+  createPeer: typeof createRemoteTeamPeer;
+  peerOptions?: Pick<NonNullable<Parameters<typeof createRemoteTeamPeer>[1]>, "hostProtocols" | "clientProtocol">;
+  acquireHostLock: typeof acquireWebHostLock;
+  pinHostKey(host: RemoteTeamHost): void;
+  onState(hostId: string, state: WebHostState): void;
+  onSessionRevoked(): void;
+  onNotice?(hostId: string, event: WebHostNotice, agents: ClientAgentSummary[]): void;
+}): WebHostConnections {
+  const { channel } = options;
+  const entries = new Map<string, HostEntry>();
+  const states = new Map<string, WebHostState>();
+  const restingUntil = new Map<string, number>();
+  const restTimers = new Set<ReturnType<typeof setTimeout>>();
+  let hosts: readonly RemoteTeamHost[] = [];
+  let selected: { hostId: string; state: WebHostState; held: boolean } | null = null;
+  let disposed = false;
+
+  function post(message: WebHostTabMessage): void {
+    try {
+      channel.postMessage(message);
+    } catch {}
+  }
+  function setState(hostId: string, state: WebHostState, local = true): void {
+    if (states.get(hostId) === state) return;
+    states.set(hostId, state);
+    options.onState(hostId, state);
+    if (local) post({ type: "state", hostId, state });
+  }
+  function holds(hostId: string): boolean {
+    return Boolean(entries.get(hostId)?.releaseLock) || (selected?.hostId === hostId && selected.held);
+  }
+
+  function start(host: RemoteTeamHost): void {
+    const entry: HostEntry = {
+      host,
+      stop: new AbortController(),
+      releaseLock: null,
+      peer: null,
+      actions: null,
+      recovery: null,
+      connecting: null,
+      endingSessions: new Set(),
+      incompatible: false,
+      capabilities: null,
+      agents: [],
+      agentsRevision: 0,
+    };
+    entries.set(host.hostId, entry);
+    options.acquireHostLock(options.accountId, host.hostId, { wait: entry.stop.signal }).then(
+      (release) => {
+        if (entries.get(host.hostId) !== entry) {
+          release();
+          return;
+        }
+        entry.releaseLock = release;
+        connect(entry);
+      },
+      () => undefined,
+    );
+  }
+
+  function connect(entry: HostEntry): void {
+    const { host } = entry;
+    const failed = (message: string | null | undefined, reference: string | undefined) =>
+      new WebHostRequestError(message ?? currentText().t("webClient.error.connectionUnavailable"), reference ?? null);
+    const actions: PeerActions = {
+      current: {
+        getBootstrap: options.actions.getBootstrap,
+        endSession(sessionId) {
+          const ending = options.actions.endSession(sessionId);
+          entry.endingSessions.add(ending);
+          void ending.then(
+            () => entry.endingSessions.delete(ending),
+            () => entry.endingSessions.delete(ending),
+          );
+          return ending;
+        },
+        async onConnectionUpdate(update) {
+          if (entries.get(host.hostId) !== entry) return;
+          if (update.state === "online" && update.resync && !entry.incompatible && options.onNotice)
+            void readAgents(entry);
+          if (update.hostOffline) setState(host.hostId, "offline");
+          if (update.state !== "offline") return;
+          if (update.code === "session_revoked") options.onSessionRevoked();
+          if (update.code === "protocol_error") entry.recovery?.suspend(failed(update.message, update.reference));
+          else entry.recovery?.offline(failed(update.message, update.reference));
+        },
+        async onTeamEvent(_hostId, event) {
+          if (entries.get(host.hostId) !== entry) return;
+          if (event.type === "agents-changed") {
+            entry.agents = event.agents;
+            entry.agentsRevision += 1;
+          } else if (isWebHostNotice(event)) options.onNotice?.(host.hostId, event, entry.agents);
+        },
+      },
+    };
+    const peer = options.createPeer(actions, { ...options.peerOptions, waitForHost: true });
+    entry.actions = actions;
+    entry.peer = peer;
+    const recovery = createRemoteConnectionRecovery(
+      async () => {
+        entry.incompatible = false;
+        entry.capabilities = null;
+        try {
+          options.pinHostKey(host);
+        } catch (error) {
+          recovery.suspend(error);
+          return;
+        }
+        const connecting = peer.execute({
+          id: crypto.randomUUID(),
+          type: "connect",
+          hostId: host.hostId,
+          hostPublicKey: host.devicePublicKey,
+        });
+        entry.connecting = connecting;
+        const connected = await connecting;
+        if (!connected.ok) throw failed(connected.error, connected.reference);
+        const { support, negotiated } = await readWebHostCompatibility(async () => {
+          const response = await peer.execute({
+            id: crypto.randomUUID(),
+            type: "request",
+            method: "GET",
+            path: TEAM_API_ROUTES.compatibility,
+            body: {},
+          });
+          if (!response.ok || (response.status ?? 500) >= 400)
+            throw failed(
+              response.error,
+              response.status === undefined
+                ? response.reference
+                : (referenceFrom("http", response.status) ?? undefined),
+            );
+          return response.body;
+        });
+        if (negotiated.update || support.capabilities.includes(SERVER_SAFE_MODE_CAPABILITY)) {
+          entry.incompatible = true;
+          recovery.suspend();
+        } else {
+          entry.capabilities = support.capabilities;
+          if (options.onNotice) void readAgents(entry);
+        }
+      },
+      () => undefined,
+      (status) => {
+        if (entries.get(host.hostId) !== entry) return;
+        setState(
+          host.hostId,
+          status.phase === "online"
+            ? "online"
+            : status.phase === "connecting"
+              ? "connecting"
+              : status.phase === "suspended"
+                ? entry.incompatible
+                  ? "incompatible"
+                  : "error"
+                : "offline",
+        );
+      },
+    );
+    entry.recovery = recovery;
+    recovery.setActive(true);
+  }
+
+  function hostRequest(hostId: string): { entry: HostEntry; request: TeamApiRequest } {
+    const entry = entries.get(hostId);
+    const peer = entry?.peer;
+    if (!entry?.capabilities || !peer)
+      throw new WebHostRequestError(currentText().t("webClient.error.connectionUnavailable"), null);
+    const request: TeamApiRequest = async (method, path, decode, body = {}) => {
+      const response = await peer.execute({ id: crypto.randomUUID(), type: "request", method, path, body });
+      if (!response.ok || (response.status ?? 500) >= 400)
+        throw new WebHostRequestError(
+          response.error ?? currentText().t("webClient.error.requestIncomplete"),
+          response.status === undefined ? (response.reference ?? null) : referenceFrom("http", response.status),
+        );
+      return decode(response.body);
+    };
+    return { entry, request };
+  }
+
+  async function readAgents(entry: HostEntry): Promise<void> {
+    const revision = entry.agentsRevision;
+    try {
+      const response = await entry.peer?.execute({
+        id: crypto.randomUUID(),
+        type: "request",
+        method: "GET",
+        path: TEAM_API_ROUTES.agents.all,
+        body: {},
+      });
+      if (entries.get(entry.host.hostId) !== entry || !response?.ok || (response.status ?? 500) >= 400) return;
+      if (entry.agentsRevision !== revision) return;
+      entry.agents = guardedListDecoder(isClientAgentSummary, "teammates")(response.body);
+    } catch {}
+  }
+
+  async function stop(hostId: string): Promise<void> {
+    const entry = entries.get(hostId);
+    if (!entry) return;
+    entries.delete(hostId);
+    entry.stop.abort();
+    entry.recovery?.dispose();
+    try {
+      await entry.peer?.dispose();
+      await entry.connecting?.catch(() => undefined);
+      await Promise.allSettled([...entry.endingSessions]);
+    } finally {
+      entry.releaseLock?.();
+    }
+  }
+
+  function sync(): void {
+    if (disposed) return;
+    const listed = new Map(hosts.map((host) => [host.hostId, host]));
+    for (const [hostId, entry] of entries) {
+      const host = listed.get(hostId);
+      if (!host || hostId === selected?.hostId || host.devicePublicKey !== entry.host.devicePublicKey)
+        void stop(hostId);
+    }
+    const now = Date.now();
+    for (const host of hosts) {
+      if (host.hostId === selected?.hostId || entries.has(host.hostId)) continue;
+      if ((restingUntil.get(host.hostId) ?? 0) > now) continue;
+      restingUntil.delete(host.hostId);
+      start(host);
+    }
+  }
+
+  function listen(event: MessageEvent): void {
+    const message = decodeWebHostTabMessage(event.data);
+    if (!message || disposed) return;
+    if (message.type === "query") {
+      for (const [hostId, entry] of entries) {
+        const state = states.get(hostId);
+        if (entry.releaseLock && state) post({ type: "state", hostId, state });
+      }
+      if (selected?.held) post({ type: "state", hostId: selected.hostId, state: selected.state });
+    } else if (message.type === "state") {
+      if (!holds(message.hostId)) setState(message.hostId, message.state, false);
+    } else if ((message.type === "release" || message.type === "take") && entries.has(message.hostId)) {
+      restingUntil.set(message.hostId, Date.now() + RELEASED_HOST_REST_MS);
+      const timer = setTimeout(() => {
+        restTimers.delete(timer);
+        sync();
+      }, RELEASED_HOST_REST_MS);
+      restTimers.add(timer);
+      void stop(message.hostId);
+    }
+  }
+  channel.addEventListener("message", listen);
+  post({ type: "query" });
+
+  return {
+    setHosts(next) {
+      hosts = [...next];
+      for (const hostId of states.keys()) {
+        if (!hosts.some((host) => host.hostId === hostId)) states.delete(hostId);
+      }
+      sync();
+    },
+    async select(hostId) {
+      const previous = selected?.hostId ?? null;
+      selected = hostId === null ? null : { hostId, state: "connecting", held: false };
+      if (hostId !== null) await stop(hostId);
+      if (previous !== hostId) {
+        if (previous) {
+          states.delete(previous);
+          options.onState(previous, "unknown");
+        }
+        sync();
+      }
+    },
+    handOver(hostId) {
+      const entry = entries.get(hostId);
+      const { peer, actions, releaseLock } = entry ?? {};
+      if (!entry || !peer || !actions || !releaseLock || !entry.capabilities || states.get(hostId) !== "online")
+        return null;
+      entries.delete(hostId);
+      entry.stop.abort();
+      entry.recovery?.dispose();
+      return { peer, actions, releaseLock };
+    },
+    holdSelected(hostId, held) {
+      if (selected?.hostId !== hostId || selected.held === held) return;
+      selected.held = held;
+      if (held) post({ type: "state", hostId, state: selected.state });
+    },
+    reportSelected(hostId, state) {
+      if (selected?.hostId !== hostId || selected.state === state) return;
+      selected.state = state;
+      if (selected.held) post({ type: "state", hostId, state });
+    },
+    refresh() {
+      for (const entry of entries.values()) entry.recovery?.refresh();
+    },
+    async agentNotificationLevels(hostId) {
+      const { entry, request } = hostRequest(hostId);
+      if (!entry.capabilities?.includes(AGENT_NOTIFICATION_LEVELS_CAPABILITY)) return { server: null, agents: [] };
+      return runTeamEffect(listAgentNotificationLevels(request).pipe(Effect.mapError((error) => error.cause)));
+    },
+    async notificationSettings(hostId) {
+      const { entry, request } = hostRequest(hostId);
+      if (entry.agents.length === 0) await readAgents(entry);
+      const levels = entry.capabilities?.includes(AGENT_NOTIFICATION_LEVELS_CAPABILITY)
+        ? await runTeamEffect(listAgentNotificationLevels(request).pipe(Effect.mapError((error) => error.cause)))
+        : null;
+      return { agents: entry.agents, levels };
+    },
+    async setAgentNotificationLevel(hostId, input) {
+      const { entry, request } = hostRequest(hostId);
+      if (!entry.capabilities?.includes(AGENT_NOTIFICATION_LEVELS_CAPABILITY))
+        throw new Error(currentText().t("error.team.agentNotificationLevelsUnsupported"));
+      return runTeamEffect(setAgentNotificationLevel(request, input).pipe(Effect.mapError((error) => error.cause)));
+    },
+    async setOwnServerNotificationLevel(hostId, level) {
+      const { entry, request } = hostRequest(hostId);
+      if (!entry.capabilities?.includes(AGENT_NOTIFICATION_LEVELS_CAPABILITY))
+        throw new Error(currentText().t("error.team.agentNotificationLevelsUnsupported"));
+      return runTeamEffect(setOwnServerNotificationLevel(request, level).pipe(Effect.mapError((error) => error.cause)));
+    },
+    async dispose() {
+      disposed = true;
+      channel.removeEventListener("message", listen);
+      for (const timer of restTimers) clearTimeout(timer);
+      restTimers.clear();
+      await Promise.all([...entries.keys()].map(stop));
+    },
+  };
+}

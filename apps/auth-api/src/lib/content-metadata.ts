@@ -1,0 +1,252 @@
+import {
+  articleArtPath,
+  articleMarkdownUrl,
+  articleOgImageUrl,
+  articleUrl,
+  type CollectionArticle,
+  type ContentArtShape,
+  type ContentCollection,
+  collectionFeedUrl,
+  collectionIndexUrl,
+} from "./content-collection";
+import { PLUGIN_PAGE_SOCIAL_IMAGE, pluginUrl, type SitePlugin } from "./plugins";
+import {
+  OPENBOT_LOGO_URL,
+  OPENBOT_SITE_TITLE,
+  OPENBOT_SITE_URL,
+  OPENBOT_SOCIAL_IMAGE_TAGS,
+  OPENBOT_X_HANDLE,
+  pageSocialImageMeta,
+} from "./site-metadata";
+
+const OG_IMAGE_WIDTH = 1200;
+const OG_IMAGE_HEIGHT = 630;
+
+const SEARCH_DESCRIPTION_LENGTH = 155;
+
+function searchDescription(text: string): string {
+  if (text.length <= SEARCH_DESCRIPTION_LENGTH) return text;
+  let kept = "";
+  for (const sentence of text.match(/[^.!?]+[.!?]+(\s|$)/g) ?? []) {
+    const next = `${kept}${sentence}`;
+    if (next.trimEnd().length > SEARCH_DESCRIPTION_LENGTH) break;
+    kept = next;
+  }
+  if (kept.length > 0) return kept.trimEnd();
+  const cut = text.slice(0, SEARCH_DESCRIPTION_LENGTH - 1);
+  return `${cut.slice(0, cut.lastIndexOf(" ")).replace(/(?:[\s,;:]+|\s+(?:and|or|to|of|the|a|an|in))+$/, "")}…`;
+}
+
+function articleOgImageAlt(title: string): string {
+  return `${title} — OpenBot`;
+}
+
+export function collectionIndexHead(collection: ContentCollection, siteUrl: string) {
+  const url = collectionIndexUrl(collection, siteUrl);
+  const feed = collectionFeedUrl(collection, siteUrl);
+  const image = collection.indexSocialImage
+    ? pageSocialImageMeta(collection.indexSocialImage, siteUrl)
+    : OPENBOT_SOCIAL_IMAGE_TAGS;
+
+  return {
+    meta: [
+      { title: collection.indexTitle },
+      { name: "description", content: collection.indexDescription },
+      { "script:ld+json": collectionStructuredData(collection, siteUrl) },
+      { property: "og:type", content: "website" },
+      { property: "og:site_name", content: "OpenBot" },
+      { property: "og:locale", content: "en_US" },
+      { property: "og:url", content: url },
+      { property: "og:title", content: collection.indexTitle },
+      { property: "og:description", content: collection.indexDescription },
+      ...image.openGraph,
+      { name: "twitter:card", content: "summary_large_image" },
+      { name: "twitter:site", content: OPENBOT_X_HANDLE },
+      { name: "twitter:title", content: collection.indexTitle },
+      { name: "twitter:description", content: collection.indexDescription },
+      ...image.twitter,
+    ],
+    links: [
+      { rel: "canonical", href: url },
+      { rel: "alternate", type: "application/rss+xml", title: collection.feedTitle, href: feed },
+      ...featuredArtworkPreload(collection),
+    ],
+  };
+}
+
+function featuredArtworkPreload(collection: ContentCollection) {
+  const featured = collection.articles[0];
+  if (!featured) return [];
+  return [{ rel: "preload", as: "image" as const, href: articleArtPath(collection, featured.slug, "featured") }];
+}
+
+export function articleHead(
+  collection: ContentCollection,
+  article: CollectionArticle,
+  siteUrl: string,
+  artShape: ContentArtShape = "article",
+) {
+  const url = articleUrl(collection, article.slug, siteUrl);
+  const image = articleOgImageUrl(collection, article.slug, siteUrl);
+  const alt = articleOgImageAlt(article.title);
+  const title = `${article.title} — OpenBot`;
+
+  return {
+    meta: [
+      { title },
+      { name: "description", content: article.description },
+      { name: "author", content: article.author },
+      { "script:ld+json": articleStructuredData(collection, article, siteUrl) },
+      { "script:ld+json": articleBreadcrumbData(collection, article, siteUrl) },
+      { property: "og:type", content: "article" },
+      { property: "og:site_name", content: "OpenBot" },
+      { property: "og:locale", content: "en_US" },
+      { property: "og:url", content: url },
+      { property: "og:title", content: title },
+      { property: "og:description", content: article.description },
+      { property: "og:image", content: image },
+      { property: "og:image:type", content: "image/png" },
+      { property: "og:image:width", content: String(OG_IMAGE_WIDTH) },
+      { property: "og:image:height", content: String(OG_IMAGE_HEIGHT) },
+      { property: "og:image:alt", content: alt },
+      { property: "article:published_time", content: `${article.publishedAt}T00:00:00Z` },
+      ...(article.updatedAt ? [{ property: "article:modified_time", content: `${article.updatedAt}T00:00:00Z` }] : []),
+      { property: "article:author", content: article.author },
+      { property: "article:section", content: collection.name },
+      { name: "twitter:card", content: "summary_large_image" },
+      { name: "twitter:site", content: OPENBOT_X_HANDLE },
+      { name: "twitter:title", content: title },
+      { name: "twitter:description", content: article.description },
+      { name: "twitter:image", content: image },
+      { name: "twitter:image:alt", content: alt },
+    ],
+    links: [
+      { rel: "canonical", href: url },
+      {
+        rel: "alternate",
+        type: "application/rss+xml",
+        title: collection.feedTitle,
+        href: collectionFeedUrl(collection, siteUrl),
+      },
+      { rel: "alternate", type: "text/markdown", href: articleMarkdownUrl(collection, article.slug, siteUrl) },
+      { rel: "preload", as: "image" as const, href: articleArtPath(collection, article.slug, artShape) },
+    ],
+  };
+}
+
+function articleStructuredData(collection: ContentCollection, article: CollectionArticle, siteUrl: string) {
+  const url = articleUrl(collection, article.slug, siteUrl);
+  return {
+    "@context": "https://schema.org",
+    "@type": "Article",
+    headline: article.title,
+    description: article.description,
+    image: articleOgImageUrl(collection, article.slug, siteUrl),
+    datePublished: `${article.publishedAt}T00:00:00Z`,
+    dateModified: `${article.updatedAt ?? article.publishedAt}T00:00:00Z`,
+    author: { "@type": "Person", name: article.author },
+    publisher: {
+      "@type": "Organization",
+      name: "OpenBot",
+      url: OPENBOT_SITE_URL,
+      logo: { "@type": "ImageObject", url: OPENBOT_LOGO_URL, width: 512, height: 512 },
+    },
+    mainEntityOfPage: { "@type": "WebPage", "@id": url },
+    isAccessibleForFree: true,
+    url,
+  };
+}
+
+function articleBreadcrumbData(collection: ContentCollection, article: CollectionArticle, siteUrl: string) {
+  const trail = [
+    { name: "OpenBot", url: siteUrl },
+    { name: collection.name, url: collectionIndexUrl(collection, siteUrl) },
+    { name: article.title, url: articleUrl(collection, article.slug, siteUrl) },
+  ];
+  return {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: trail.map((item, index) => ({
+      "@type": "ListItem",
+      position: index + 1,
+      name: item.name,
+      item: item.url,
+    })),
+  };
+}
+
+function collectionStructuredData(collection: ContentCollection, siteUrl: string) {
+  if (collection.id === "compare" || collection.id === "providers") {
+    return {
+      "@context": "https://schema.org",
+      "@type": "ItemList",
+      name: collection.indexTitle,
+      description: collection.indexDescription,
+      url: collectionIndexUrl(collection, siteUrl),
+      itemListElement: collection.articles.map((article, index) => ({
+        "@type": "ListItem",
+        position: index + 1,
+        name: article.title,
+        url: articleUrl(collection, article.slug, siteUrl),
+      })),
+    };
+  }
+  return {
+    "@context": "https://schema.org",
+    "@type": "Blog",
+    name: `${collection.name} — ${OPENBOT_SITE_TITLE}`,
+    description: collection.indexDescription,
+    url: collectionIndexUrl(collection, siteUrl),
+    blogPost: collection.articles.map((article) => ({
+      "@type": "BlogPosting",
+      headline: article.title,
+      description: article.description,
+      datePublished: `${article.publishedAt}T00:00:00Z`,
+      author: { "@type": "Person", name: article.author },
+      url: articleUrl(collection, article.slug, siteUrl),
+    })),
+  };
+}
+
+export function pluginHead(plugin: SitePlugin, siteUrl: string) {
+  const url = pluginUrl(plugin.slug, siteUrl);
+  const title = `${plugin.name} MCP Plugin for AI Agents — OpenBot`;
+  const description = searchDescription(plugin.description);
+  const image = pageSocialImageMeta(PLUGIN_PAGE_SOCIAL_IMAGE, siteUrl);
+
+  return {
+    meta: [
+      { title },
+      { name: "description", content: description },
+      { "script:ld+json": pluginStructuredData(plugin, siteUrl) },
+      { property: "og:type", content: "website" },
+      { property: "og:site_name", content: "OpenBot" },
+      { property: "og:locale", content: "en_US" },
+      { property: "og:url", content: url },
+      { property: "og:title", content: title },
+      { property: "og:description", content: description },
+      ...image.openGraph,
+      { name: "twitter:card", content: "summary_large_image" },
+      { name: "twitter:site", content: OPENBOT_X_HANDLE },
+      { name: "twitter:title", content: title },
+      { name: "twitter:description", content: description },
+      ...image.twitter,
+    ],
+    links: [{ rel: "canonical", href: url }],
+  };
+}
+
+function pluginStructuredData(plugin: SitePlugin, siteUrl: string) {
+  return {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    name: plugin.name,
+    description: plugin.description,
+    applicationCategory: "DeveloperApplication",
+    softwareVersion: plugin.version,
+    author: { "@type": "Organization", name: plugin.creatorName },
+    isPartOf: { "@type": "SoftwareApplication", name: "OpenBot", url: OPENBOT_SITE_URL },
+    mainEntityOfPage: { "@type": "WebPage", "@id": pluginUrl(plugin.slug, siteUrl) },
+    url: pluginUrl(plugin.slug, siteUrl),
+  };
+}

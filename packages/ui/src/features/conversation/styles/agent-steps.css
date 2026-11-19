@@ -1,0 +1,257 @@
+.agent-activity-body {
+  min-height: 0;
+  overflow: clip;
+  overflow-clip-margin: var(--openbot-space-3);
+}
+
+.agent-activity-entry[data-state="exiting"] .agent-activity-body {
+  overflow-clip-margin: 0;
+}
+
+.agent-activity-content .agent-steps-toggle,
+.agent-activity-steps {
+  pointer-events: auto;
+}
+
+.agent-activity-content .agent-steps-toggle {
+  flex: 0 0 auto;
+  color: var(--openbot-text-muted);
+}
+
+.agent-activity-content .agent-steps-toggle[aria-expanded="true"]:not(:hover) {
+  background: transparent;
+}
+
+.agent-activity-steps {
+  padding-block: 0 var(--openbot-space-2);
+  padding-inline: var(--openbot-space-6) 0;
+}
+
+.agent-steps-chevron {
+  width: var(--openbot-icon-xs);
+  height: var(--openbot-icon-xs);
+  flex: 0 0 auto;
+  color: var(--openbot-text-muted);
+  transition: rotate var(--openbot-duration-fast) var(--openbot-ease-out);
+}
+
+.agent-steps-toggle[aria-expanded="true"] .agent-steps-chevron {
+  rotate: 180deg;
+}
+
+.agent-steps-header[aria-expanded="true"] .agent-steps-chevron {
+  rotate: 90deg;
+}
+
+.agent-steps {
+  display: grid;
+  justify-items: start;
+  margin-bottom: var(--openbot-space-1);
+}
+
+.agent-steps .agent-steps-header {
+  display: flex;
+  height: auto;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  gap: var(--openbot-space-2);
+  margin-inline-start: calc(-1 * var(--openbot-space-1-5));
+  border-radius: var(--openbot-radius-sm);
+  padding: var(--openbot-space-0-5) var(--openbot-space-1-5);
+  color: inherit;
+  font-size: var(--openbot-text-md);
+  font-weight: var(--openbot-weight-regular);
+  line-height: var(--openbot-leading-md);
+  text-align: start;
+}
+
+.agent-steps .agent-steps-header[aria-expanded="true"]:not(:hover) {
+  background: transparent;
+  color: inherit;
+}
+
+.agent-step-icon {
+  width: var(--openbot-icon-xs);
+  height: var(--openbot-icon-xs);
+  flex: 0 0 auto;
+  color: var(--openbot-text-muted);
+}
+
+.agent-steps-summary {
+  overflow: hidden;
+  font-weight: var(--openbot-weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-steps-failed {
+  flex: 0 0 auto;
+  color: var(--openbot-danger-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-steps-duration {
+  flex: 0 0 auto;
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-steps-panel {
+  display: grid;
+  width: 100%;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition:
+    grid-template-rows var(--openbot-duration-overlay) var(--openbot-ease-out),
+    opacity var(--openbot-duration-normal) var(--openbot-ease-out);
+}
+
+@starting-style {
+  .agent-steps-panel {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+
+.agent-steps-viewport {
+  max-height: 220px;
+  overflow: hidden;
+  padding-inline-start: var(--openbot-space-3);
+  border-inline-start: 1px solid var(--openbot-border);
+}
+
+.agent-steps-viewport[data-scrolls] {
+  overflow-y: auto;
+}
+
+.agent-steps-panel > .agent-steps-viewport {
+  min-height: 0;
+  margin-inline-start: var(--openbot-space-3);
+}
+
+.agent-steps-list {
+  display: grid;
+  gap: var(--openbot-space-1);
+  margin: 0;
+  padding: var(--openbot-space-1-5) 0;
+  list-style: none;
+  transition: transform var(--openbot-duration-overlay) var(--openbot-ease-out);
+}
+
+.agent-step {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--openbot-space-2);
+  color: var(--openbot-text-secondary);
+  font-size: var(--openbot-text-sm);
+  line-height: var(--openbot-leading-sm);
+  overflow-wrap: anywhere;
+  animation: message-in var(--openbot-duration-normal) var(--openbot-ease-out) both;
+}
+
+.agent-step[data-focused] {
+  border-radius: var(--openbot-radius-xs);
+  animation: agent-step-picked calc(var(--openbot-duration-overlay) * 6) var(--openbot-ease-out) both;
+}
+
+@keyframes agent-step-picked {
+  from {
+    background: var(--openbot-hover);
+  }
+
+  to {
+    background: transparent;
+  }
+}
+
+.agent-step .agent-step-icon {
+  margin-top: 2px;
+}
+
+.agent-step[data-kind="thinking"] .agent-step-text {
+  color: var(--openbot-text-muted);
+  font-style: italic;
+}
+
+.agent-step-text.agent-activity-label {
+  display: inline;
+  -webkit-line-clamp: unset;
+}
+
+.agent-step-memory {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0 var(--openbot-space-2);
+  color: var(--openbot-text-primary);
+}
+
+.agent-step-memory-action,
+.agent-step-memory-previous,
+.agent-step-memory[data-action="forgotten"] s {
+  color: var(--openbot-text-muted);
+}
+
+.agent-step-failed {
+  display: grid;
+  min-width: 0;
+  flex: 1 1 auto;
+  justify-items: start;
+}
+
+.agent-step .agent-step-error-toggle {
+  display: inline-flex;
+  height: auto;
+  align-items: center;
+  gap: var(--openbot-space-1);
+  margin-inline-start: calc(-1 * var(--openbot-space-1));
+  border-radius: var(--openbot-radius-xs);
+  padding: 0 var(--openbot-space-1);
+  color: var(--openbot-text-muted);
+  font-size: inherit;
+  font-weight: var(--openbot-weight-regular);
+  line-height: inherit;
+}
+
+.agent-step-error-toggle[aria-expanded="true"] .agent-steps-chevron {
+  rotate: 90deg;
+}
+
+.agent-step-error {
+  max-height: 160px;
+  justify-self: stretch;
+  margin: var(--openbot-space-1) 0 0;
+  overflow: auto;
+  border: 1px solid var(--openbot-border);
+  border-radius: var(--openbot-radius-xs);
+  background: var(--openbot-bg-control);
+  padding: var(--openbot-space-1-5) var(--openbot-space-2);
+  color: var(--openbot-text-secondary);
+  font-family: var(--openbot-font-mono);
+  font-size: var(--openbot-text-sm);
+  line-height: var(--openbot-leading-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-steps-chevron,
+  .agent-steps-panel,
+  .agent-steps-list {
+    transition: none;
+  }
+
+  .agent-step {
+    animation: none;
+  }
+}
+
+:dir(rtl) svg[class~="lucide-chevron-right"].agent-steps-chevron {
+  transform: scaleX(-1);
+}
+
+:dir(rtl) .agent-steps-header[aria-expanded="true"] svg[class~="lucide-chevron-right"].agent-steps-chevron,
+:dir(rtl) .agent-step-error-toggle[aria-expanded="true"] svg[class~="lucide-chevron-right"].agent-steps-chevron {
+  rotate: -90deg;
+}

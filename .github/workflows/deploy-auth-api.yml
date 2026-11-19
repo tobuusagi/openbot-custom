@@ -1,0 +1,30 @@
+name: Deploy auth-api to Cloudflare
+on:
+  workflow_dispatch:
+  push:
+    branches: [selfhost-v0.74]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: 1.4.2 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - run: bun install --frozen-lockfile
+      - name: Build
+        working-directory: apps/auth-api
+        run: bun run build
+      - name: Deploy
+        working-directory: apps/auth-api
+        run: bunx wrangler deploy
+      - name: D1 migrations
+        working-directory: apps/auth-api
+        run: bunx wrangler d1 migrations apply openbot-auth --remote

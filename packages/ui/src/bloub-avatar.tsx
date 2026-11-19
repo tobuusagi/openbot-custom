@@ -1,0 +1,87 @@
+import { BloubBot } from "@norbert_bodziony/bloub";
+import { bloubAvatarProfile } from "@openbot/brand/bloub-avatar";
+import type { AvatarColor, AvatarHue } from "@openbot/contracts/ipc";
+import { render } from "@solidjs/web";
+import { flush } from "solid-js";
+
+export type AvatarMotion = "hover" | "always" | "idle";
+export {
+  AVATAR_COLOR_CHOICES,
+  AVATAR_EXPRESSIONS,
+  AVATAR_HUE_CHOICES,
+  AVATAR_STYLES,
+  type AvatarColorChoice,
+  type AvatarStyle,
+  avatarDefaultSeed,
+  avatarHeadColor,
+  avatarHueForColor,
+  avatarHueSwatch,
+  avatarSeedForFace,
+  avatarStyleForSeed,
+  type BloubAvatarProfile,
+  bloubAvatarProfile,
+  isAvatarColorChoice,
+  SUPPORTED_AVATAR_SILHOUETTES,
+  type SupportedAvatarSilhouetteId,
+} from "@openbot/brand/bloub-avatar";
+export {
+  type AvatarMood,
+  avatarMoodIsBusy,
+  avatarMoodPresentation,
+  SHAPE_SAFE_STATES,
+  type ShapeSafeStateId,
+} from "@openbot/brand/bloub-avatar-motion";
+
+export function createStaticAvatarSvg(
+  seed: string,
+  hue: AvatarHue | null,
+  color: AvatarColor | null = null,
+): SVGSVGElement {
+  const host = document.createElement("span");
+  const dispose = mountStaticAvatar(host, seed, hue, color);
+  const svg = host.querySelector("svg");
+  if (!svg) {
+    dispose();
+    throw new Error("Bloub did not render an SVG avatar.");
+  }
+  const result = svg.cloneNode(true);
+  if (!(result instanceof SVGSVGElement)) {
+    dispose();
+    throw new Error("Bloub did not clone an SVG avatar.");
+  }
+  dispose();
+  return result;
+}
+
+function mountStaticAvatar(
+  host: HTMLElement,
+  seed: string,
+  hue: AvatarHue | null,
+  color: AvatarColor | null,
+): () => void {
+  const profile = bloubAvatarProfile(seed, hue, color);
+  const dispose = render(
+    () => (
+      <BloubBot
+        size={100}
+        shape={profile.shape}
+        color={profile.color}
+        expression={profile.expression}
+        frozenAt={0}
+        ariaLabel=""
+      />
+    ),
+    host,
+  );
+  flush();
+  const svg = host.querySelector("svg");
+  if (!svg) {
+    dispose();
+    throw new Error("Bloub did not render an SVG avatar.");
+  }
+  svg.removeAttribute("role");
+  svg.removeAttribute("aria-label");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  return dispose;
+}

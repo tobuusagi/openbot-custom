@@ -1,0 +1,1392 @@
+import { type ChildProcess, spawn } from "node:child_process";
+import { createHmac, generateKeyPairSync, randomBytes, randomUUID } from "node:crypto";
+import { createSocket, type Socket } from "node:dgram";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { createServer, type IncomingMessage, type Server } from "node:http";
+import { createServer as createNetServer } from "node:net";
+import { resolve } from "node:path";
+import {
+  GITHUB_DELIVERY_BODY_BYTES_LIMIT,
+  GITHUB_DELIVERY_HEADER,
+  GITHUB_EVENT_HEADER,
+  GITHUB_EVENTS_PATH,
+  GITHUB_ROUTE_AUDIENCE,
+  GITHUB_SIGNATURE_HEADER,
+} from "@openbot/contracts/signal-protocol/github-route";
+import {
+  createIngressQueueKeyPair,
+  importIngressQueuePrivateKey,
+  openQueuedDelivery,
+} from "@openbot/contracts/signal-protocol/ingress-queue";
+import { SLACK_EVENTS_PATH } from "@openbot/contracts/signal-protocol/slack-route";
+import { TELEGRAM_ROUTE_AUDIENCE, TELEGRAM_UPDATES_PATH } from "@openbot/contracts/signal-protocol/telegram-route";
+import {
+  REMOTE_TICKET_AUDIENCE,
+  REMOTE_TICKET_PROTOCOL_VERSION,
+  type RemoteTicketClaims,
+} from "@openbot/contracts/signal-protocol/ticket";
+import {
+  STANDARD_WEBHOOKS_FORMAT,
+  WEBHOOK_DELIVERY_ID_HEADER,
+  WEBHOOK_EVENTS_PATH,
+  WEBHOOK_ROUTE_AUDIENCE,
+  WEBHOOK_SIGNATURE_HEADER,
+  WEBHOOK_TIMESTAMP_HEADER,
+} from "@openbot/contracts/signal-protocol/webhook-route";
+import { createOpenBotLogger } from "@openbot/logging";
+import { exportJWK, type JWTPayload, SignJWT } from "jose";
+
+const ROOT = resolve(import.meta.dirname, "..");
+const OUT = resolve(ROOT, ".openbot-build/signal-security-e2e");
+const WAIT_MS = 10_000;
+
+const logger = createOpenBotLogger("signal-security-e2e");
+
+const BOT_ID = "777000111";
+const BOT_TOKEN_SECRET = `AAH-${randomBytes(18).toString("base64url")}`;
+const BOT_TOKEN = `${BOT_ID}:${BOT_TOKEN_SECRET}`;
+const TELEGRAM_WEBHOOK_SECRET = randomBytes(32).toString("base64url");
+const AUTH_WEBHOOK_SECRET = randomBytes(32).toString("base64url");
+const SLACK_APP_ID = "A0E2ETEST";
+const SLACK_SECRET = randomBytes(32).toString("hex");
+const HOST_ID = "host-e2e";
+const ROUTED_CHAT = "-100";
+const SECOND_CHAT = "-300";
+const WEBHOOK_ROUTE = "route-e2e";
+const STANDARD_HOST_ID = "host-standard-e2e";
+const STANDARD_ROUTE = "route-standard-e2e";
+const GITHUB_WEBHOOK_SECRET = randomBytes(32).toString("hex");
+const GITHUB_HOST_ID = "host-github-e2e";
+const GITHUB_INSTALLATION = 7;
+const GITHUB_REPOSITORY = 77;
+const LINK_HOST_ID = "host-link-e2e";
+const LINK_CHAT = "-500";
+const LINK_CODE = randomBytes(32).toString("base64url");
+const UNAVAILABLE_HOST_ID = "host-unavailable-e2e";
+const INACTIVE_HOST_ID = "host-inactive-e2e";
+const BURST_HOST_PREFIX = "host-burst-e2e-";
+const BURST_PEERS = 100;
+const BURST_CHECK_MILLISECONDS = 300;
+const RESUME_CHECK_CONCURRENCY = 64;
+const burstChecks = { active: 0, maximum: 0 };
+const LIVE_RELAYS = ["127.0.0.1", "localhost"];
+const DOWN_RELAY = "turn-down.invalid";
+const RELAY_HOST_IDS = Array.from({ length: 12 }, (_, index) => `host-relay-e2e-${index}`);
+const METRICS_TOKEN = randomBytes(32).toString("base64url");
+const SIGNAL_ID = "a";
+const ENTRY_HOST = "signal.entry.test";
+const ENTRY_IPV4 = "192.0.2.1";
+const OTHER_IPV4 = "192.0.2.2";
+const entryDns = { address: ENTRY_IPV4 };
+
+interface Check {
+  name: string;
+  passed: boolean;
+  evidence: string;
+}
+const checks: Check[] = [];
+
+function record(name: string, passed: boolean, evidence: string) {
+  checks.push({ name, passed, evidence });
+  if (passed) logger.info(`PASS ${name}`);
+  else logger.error(`FAIL ${name}: ${evidence}`);
+}
+
+async function check(name: string, run: () => Promise<string>) {
+  try {
+    record(name, true, await run());
+  } catch (error) {
+    record(name, false, error instanceof Error ? error.message : String(error));
+  }
+}
+
+function expect(condition: boolean, message: string): asserts condition {
+  if (!condition) throw new Error(message);
+}
+
+function startTurnServer(): Promise<Socket> {
+  const socket = createSocket("udp4");
+  const attribute = (type: number, value: Buffer) => {
+    const header = Buffer.alloc(4);
+    header.writeUInt16BE(type, 0);
+    header.writeUInt16BE(value.length, 2);
+    return Buffer.concat([header, value, Buffer.alloc((4 - (value.length % 4)) % 4)]);
+  };
+  socket.on("message", (request, sender) => {
+    if (request.length < 20 || request.readUInt32BE(4) !== 0x2112a442) return;
+    const method = request.readUInt16BE(0);
+    let credentials = false;
+    for (let offset = 20; offset + 4 <= request.length; ) {
+      if (request.readUInt16BE(offset) === 0x0006) credentials = true;
+      offset += 4 + Math.ceil(request.readUInt16BE(offset + 2) / 4) * 4;
+    }
+    const body =
+      method === 0x0003 && !credentials
+        ? Buffer.concat([
+            attribute(0x0009, Buffer.from([0, 0, 4, 1])),
+            attribute(0x0014, Buffer.from("e2e")),
+            attribute(0x0015, Buffer.from("nonce")),
+          ])
+        : Buffer.alloc(0);
+    const header = Buffer.alloc(20);
+    header.writeUInt16BE(method | (method === 0x0003 && !credentials ? 0x0110 : 0x0100), 0);
+    header.writeUInt16BE(body.length, 2);
+    request.copy(header, 4, 4, 20);
+    socket.send(Buffer.concat([header, body]), sender.port, sender.address);
+  });
+  return new Promise((resolveSocket) => socket.bind(0, "127.0.0.1", () => resolveSocket(socket)));
+}
+
+function startEntryDns(): Promise<Socket> {
+  const socket = createSocket("udp4");
+  socket.on("message", (query, sender) => {
+    if (query.length < 12) return;
+    const labels: string[] = [];
+    let offset = 12;
+    while (offset < query.length && query[offset] !== 0) {
+      const length = query[offset] ?? 0;
+      labels.push(query.subarray(offset + 1, offset + 1 + length).toString());
+      offset += 1 + length;
+    }
+    const questionEnd = offset + 5;
+    if (questionEnd > query.length) return;
+    const matches = labels.join(".").toLowerCase() === ENTRY_HOST && query.readUInt16BE(offset + 1) === 1;
+    const header = Buffer.alloc(12);
+    query.copy(header, 0, 0, 2);
+    header.writeUInt16BE(matches ? 0x8180 : 0x8183, 2);
+    header.writeUInt16BE(1, 4);
+    header.writeUInt16BE(matches ? 1 : 0, 6);
+    const answer = matches
+      ? Buffer.concat([
+          Buffer.from([0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 0, 0, 4]),
+          Buffer.from(entryDns.address.split(".").map(Number)),
+        ])
+      : Buffer.alloc(0);
+    socket.send(Buffer.concat([header, query.subarray(12, questionEnd), answer]), sender.port, sender.address);
+  });
+  return new Promise((resolveSocket) => socket.bind(0, "127.0.0.1", () => resolveSocket(socket)));
+}
+
+function relayHosts(ready: { iceServers?: Array<{ urls: string | string[] }> }): string[] {
+  const urls = (ready.iceServers ?? []).flatMap((server) => [server.urls].flat());
+  return [...new Set(urls.map((url) => url.replace(/^(?:stun|turns?):/u, "").replace(/:[0-9]+(?:\?.*)?$/u, "")))];
+}
+
+function freePort(): Promise<number> {
+  return new Promise((resolvePort, reject) => {
+    const server = createNetServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      server.close(() =>
+        typeof address === "object" && address ? resolvePort(address.port) : reject(new Error("No port.")),
+      );
+    });
+  });
+}
+
+function hmac(secret: string, text: string, encoding: "hex" | "base64url") {
+  return createHmac("sha256", secret).update(text).digest(encoding);
+}
+
+const controlPlaneCalls: Array<{ path: string; signed: boolean }> = [];
+const routeWakes: Array<{ chatId: string; wake: boolean }> = [];
+const SLEEPING_WEBHOOK_ROUTES: Record<string, string> = {
+  "route-sleeping-a1": "host-sleeping-a",
+  "route-sleeping-a2": "host-sleeping-a",
+  "route-sleeping-b": "host-sleeping-b",
+  "route-sleeping-c": "host-sleeping-c",
+};
+const STARTING_WEBHOOK_ROUTES: Record<string, string> = { "route-starting-d": "host-starting-d" };
+let failNextWebhookWake = "route-sleeping-c";
+const webhookWakes: Array<{ routeId: string; wake: boolean }> = [];
+function readBody(request: IncomingMessage): Promise<string> {
+  return new Promise((resolveBody, reject) => {
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("end", () => resolveBody(Buffer.concat(chunks).toString()));
+    request.on("error", reject);
+  });
+}
+function startControlPlane(port: number): Promise<Server> {
+  const server = createServer(async (request, response) => {
+    const body = await readBody(request);
+    const timestamp = String(request.headers["openbot-timestamp"] ?? "");
+    const signature = String(request.headers["openbot-signature"] ?? "");
+    const signed =
+      signature === hmac(AUTH_WEBHOOK_SECRET, `${timestamp}.${body}`, "base64url") &&
+      Math.abs(Date.now() / 1_000 - Number(timestamp)) < 300;
+    const path = request.url ?? "";
+    controlPlaneCalls.push({ path, signed });
+    const payload = body ? JSON.parse(body) : {};
+    const answer = (status: number, value?: unknown) => {
+      response.writeHead(status, { "Content-Type": "application/json" });
+      response.end(value === undefined ? "" : JSON.stringify(value));
+    };
+    if (!signed) return answer(401);
+    if (path === "/v2/remote/resume/validate") {
+      if (payload.hostId === UNAVAILABLE_HOST_ID) return answer(503);
+      if (String(payload.hostId).startsWith(BURST_HOST_PREFIX)) {
+        burstChecks.active += 1;
+        burstChecks.maximum = Math.max(burstChecks.maximum, burstChecks.active);
+        await new Promise((wake) => setTimeout(wake, BURST_CHECK_MILLISECONDS));
+        burstChecks.active -= 1;
+        return answer(200, { valid: true });
+      }
+      return answer(200, { valid: payload.hostId !== INACTIVE_HOST_ID });
+    }
+    if (path === "/v2/remote/telegram-route/validate") return answer(200, { chats: payload.chats });
+    if (path === "/v2/remote/telegram-route/link")
+      return payload.code === LINK_CODE ? answer(200, { hostId: LINK_HOST_ID, linkedAt: Date.now() }) : answer(404);
+    if (path === "/v2/remote/route-wake") {
+      if (payload.route?.platform === "telegram") routeWakes.push({ chatId: payload.route.chatId, wake: payload.wake });
+      if (payload.route?.platform === "webhook") {
+        webhookWakes.push({ routeId: payload.route.routeId, wake: payload.wake });
+        const hostId = SLEEPING_WEBHOOK_ROUTES[payload.route.routeId];
+        if (payload.wake && payload.route.routeId === failNextWebhookWake) {
+          failNextWebhookWake = "";
+          return answer(500);
+        }
+        if (hostId) return answer(200, { hostId, state: payload.wake ? "starting" : "sleeping" });
+        const startingHostId = STARTING_WEBHOOK_ROUTES[payload.route.routeId];
+        if (startingHostId) return answer(200, { hostId: startingHostId, state: "starting" });
+      }
+      return answer(200, { hostId: null, state: "not_hosted" });
+    }
+    if (path === "/v2/remote/webhook-route/validate")
+      return answer(200, { routes: payload.routes.map((route: { id: string }) => route.id) });
+    return answer(404);
+  });
+  return new Promise((resolveServer) => server.listen(port, "127.0.0.1", () => resolveServer(server)));
+}
+
+const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+const { privateKey: foreignKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+const publicJwk = { ...(await exportJWK(publicKey)), kid: "e2e-1", alg: "ES256", use: "sig" };
+
+async function sign(claims: JWTPayload, audience: string, key = privateKey) {
+  const now = Math.floor(Date.now() / 1_000);
+  return new SignJWT(claims)
+    .setProtectedHeader({ alg: "ES256", kid: "e2e-1" })
+    .setAudience(audience)
+    .setIssuedAt(now - 5)
+    .setExpirationTime(now + 300)
+    .sign(key);
+}
+
+function remoteTicket(
+  overrides: Partial<
+    Pick<
+      RemoteTicketClaims,
+      "hostId" | "userId" | "membershipId" | "sessionExpiresAt" | "protocolMinimum" | "protocolMaximum" | "signal"
+    >
+  > = {},
+  key = privateKey,
+) {
+  const now = Math.floor(Date.now() / 1_000);
+  return sign(
+    {
+      jti: randomUUID(),
+      sessionId: `session-${randomUUID()}`,
+      hostId: HOST_ID,
+      userId: "owner-e2e",
+      membershipId: `${HOST_ID}:host`,
+      role: "host",
+      authEpoch: 1,
+      protocolMinimum: REMOTE_TICKET_PROTOCOL_VERSION,
+      protocolMaximum: REMOTE_TICKET_PROTOCOL_VERSION,
+      sessionExpiresAt: now + 86_400,
+      ...overrides,
+    },
+    REMOTE_TICKET_AUDIENCE,
+    key,
+  );
+}
+
+interface Peer {
+  frames: string[];
+  socket: WebSocket;
+  closed: Promise<number>;
+  next(predicate: (frame: string) => boolean, label: string): Promise<string>;
+}
+
+const allFrames: string[] = [];
+function connect(signalUrl: string): Promise<Peer> {
+  return new Promise((resolvePeer, reject) => {
+    const socket = new WebSocket(signalUrl);
+    const frames: string[] = [];
+    const waiters: Array<{ predicate: (frame: string) => boolean; resolve: (frame: string) => void }> = [];
+    const closed = new Promise<number>((resolveClose) => socket.addEventListener("close", (e) => resolveClose(e.code)));
+    socket.addEventListener("message", (event) => {
+      const frame = event.data instanceof ArrayBuffer ? Buffer.from(event.data).toString() : String(event.data);
+      frames.push(frame);
+      allFrames.push(frame);
+      for (const waiter of waiters.splice(0)) {
+        if (waiter.predicate(frame)) waiter.resolve(frame);
+        else waiters.push(waiter);
+      }
+    });
+    socket.addEventListener("error", () => reject(new Error("The WebSocket failed.")));
+    socket.addEventListener("open", () =>
+      resolvePeer({
+        frames,
+        socket,
+        closed,
+        next: (predicate, label) => {
+          const seen = frames.find(predicate);
+          if (seen) return Promise.resolve(seen);
+          return new Promise((resolveFrame, rejectFrame) => {
+            const timer = setTimeout(() => rejectFrame(new Error(`No frame: ${label}.`)), WAIT_MS);
+            waiters.push({
+              predicate,
+              resolve: (frame) => {
+                clearTimeout(timer);
+                resolveFrame(frame);
+              },
+            });
+          });
+        },
+      }),
+    );
+  });
+}
+
+function withDeadline<T>(promise: Promise<T>, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`Timed out: ${label}.`)), WAIT_MS)),
+  ]);
+}
+
+async function waitForReady(url: string, child: ChildProcess) {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null) throw new Error(`Signal exited with code ${child.exitCode}.`);
+    const ready = await fetch(url).then(
+      (response) => response.ok,
+      () => false,
+    );
+    if (ready) return;
+    await new Promise((wake) => setTimeout(wake, 200));
+  }
+  throw new Error("Signal did not become ready.");
+}
+
+const [signalPort, healthPort, controlPlanePort] = await Promise.all([freePort(), freePort(), freePort()]);
+const controlPlane = await startControlPlane(controlPlanePort);
+const turnServer = await startTurnServer();
+const serviceOutput: string[] = [];
+const child = spawn("bun", [resolve(ROOT, "remote/api/src/index.ts")], {
+  cwd: resolve(ROOT, "remote/api"),
+  env: {
+    PATH: process.env.PATH ?? "",
+    HOME: process.env.HOME ?? "",
+    REMOTE_SIGNAL_HOST: "127.0.0.1",
+    REMOTE_SIGNAL_PORT: String(signalPort),
+    REMOTE_HEALTH_PORT: String(healthPort),
+    REMOTE_TLS_DISABLED: "true",
+    REMOTE_TICKET_PUBLIC_KEYS: JSON.stringify({ keys: [publicJwk] }),
+    REMOTE_CONTROL_PLANE_URL: `http://127.0.0.1:${controlPlanePort}`,
+    REMOTE_SESSION_SECRET: randomBytes(32).toString("base64url"),
+    REMOTE_AUTH_WEBHOOK_SECRET: AUTH_WEBHOOK_SECRET,
+    TURN_SHARED_SECRET: randomBytes(32).toString("base64url"),
+    TURN_HOST: LIVE_RELAYS[0],
+    TURN_EXTRA_HOSTS: [...LIVE_RELAYS.slice(1), DOWN_RELAY].join(","),
+    TURN_PORT: String(turnServer.address().port),
+    REMOTE_METRICS_TOKEN: METRICS_TOKEN,
+    SIGNAL_ID,
+    SLACK_SIGNING_SECRET: `${SLACK_APP_ID}:${SLACK_SECRET}`,
+    GITHUB_WEBHOOK_SECRET,
+    TELEGRAM_BOT_TOKENS: BOT_TOKEN,
+    TELEGRAM_WEBHOOK_SECRET,
+    REMOTE_MAX_CONNECTIONS_PER_IP: String(BURST_PEERS * 2),
+    REMOTE_MAX_MESSAGES_PER_MINUTE: String(BURST_PEERS * 20),
+  },
+  stdio: ["ignore", "pipe", "pipe"],
+});
+child.stdout?.on("data", (chunk: Buffer) => serviceOutput.push(chunk.toString()));
+child.stderr?.on("data", (chunk: Buffer) => serviceOutput.push(chunk.toString()));
+
+let entryChild: ChildProcess | null = null;
+let entryDnsServer: Socket | null = null;
+
+const base = `http://127.0.0.1:${signalPort}`;
+const signalUrl = `ws://127.0.0.1:${signalPort}/v1/signal`;
+const telegramSecret = hmac(TELEGRAM_WEBHOOK_SECRET, `telegram-webhook:${BOT_ID}`, "base64url");
+const postUpdate = (body: string, secret = telegramSecret, botId = BOT_ID) =>
+  fetch(`${base}${TELEGRAM_UPDATES_PATH}/${botId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Telegram-Bot-Api-Secret-Token": secret },
+    body,
+  });
+const update = (chatId: string, text: string) =>
+  JSON.stringify({ update_id: 1, message: { chat: { id: Number(chatId) }, text } });
+const postAuthEvent = (body: string, timestamp: string, signature: string) =>
+  fetch(`${base}/internal/auth-events`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "OpenBot-Timestamp": timestamp, "OpenBot-Signature": signature },
+    body,
+  });
+const postSlack = (body: string, timestamp: string, signature: string) =>
+  fetch(`${base}${SLACK_EVENTS_PATH}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Slack-Request-Timestamp": timestamp,
+      "X-Slack-Signature": signature,
+    },
+    body,
+  });
+const slackSignature = (body: string, timestamp: string, secret = SLACK_SECRET) =>
+  `v0=${hmac(secret, `v0:${timestamp}:${body}`, "hex")}`;
+const nowSeconds = () => String(Math.floor(Date.now() / 1_000));
+const postGitHub = (
+  body: string,
+  deliveryId: string,
+  signature = `sha256=${hmac(GITHUB_WEBHOOK_SECRET, body, "hex")}`,
+) =>
+  fetch(`${base}${GITHUB_EVENTS_PATH}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      [GITHUB_EVENT_HEADER]: "issues",
+      [GITHUB_DELIVERY_HEADER]: deliveryId,
+      [GITHUB_SIGNATURE_HEADER]: signature,
+    },
+    body,
+  });
+const githubEvent = (installation: number, repository: number) =>
+  JSON.stringify({ action: "opened", installation: { id: installation }, repository: { id: repository } });
+
+async function githubIngress(hostId: string, routeHostId = hostId): Promise<Peer> {
+  const peer = await connect(signalUrl);
+  peer.socket.send(
+    JSON.stringify({
+      type: "hello",
+      version: 1,
+      peer: "ingress",
+      token: await remoteTicket({ hostId, membershipId: `${hostId}:host` }),
+      githubRoute: await sign(
+        { hid: routeHostId, repositories: [{ id: GITHUB_REPOSITORY, installationId: GITHUB_INSTALLATION }] },
+        GITHUB_ROUTE_AUDIENCE,
+      ),
+    }),
+  );
+  return peer;
+}
+
+function answerGitHub(peer: Peer, status: number) {
+  peer.socket.addEventListener("message", (event) => {
+    const frame = JSON.parse(String(event.data));
+    if (frame.type === "github-delivery")
+      peer.socket.send(
+        JSON.stringify({ type: "github-delivery-result", version: 1, requestId: frame.requestId, status }),
+      );
+  });
+}
+
+async function hello(url: string, token: string): Promise<Peer> {
+  const peer = await connect(url);
+  peer.socket.send(JSON.stringify({ type: "hello", version: 1, peer: "host", token }));
+  return peer;
+}
+
+async function helloReady(url: string, token: string): Promise<{ peer: Peer; ready: { resumeToken?: string } }> {
+  const peer = await hello(url, token);
+  const ready = JSON.parse(await peer.next((frame) => frame.includes('"type":"ready"'), "ready after hello"));
+  return { peer, ready };
+}
+
+async function metricShows(port: number, sample: string): Promise<string> {
+  const deadline = Date.now() + WAIT_MS;
+  let lines: string[] = [];
+  while (Date.now() < deadline) {
+    const page = await fetch(`http://127.0.0.1:${port}/metrics`, {
+      headers: { Authorization: `Bearer ${METRICS_TOKEN}` },
+    }).then((response) => response.text());
+    lines = page.split("\n").filter((line) => line.startsWith("openbot_remote_signal_entry"));
+    if (lines.includes(sample)) return sample;
+    await new Promise((wake) => setTimeout(wake, 200));
+  }
+  throw new Error(`metric: ${lines.join(", ") || "absent"}`);
+}
+
+async function helloFails(name: string, ticket: string) {
+  await check(name, async () => {
+    const peer = await connect(signalUrl);
+    peer.socket.send(JSON.stringify({ type: "hello", version: 1, peer: "host", token: ticket }));
+    const code = await withDeadline(peer.closed, "close after a refused hello");
+    expect(!peer.frames.some((frame) => frame.includes('"type":"ready"')), "Signal sent ready for a refused ticket.");
+    return `closed with ${code}; frames: ${peer.frames.join(" ").slice(0, 200)}`;
+  });
+}
+
+try {
+  await waitForReady(`${base}/health/ready`, child);
+  logger.info(`Signal is ready on port ${signalPort}.`);
+
+  const ingress = await connect(signalUrl);
+  ingress.socket.send(
+    JSON.stringify({
+      type: "hello",
+      version: 1,
+      peer: "ingress",
+      token: await remoteTicket(),
+      telegramRoute: await sign(
+        {
+          hid: HOST_ID,
+          chats: [
+            { id: ROUTED_CHAT, botId: BOT_ID, linkedAt: 1_000 },
+            { id: SECOND_CHAT, botId: BOT_ID, linkedAt: 1_000 },
+          ],
+        },
+        TELEGRAM_ROUTE_AUDIENCE,
+      ),
+      webhookRoute: await sign(
+        { hid: HOST_ID, routes: [{ id: WEBHOOK_ROUTE, linkedAt: 1_000 }] },
+        WEBHOOK_ROUTE_AUDIENCE,
+      ),
+    }),
+  );
+  const ready = await ingress.next((frame) => frame.includes('"type":"ready"'), "ingress ready");
+
+  await check("A valid host ticket with a Telegram route is admitted", async () => {
+    expect(JSON.parse(ready).capabilities?.includes("telegram") === true, `ready: ${ready.slice(0, 200)}`);
+    return "ready names the telegram capability";
+  });
+
+  await check("A Telegram update with a wrong or empty secret header gets 401 and reaches no host", async () => {
+    const before = ingress.frames.length;
+    const wrong = await postUpdate(update(ROUTED_CHAT, "wrong secret"), "x".repeat(43));
+    const empty = await postUpdate(update(ROUTED_CHAT, "empty secret"), "");
+    const otherBot = await postUpdate(update(ROUTED_CHAT, "other bot"), telegramSecret, "999");
+    expect(wrong.status === 401, `wrong secret: ${wrong.status}`);
+    expect(empty.status === 401, `empty secret: ${empty.status}`);
+    expect(otherBot.status === 404, `unknown bot: ${otherBot.status}`);
+    const accepted = await postUpdate(update(ROUTED_CHAT, "right secret"));
+    expect(accepted.status === 200, `right secret: ${accepted.status}`);
+    const delivery = await ingress.next(
+      (frame) => frame.includes('"type":"telegram-delivery"'),
+      "Telegram delivery with the right secret",
+    );
+    const delivered = ingress.frames.slice(before).filter((frame) => frame.includes('"type":"telegram-delivery"'));
+    expect(delivered.length === 1, `deliveries: ${delivered.length}`);
+    const body = Buffer.from(JSON.parse(delivery).bodyBase64, "base64").toString();
+    expect(body.includes("right secret"), "The delivered body is not the signed update.");
+    return "wrong 401, empty 401, unknown bot 404, right secret 200 and one delivery";
+  });
+
+  await check("A host cannot call the Bot API in a chat that is not routed to its socket", async () => {
+    ingress.socket.send(
+      JSON.stringify({
+        type: "telegram-call",
+        version: 1,
+        requestId: "call-unrouted",
+        botId: BOT_ID,
+        method: "sendMessage",
+        params: { chat_id: -999, text: "hi" },
+      }),
+    );
+    const answer = JSON.parse(await ingress.next((frame) => frame.includes('"call-unrouted"'), "telegram-call-result"));
+    expect(answer.ok === false && answer.errorCode === 403, `answer: ${JSON.stringify(answer)}`);
+    return `ok=false errorCode=${answer.errorCode} description=${answer.description}`;
+  });
+
+  await check("A Telegram link that lands while its host connects again reaches the next socket", async () => {
+    const queueKey = await createIngressQueueKeyPair();
+    const staleRoute = await sign({ hid: LINK_HOST_ID, chats: [] }, TELEGRAM_ROUTE_AUDIENCE);
+    const hello = async () =>
+      JSON.stringify({
+        type: "hello",
+        version: 1,
+        peer: "ingress",
+        token: await remoteTicket({ hostId: LINK_HOST_ID, membershipId: `${LINK_HOST_ID}:host` }),
+        telegramRoute: staleRoute,
+        queueKey: queueKey.publicKey,
+      });
+    const first = await connect(signalUrl);
+    first.socket.send(await hello());
+    await first.next((frame) => frame.includes('"type":"ready"'), "first socket of the link host ready");
+    first.socket.close();
+    await withDeadline(first.closed, "first socket of the link host closed");
+    const linked = await postUpdate(update(LINK_CHAT, `/start ${LINK_CODE}`));
+    expect(linked.status === 200, `link update: ${linked.status}`);
+    const second = await connect(signalUrl);
+    second.socket.send(await hello());
+    const kept = JSON.parse(
+      await second.next((frame) => frame.includes('"type":"queued-delivery"'), "kept link on the next socket"),
+    );
+    const opened = await openQueuedDelivery(
+      await importIngressQueuePrivateKey(queueKey.privateKey),
+      LINK_HOST_ID,
+      kept.sealed,
+    );
+    expect(
+      opened.type === "telegram-delivery" && opened.chatId === LINK_CHAT && opened.linked === true,
+      `kept frame: ${opened.type}`,
+    );
+    second.socket.send(JSON.stringify({ type: "queued-delivery-ack", version: 1, id: kept.id }));
+    await postUpdate(update(LINK_CHAT, "after link"));
+    await second.next(
+      (frame) => frame.includes('"type":"telegram-delivery"') && frame.includes(`"chatId":"${LINK_CHAT}"`),
+      "update of the linked chat on the next socket",
+    );
+    second.socket.close();
+    return "the next socket got the kept link with linked=true, and the next update of the chat";
+  });
+
+  await check("Only a Telegram update that can address OpenBot asks to start a hosted server", async () => {
+    const message = <Fields extends object>(fields: Fields) => ({ message_id: 1, from: { id: 5 }, ...fields });
+    const cases: Array<{ chatId: string; wake: boolean; body: object }> = [
+      { chatId: "-600", wake: false, body: { message: message({ chat: { id: -600, type: "group" }, text: "hi" }) } },
+      {
+        chatId: "-601",
+        wake: false,
+        body: { message: message({ chat: { id: -601, type: "supergroup" }, caption: "photo", photo: [] }) },
+      },
+      {
+        chatId: "-602",
+        wake: true,
+        body: {
+          message: message({
+            chat: { id: -602, type: "group" },
+            text: "@bot hi",
+            entities: [{ type: "mention", offset: 0, length: 4 }],
+          }),
+        },
+      },
+      {
+        chatId: "-603",
+        wake: true,
+        body: {
+          message: message({
+            chat: { id: -603, type: "group" },
+            caption: "@bot",
+            caption_entities: [{ type: "mention", offset: 0, length: 4 }],
+          }),
+        },
+      },
+      {
+        chatId: "-604",
+        wake: true,
+        body: {
+          message: message({ chat: { id: -604, type: "group" }, text: "ok", reply_to_message: { message_id: 0 } }),
+        },
+      },
+      {
+        chatId: "-605",
+        wake: true,
+        body: { message: message({ chat: { id: -605, type: "supergroup" }, text: "ok", message_thread_id: 9 }) },
+      },
+      { chatId: "606", wake: true, body: { message: message({ chat: { id: 606, type: "private" }, text: "hi" }) } },
+      {
+        chatId: "-607",
+        wake: true,
+        body: { message: message({ chat: { id: -607, type: "group" }, new_chat_title: "T" }) },
+      },
+      {
+        chatId: "-608",
+        wake: true,
+        body: { callback_query: { id: "q-608", data: "s:x", message: { message_id: 1, chat: { id: -608 } } } },
+      },
+    ];
+    for (const { chatId, body } of cases) {
+      const response = await postUpdate(JSON.stringify({ update_id: 1, ...body }));
+      expect(response.status === 200, `chat ${chatId}: ${response.status}`);
+    }
+    const deadline = Date.now() + 5_000;
+    while (cases.some(({ chatId }) => !routeWakes.some((call) => call.chatId === chatId)) && Date.now() < deadline)
+      await new Promise((next) => setTimeout(next, 20));
+    const wrong = cases.filter(({ chatId, wake }) => routeWakes.find((call) => call.chatId === chatId)?.wake !== wake);
+    expect(
+      wrong.length === 0,
+      `wrong wake: ${wrong.map(({ chatId }) => `${chatId}=${routeWakes.find((call) => call.chatId === chatId)?.wake}`).join(", ")}`,
+    );
+    return "plain text and caption: wake=false; mention, caption mention, reply, thread, direct, rename, button: wake=true";
+  });
+
+  await check("An account event with a bad or stale signature gets 401; a signed one revokes the route", async () => {
+    const body = JSON.stringify({ type: "telegram-route-revoked", botId: BOT_ID, chatId: ROUTED_CHAT, through: 2_000 });
+    const bad = await postAuthEvent(body, nowSeconds(), "x".repeat(43));
+    const staleTime = String(Math.floor(Date.now() / 1_000) - 600);
+    const stale = await postAuthEvent(body, staleTime, hmac(AUTH_WEBHOOK_SECRET, `${staleTime}.${body}`, "base64url"));
+    const otherBody = await postAuthEvent(
+      body.replace(ROUTED_CHAT, SECOND_CHAT),
+      nowSeconds(),
+      hmac(AUTH_WEBHOOK_SECRET, `${nowSeconds()}.${body}`, "base64url"),
+    );
+    expect(bad.status === 401, `bad signature: ${bad.status}`);
+    expect(stale.status === 401, `stale timestamp: ${stale.status}`);
+    expect(otherBody.status === 401, `signature of another body: ${otherBody.status}`);
+    const timestamp = nowSeconds();
+    const signed = await postAuthEvent(body, timestamp, hmac(AUTH_WEBHOOK_SECRET, `${timestamp}.${body}`, "base64url"));
+    expect(signed.status === 204, `signed: ${signed.status}`);
+    const before = ingress.frames.length;
+    await postUpdate(update(ROUTED_CHAT, "after revoke"));
+    await postUpdate(update(SECOND_CHAT, "still routed"));
+    await ingress.next(
+      (frame) =>
+        frame.includes('"type":"telegram-delivery"') &&
+        Buffer.from(JSON.parse(frame).bodyBase64, "base64").toString().includes("still routed"),
+      "delivery of the chat that stays routed",
+    );
+    const revoked = ingress.frames
+      .slice(before)
+      .filter((frame) => frame.includes('"type":"telegram-delivery"') && frame.includes(`"chatId":"${ROUTED_CHAT}"`));
+    expect(revoked.length === 0, "The revoked chat still reached the host.");
+    return "bad 401, stale 401, other body 401, signed 204, revoked chat not delivered";
+  });
+
+  await check("A generic webhook request without well-formed signed headers gets 401", async () => {
+    const body = JSON.stringify({ event: "e2e" });
+    const headers = (signature: string, timestamp = nowSeconds()) => ({
+      "Content-Type": "application/json",
+      [WEBHOOK_TIMESTAMP_HEADER]: timestamp,
+      [WEBHOOK_DELIVERY_ID_HEADER]: "delivery-1",
+      [WEBHOOK_SIGNATURE_HEADER]: signature,
+    });
+    const post = (signature: string, timestamp?: string) =>
+      fetch(`${base}${WEBHOOK_EVENTS_PATH}/${WEBHOOK_ROUTE}`, {
+        method: "POST",
+        headers: headers(signature, timestamp),
+        body,
+      });
+    const missing = await post("");
+    const malformed = await post("sha256=not-hex");
+    const badTime = await post(`sha256=${"a".repeat(64)}`, "soon");
+    expect(missing.status === 401, `missing signature: ${missing.status}`);
+    expect(malformed.status === 401, `malformed signature: ${malformed.status}`);
+    expect(badTime.status === 401, `malformed timestamp: ${badTime.status}`);
+    const unheld = await fetch(`${base}${WEBHOOK_EVENTS_PATH}/route-nobody-holds`, {
+      method: "POST",
+      headers: headers(`sha256=${"a".repeat(64)}`),
+      body,
+    });
+    expect(unheld.status === 503, `route that no host holds: ${unheld.status}`);
+    const delivered = ingress.frames.filter((frame) => frame.includes('"delivery-1"'));
+    expect(delivered.length === 0, "A refused webhook request reached the host.");
+    return "missing 401, malformed 401, bad timestamp 401, unheld route 503, nothing delivered";
+  });
+
+  await check("A generic webhook starts a sleeping hosted server once and still gets 503", async () => {
+    const body = JSON.stringify({ event: "e2e-wake" });
+    const post = (routeId: string) =>
+      fetch(`${base}${WEBHOOK_EVENTS_PATH}/${routeId}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [WEBHOOK_TIMESTAMP_HEADER]: nowSeconds(),
+          [WEBHOOK_DELIVERY_ID_HEADER]: `wake-${routeId}`,
+          [WEBHOOK_SIGNATURE_HEADER]: `sha256=${"b".repeat(64)}`,
+        },
+        body,
+      });
+    const calls = (routeId: string, wake: boolean) =>
+      webhookWakes.filter((call) => call.routeId === routeId && call.wake === wake).length;
+    const waitUntil = async (done: () => boolean, label: string) => {
+      const deadline = Date.now() + 5_000;
+      while (!done() && Date.now() < deadline) await new Promise((next) => setTimeout(next, 20));
+      expect(done(), `no ${label}`);
+    };
+    const statuses: number[] = [];
+    statuses.push((await post("route-sleeping-a1")).status);
+    await waitUntil(() => calls("route-sleeping-a1", true) === 1, "wake of route-sleeping-a1");
+    statuses.push((await post("route-sleeping-a1")).status);
+    statuses.push((await post("route-sleeping-a2")).status);
+    await waitUntil(() => calls("route-sleeping-a2", false) === 1, "lookup of route-sleeping-a2");
+    statuses.push((await post("route-sleeping-b")).status);
+    await waitUntil(() => calls("route-sleeping-b", true) === 1, "wake of route-sleeping-b");
+    statuses.push((await post("route-sleeping-c")).status);
+    await waitUntil(() => calls("route-sleeping-c", true) === 1, "failed wake of route-sleeping-c");
+    statuses.push((await post("route-sleeping-c")).status);
+    await waitUntil(() => calls("route-sleeping-c", true) === 2, "second wake of route-sleeping-c");
+    statuses.push((await post("route-starting-d")).status);
+    await waitUntil(() => calls("route-starting-d", true) === 1, "wake of route-starting-d");
+    statuses.push((await post("route-starting-d")).status);
+    statuses.push((await post("route-nobody-has")).status);
+    await waitUntil(() => calls("route-nobody-has", false) === 1, "lookup of route-nobody-has");
+    expect(
+      statuses.every((status) => status === 503),
+      `statuses: ${statuses.join(", ")}`,
+    );
+    expect(calls("route-sleeping-a1", true) === 1, `route-sleeping-a1 wakes: ${calls("route-sleeping-a1", true)}`);
+    expect(calls("route-sleeping-a2", true) === 0, "route-sleeping-a2 started its host again in the interval");
+    expect(calls("route-starting-d", true) === 1, `route-starting-d wakes: ${calls("route-starting-d", true)}`);
+    expect(calls("route-nobody-has", true) === 0, "a route with no host asked for a wake");
+    const delivered = ingress.frames.filter((frame) => frame.includes('"wake-route-'));
+    expect(delivered.length === 0, "Signal passed a webhook for a sleeping host to another socket.");
+    return `503 x${statuses.length}; host-sleeping-a woke once for two routes; host-sleeping-b woke; host-sleeping-c woke again after a failed start; host-starting-d woke once; unknown route woke nothing`;
+  });
+
+  await check("A Standard Webhooks request reaches only a host that names the format", async () => {
+    const body = JSON.stringify({ type: "composio.trigger.message", metadata: { trigger_slug: "E2E" } });
+    const standard = (route: string, prefix: "webhook" | "svix", id: string, signature = `v1,${"A".repeat(43)}=`) =>
+      fetch(`${base}${WEBHOOK_EVENTS_PATH}/${route}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [`${prefix}-id`]: id,
+          [`${prefix}-timestamp`]: nowSeconds(),
+          [`${prefix}-signature`]: signature,
+        },
+        body,
+      });
+    const older = await standard(WEBHOOK_ROUTE, "webhook", "msg_older");
+    expect(older.status === 401, `older host: ${older.status}`);
+    expect(!ingress.frames.some((frame) => frame.includes('"msg_older"')), "The older host got the request.");
+    const malformed = await standard(WEBHOOK_ROUTE, "webhook", "msg_malformed", "sha256=abc");
+    expect(malformed.status === 401, `malformed v1 signature: ${malformed.status}`);
+
+    const peer = await connect(signalUrl);
+    peer.socket.send(
+      JSON.stringify({
+        type: "hello",
+        version: 1,
+        peer: "ingress",
+        token: await remoteTicket({ hostId: STANDARD_HOST_ID, membershipId: `${STANDARD_HOST_ID}:host` }),
+        webhookRoute: await sign(
+          { hid: STANDARD_HOST_ID, routes: [{ id: STANDARD_ROUTE, linkedAt: 1_000 }] },
+          WEBHOOK_ROUTE_AUDIENCE,
+        ),
+        webhookFormats: [STANDARD_WEBHOOKS_FORMAT],
+      }),
+    );
+    await peer.next((frame) => frame.includes('"type":"ready"'), "Standard Webhooks ingress ready");
+    const statuses: string[] = [];
+    try {
+      for (const prefix of ["webhook", "svix"] as const) {
+        const id = `msg_${prefix}_e2e`;
+        const response = standard(STANDARD_ROUTE, prefix, id);
+        const frame = JSON.parse(
+          await peer.next((value) => value.includes('"type":"webhook-delivery"') && value.includes(`"${id}"`), id),
+        );
+        expect(frame.format === STANDARD_WEBHOOKS_FORMAT, `${prefix} format: ${frame.format}`);
+        expect(frame.signature.startsWith("v1,"), `${prefix} signature was not passed on.`);
+        expect(Buffer.from(frame.bodyBase64, "base64").toString() === body, `${prefix} body changed.`);
+        peer.socket.send(
+          JSON.stringify({ type: "webhook-delivery-result", version: 1, requestId: frame.requestId, status: 202 }),
+        );
+        const answered = await response;
+        expect(answered.status === 202, `${prefix} status: ${answered.status}`);
+        statuses.push(`${prefix}-* ${answered.status}`);
+      }
+    } finally {
+      peer.socket.close();
+    }
+    return `older host 401, malformed 401, ${statuses.join(", ")} with the format`;
+  });
+
+  await check("A GitHub route ticket of another host is refused", async () => {
+    const peer = await githubIngress(HOST_ID, GITHUB_HOST_ID);
+    const code = await withDeadline(peer.closed, "close after a GitHub route of another host");
+    expect(!peer.frames.some((frame) => frame.includes('"type":"ready"')), "Signal sent ready.");
+    return `closed with ${code}`;
+  });
+
+  const githubFirst = await githubIngress(HOST_ID);
+  const githubSecond = await githubIngress(GITHUB_HOST_ID);
+  await githubFirst.next((frame) => frame.includes('"type":"github-ready"'), "first github-ready");
+  await githubSecond.next((frame) => frame.includes('"type":"github-ready"'), "second github-ready");
+  answerGitHub(githubFirst, 202);
+  answerGitHub(githubSecond, 404);
+
+  await check("A GitHub event with a bad, missing or other-secret signature gets 401 and reaches no host", async () => {
+    const body = githubEvent(GITHUB_INSTALLATION, GITHUB_REPOSITORY);
+    const bad = await postGitHub(body, "github-bad", `sha256=${"a".repeat(64)}`);
+    const missing = await postGitHub(body, "github-missing", "");
+    const other = await postGitHub(body, "github-other", `sha256=${hmac("z".repeat(64), body, "hex")}`);
+    expect(bad.status === 401, `bad signature: ${bad.status}`);
+    expect(missing.status === 401, `missing signature: ${missing.status}`);
+    expect(other.status === 401, `other secret: ${other.status}`);
+    const delivered = [...githubFirst.frames, ...githubSecond.frames].filter((frame) => frame.includes("github-bad"));
+    expect(delivered.length === 0, "A refused GitHub event reached a host.");
+    return "bad 401, missing 401, other secret 401, nothing delivered";
+  });
+
+  await check("A signed GitHub event reaches every host of its repository, and only them", async () => {
+    const otherRepository = await postGitHub(githubEvent(GITHUB_INSTALLATION, 78), "github-other-repository");
+    const otherInstallation = await postGitHub(githubEvent(8, GITHUB_REPOSITORY), "github-other-installation");
+    const ping = await postGitHub(JSON.stringify({ zen: "e2e", hook_id: 1 }), "github-ping");
+    expect(otherRepository.status === 204, `repository that no host watches: ${otherRepository.status}`);
+    expect(otherInstallation.status === 204, `same repository ID, other installation: ${otherInstallation.status}`);
+    expect(ping.status === 204, `ping: ${ping.status}`);
+    const routed = await postGitHub(githubEvent(GITHUB_INSTALLATION, GITHUB_REPOSITORY), "github-routed");
+    expect(routed.status === 202, `routed event: ${routed.status}`);
+    for (const peer of [githubFirst, githubSecond]) {
+      const frame = JSON.parse(await peer.next((text) => text.includes('"github-routed"'), "routed GitHub event"));
+      expect(frame.type === "github-delivery" && frame.event === "issues", `frame: ${JSON.stringify(frame)}`);
+      const body = JSON.parse(Buffer.from(frame.bodyBase64, "base64").toString());
+      expect(body.repository.id === GITHUB_REPOSITORY, "The body changed on the way.");
+    }
+    const long = JSON.stringify({
+      ...JSON.parse(githubEvent(GITHUB_INSTALLATION, GITHUB_REPOSITORY)),
+      issue: { body: "文".repeat(65_536) },
+      comment: { body: "字".repeat(65_536) },
+    });
+    const large = await postGitHub(long, "github-large");
+    expect(large.status === 202, `largest event: ${large.status}`);
+    const largeFrame = JSON.parse(
+      await githubFirst.next((text) => text.includes('"github-large"'), "large GitHub event"),
+    );
+    expect(Buffer.from(largeFrame.bodyBase64, "base64").toString() === long, "The large body changed on the way.");
+    const tooLarge = await postGitHub(
+      JSON.stringify({ ...JSON.parse(long), padding: "x".repeat(GITHUB_DELIVERY_BODY_BYTES_LIMIT) }),
+      "github-too-large",
+    );
+    expect(tooLarge.status === 413, `event above the limit: ${tooLarge.status}`);
+    const leaked = [...githubFirst.frames, ...githubSecond.frames].filter(
+      (frame) => frame.includes("github-other-") || frame.includes("github-ping"),
+    );
+    expect(leaked.length === 0, "An event of another repository or installation reached a host.");
+    return "other repository 204, other installation 204, ping 204, routed 202 with the exact body on both hosts, largest event 202, larger 413";
+  });
+
+  await check(
+    "A GitHub event that every connected host refuses gets 204, so GitHub does not count a failure",
+    async () => {
+      githubFirst.socket.close();
+      await withDeadline(githubFirst.closed, "first GitHub socket closed");
+      const refused = await postGitHub(githubEvent(GITHUB_INSTALLATION, GITHUB_REPOSITORY), "github-refused");
+      expect(refused.status === 204, `only a host that answers 404: ${refused.status}`);
+      githubSecond.socket.close();
+      await withDeadline(githubSecond.closed, "second GitHub socket closed");
+      const gone = await postGitHub(githubEvent(GITHUB_INSTALLATION, GITHUB_REPOSITORY), "github-gone");
+      expect(gone.status === 204, `after both hosts closed: ${gone.status}`);
+      return "a host that answers 404 only 204, no host left 204";
+    },
+  );
+
+  await check("A Slack request with a bad, stale or other-app signature gets 401", async () => {
+    const challenge = JSON.stringify({ type: "url_verification", challenge: "e2e-challenge", token: "unused" });
+    const bad = await postSlack(challenge, nowSeconds(), "v0=bad");
+    const staleTime = String(Math.floor(Date.now() / 1_000) - 600);
+    const stale = await postSlack(challenge, staleTime, slackSignature(challenge, staleTime));
+    const otherSecret = await postSlack(
+      challenge,
+      nowSeconds(),
+      slackSignature(challenge, nowSeconds(), "z".repeat(64)),
+    );
+    expect(bad.status === 401, `bad signature: ${bad.status}`);
+    expect(stale.status === 401, `stale timestamp: ${stale.status}`);
+    expect(otherSecret.status === 401, `secret of no app: ${otherSecret.status}`);
+    const event = JSON.stringify({
+      type: "event_callback",
+      api_app_id: "A0OTHERAPP",
+      team_id: "T0E2E",
+      event: { type: "app_mention", channel_type: "channel" },
+    });
+    const time = nowSeconds();
+    const otherApp = await postSlack(event, time, slackSignature(event, time));
+    expect(otherApp.status === 401, `signed for one app, named another: ${otherApp.status}`);
+    const okTime = nowSeconds();
+    const valid = await postSlack(challenge, okTime, slackSignature(challenge, okTime));
+    const answer = await valid.text();
+    expect(valid.status === 200 && answer === "e2e-challenge", `valid: ${valid.status} ${answer}`);
+    return "bad 401, stale 401, unknown secret 401, other app 401, valid challenge 200";
+  });
+
+  await check("A Slack event for a host with no socket gets 200 only when it is chatter", async () => {
+    const post = async (event: Record<string, string>) => {
+      const body = JSON.stringify({ type: "event_callback", api_app_id: SLACK_APP_ID, team_id: "T0E2EOFF", event });
+      const time = nowSeconds();
+      return (await postSlack(body, time, slackSignature(body, time))).status;
+    };
+    const chatter = await post({ type: "message", channel_type: "channel" });
+    const mention = await post({ type: "app_mention", channel_type: "channel" });
+    const direct = await post({ type: "message", channel_type: "im" });
+    const reply = await post({ type: "message", channel_type: "channel", thread_ts: "1.0" });
+    const uninstalled = await post({ type: "app_uninstalled" });
+    expect(chatter === 200, `channel message: ${chatter}`);
+    expect(mention === 503, `mention: ${mention}`);
+    expect(direct === 503, `direct message: ${direct}`);
+    expect(reply === 503, `thread reply: ${reply}`);
+    expect(uninstalled === 503, `app_uninstalled: ${uninstalled}`);
+    return "channel message 200; mention, direct message, thread reply, app_uninstalled 503";
+  });
+
+  await check("A Slack request or an account event with a body that does not end gets 413", async () => {
+    const endless = () => {
+      const chunk = new Uint8Array(16 * 1024).fill(0x20);
+      let sent = 0;
+      return new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (sent >= 1024 * 1024) return new Promise<void>(() => {});
+          sent += chunk.byteLength;
+          controller.enqueue(chunk);
+        },
+      });
+    };
+    const post = (path: string, headers: Record<string, string>) =>
+      withDeadline(fetch(`${base}${path}`, { method: "POST", headers, body: endless() }), path);
+    const event = await post("/internal/auth-events", {
+      "Content-Type": "application/json",
+      "OpenBot-Timestamp": nowSeconds(),
+      "OpenBot-Signature": "v1=bad",
+    });
+    const slack = await post(SLACK_EVENTS_PATH, {
+      "Content-Type": "application/json",
+      "X-Slack-Request-Timestamp": nowSeconds(),
+      "X-Slack-Signature": "v0=bad",
+    });
+    expect(event.status === 413, `account event: ${event.status}`);
+    expect(slack.status === 413, `Slack: ${slack.status}`);
+    return "account event 413, Slack 413";
+  });
+
+  await helloFails("A ticket signed by another key is refused", await remoteTicket({}, foreignKey));
+  await helloFails(
+    "A ticket of an expired remote session is refused",
+    await remoteTicket({ sessionExpiresAt: Math.floor(Date.now() / 1_000) - 60 }),
+  );
+  await helloFails(
+    "A ticket with an unsupported protocol range is refused",
+    await remoteTicket({
+      protocolMinimum: REMOTE_TICKET_PROTOCOL_VERSION + 1,
+      protocolMaximum: REMOTE_TICKET_PROTOCOL_VERSION + 1,
+    }),
+  );
+  await check("A session that the account service cannot check is closed with 1013 and no error", async () => {
+    const peer = await connect(signalUrl);
+    peer.socket.send(
+      JSON.stringify({
+        type: "hello",
+        version: 1,
+        peer: "host",
+        token: await remoteTicket({ hostId: UNAVAILABLE_HOST_ID, membershipId: `${UNAVAILABLE_HOST_ID}:host` }),
+      }),
+    );
+    const code = await withDeadline(peer.closed, "close after an unchecked hello");
+    expect(code === 1013, `close code: ${code}`);
+    expect(peer.frames.length === 0, `frames: ${peer.frames.join(" ").slice(0, 200)}`);
+    return `closed with ${code} and no frame`;
+  });
+  await check("A revoked session that the account service cannot check is still refused", async () => {
+    const body = JSON.stringify({ type: "remote-auth-changed", hostId: UNAVAILABLE_HOST_ID, authEpoch: 2 });
+    const timestamp = nowSeconds();
+    const revoked = await postAuthEvent(
+      body,
+      timestamp,
+      hmac(AUTH_WEBHOOK_SECRET, `${timestamp}.${body}`, "base64url"),
+    );
+    expect(revoked.status === 204, `signed revoke: ${revoked.status}`);
+    const peer = await connect(signalUrl);
+    peer.socket.send(
+      JSON.stringify({
+        type: "hello",
+        version: 1,
+        peer: "host",
+        token: await remoteTicket({ hostId: UNAVAILABLE_HOST_ID, membershipId: `${UNAVAILABLE_HOST_ID}:host` }),
+      }),
+    );
+    const code = await withDeadline(peer.closed, "close after a revoked unchecked hello");
+    expect(code === 1008, `close code: ${code}`);
+    expect(
+      peer.frames.some((frame) => frame.includes('"code":"authentication_required"')),
+      `frames: ${peer.frames.join(" ").slice(0, 200)}`,
+    );
+    return `closed with ${code} and an authentication_required error`;
+  });
+  await check("A session that the account service calls inactive is refused", async () => {
+    const peer = await connect(signalUrl);
+    peer.socket.send(
+      JSON.stringify({
+        type: "hello",
+        version: 1,
+        peer: "host",
+        token: await remoteTicket({ hostId: INACTIVE_HOST_ID, membershipId: `${INACTIVE_HOST_ID}:host` }),
+      }),
+    );
+    const code = await withDeadline(peer.closed, "close after an inactive hello");
+    expect(code === 1008, `close code: ${code}`);
+    expect(
+      peer.frames.some((frame) => frame.includes('"code":"authentication_required"')),
+      `frames: ${peer.frames.join(" ").slice(0, 200)}`,
+    );
+    return `closed with ${code} and an authentication_required error`;
+  });
+  await check(
+    `A burst of hellos sends at most ${RESUME_CHECK_CONCURRENCY} account service checks at a time`,
+    async () => {
+      const tickets = await Promise.all(
+        Array.from({ length: BURST_PEERS }, (_, index) => {
+          const hostId = `${BURST_HOST_PREFIX}${index}`;
+          return remoteTicket({ hostId, membershipId: `${hostId}:host`, userId: `owner-burst-${index}` });
+        }),
+      );
+      const peers = await Promise.all(tickets.map(() => connect(signalUrl)));
+      try {
+        for (const [index, peer] of peers.entries()) {
+          peer.socket.send(JSON.stringify({ type: "hello", version: 1, peer: "host", token: tickets[index] }));
+        }
+        await Promise.all(
+          peers.map((peer) => peer.next((frame) => frame.includes('"type":"ready"'), "ready after a burst hello")),
+        );
+        expect(
+          burstChecks.maximum === RESUME_CHECK_CONCURRENCY,
+          `${burstChecks.maximum} checks at a time, expected ${RESUME_CHECK_CONCURRENCY}`,
+        );
+        return `${BURST_PEERS} peers ready; at most ${burstChecks.maximum} checks at a time`;
+      } finally {
+        for (const peer of peers) peer.socket.close();
+      }
+    },
+  );
+  await check("An ingress hello without a route ticket is refused", async () => {
+    const peer = await connect(signalUrl);
+    peer.socket.send(JSON.stringify({ type: "hello", version: 1, peer: "ingress", token: await remoteTicket() }));
+    const code = await withDeadline(peer.closed, "close after an ingress hello with no route");
+    expect(!peer.frames.some((frame) => frame.includes('"type":"ready"')), "Signal sent ready.");
+    return `closed with ${code}`;
+  });
+
+  const refresh = async (): Promise<string> => {
+    const before = ingress.frames.length;
+    ingress.socket.send(JSON.stringify({ type: "turn-refresh", version: 1, connectionId: null }));
+    const answer = JSON.parse(
+      await ingress.next(
+        (frame) => ingress.frames.indexOf(frame) >= before && frame.includes('"type":"ready"'),
+        "ready after turn-refresh",
+      ),
+    );
+    const usernames: unknown[] = (answer.iceServers ?? []).map((server: { username?: unknown }) => server.username);
+    const username = usernames.find((value) => typeof value === "string");
+    expect(typeof username === "string", `ready: ${JSON.stringify(answer).slice(0, 200)}`);
+    return username;
+  };
+  const firstRefresh = await refresh();
+
+  await check("A socket that sends no hello is closed after the hello deadline", async () => {
+    const peer = await connect(signalUrl);
+    const code = await Promise.race([
+      peer.closed,
+      new Promise<number>((_, reject) => setTimeout(() => reject(new Error("The idle socket stayed open.")), 45_000)),
+    ]);
+    expect(code === 1008, `close code: ${code}`);
+    expect(
+      peer.frames.some((frame) => frame.includes('"code":"authentication_required"')),
+      `frames: ${peer.frames.join(" ").slice(0, 200)}`,
+    );
+    return `closed with ${code} and an authentication_required error`;
+  });
+
+  await check("A second turn-refresh soon after the first gets the same TURN credentials", async () => {
+    const second = await refresh();
+    expect(second !== "" && firstRefresh === second, "Signal made new TURN credentials for each turn-refresh.");
+    return "both answers have the same TURN username";
+  });
+
+  await check("Signal signs each request to the account service", async () => {
+    expect(controlPlaneCalls.length > 0, "Signal made no account service request.");
+    const unsigned = controlPlaneCalls.filter((call) => !call.signed);
+    expect(unsigned.length === 0, `unsigned: ${unsigned.map((call) => call.path).join(", ")}`);
+    return `${controlPlaneCalls.length} requests, all signed: ${[...new Set(controlPlaneCalls.map((call) => call.path))].join(", ")}`;
+  });
+
+  await check("Signal marks each TURN relay by its probe", async () => {
+    const expected = [...LIVE_RELAYS.map((host) => `{host="${host}"} 1`), `{host="${DOWN_RELAY}"} 0`].map(
+      (sample) => `openbot_remote_turn_relay_available${sample}`,
+    );
+    const deadline = Date.now() + WAIT_MS;
+    let samples: string[] = [];
+    while (Date.now() < deadline) {
+      const page = await fetch(`http://127.0.0.1:${healthPort}/metrics`, {
+        headers: { Authorization: `Bearer ${METRICS_TOKEN}` },
+      }).then((response) => response.text());
+      samples = page.split("\n").filter((line) => line.startsWith("openbot_remote_turn_relay_available{"));
+      if (expected.every((sample) => samples.includes(sample))) return samples.join(", ");
+      await new Promise((wake) => setTimeout(wake, 200));
+    }
+    throw new Error(`samples: ${samples.join(", ")}`);
+  });
+  const relayOf = async (hostId: string) => {
+    const peer = await connect(signalUrl);
+    peer.socket.send(
+      JSON.stringify({
+        type: "hello",
+        version: 1,
+        peer: "host",
+        token: await remoteTicket({ hostId, membershipId: `${hostId}:host` }),
+      }),
+    );
+    const ready = JSON.parse(await peer.next((frame) => frame.includes('"type":"ready"'), `ready of ${hostId}`));
+    peer.socket.close();
+    return relayHosts(ready);
+  };
+  await check("Each host gets one TURN relay, and only relays that allocate", async () => {
+    const picks = new Map<string, string[]>();
+    for (const hostId of RELAY_HOST_IDS) picks.set(hostId, await relayOf(hostId));
+    const evidence = [...picks].map(([hostId, hosts]) => `${hostId}=${hosts.join("+")}`).join(", ");
+    expect(
+      [...picks.values()].every((hosts) => hosts.length === 1 && LIVE_RELAYS.includes(hosts[0] ?? "")),
+      evidence,
+    );
+    const used = new Set([...picks.values()].flat());
+    expect(
+      LIVE_RELAYS.every((host) => used.has(host)),
+      `not every live relay was used: ${evidence}`,
+    );
+    return evidence;
+  });
+  await check("Two sessions of one host get the same TURN relay", async () => {
+    const [first, second] = [await relayOf(HOST_ID), await relayOf(HOST_ID)];
+    expect(first.join() === second.join(), `first ${first.join()}, second ${second.join()}`);
+    return `both ${first.join()}`;
+  });
+  await check("/health/turn reports the relay of TURN_HOST", async () => {
+    const response = await fetch(`${base}/health/turn`);
+    const body = await response.text();
+    expect(response.status === 200 && body.includes('"status":"ready"'), `${response.status} ${body}`);
+    return `${response.status} ${body}`;
+  });
+
+  await check("A ticket whose signal claim names another Signal is refused", async () => {
+    const peer = await hello(signalUrl, await remoteTicket({ signal: "b" }));
+    const code = await withDeadline(peer.closed, "close after a ticket of another Signal");
+    expect(code === 1008, `close code: ${code}`);
+    expect(
+      peer.frames.some((frame) => frame.includes('"code":"authentication_required"')),
+      `frames: ${peer.frames.join(" ").slice(0, 200)}`,
+    );
+    expect(!peer.frames.some((frame) => frame.includes('"type":"ready"')), "Signal sent ready.");
+    return `closed with ${code} and an authentication_required error`;
+  });
+  await check("A ticket with the signal claim of this Signal works, and so does its resume token", async () => {
+    const first = await helloReady(signalUrl, await remoteTicket({ signal: SIGNAL_ID }));
+    const resumeToken = first.ready.resumeToken;
+    expect(typeof resumeToken === "string", "The ready frame has no resume token.");
+    first.peer.socket.close();
+    const resumed = await helloReady(signalUrl, resumeToken);
+    resumed.peer.socket.close();
+    return "ready after the ticket and after its resume token";
+  });
+  await check("A ticket without a signal claim works on the entry", async () => {
+    const { peer } = await helloReady(signalUrl, await remoteTicket());
+    peer.socket.close();
+    return "ready";
+  });
+
+  const dnsServer = await startEntryDns();
+  entryDnsServer = dnsServer;
+  const [entrySignalPort, entryHealthPort] = await Promise.all([freePort(), freePort()]);
+  const secondSignal = spawn("bun", [resolve(ROOT, "remote/api/src/index.ts")], {
+    cwd: resolve(ROOT, "remote/api"),
+    env: {
+      PATH: process.env.PATH ?? "",
+      HOME: process.env.HOME ?? "",
+      REMOTE_SIGNAL_HOST: "127.0.0.1",
+      REMOTE_SIGNAL_PORT: String(entrySignalPort),
+      REMOTE_HEALTH_PORT: String(entryHealthPort),
+      REMOTE_TLS_DISABLED: "true",
+      REMOTE_TICKET_PUBLIC_KEYS: JSON.stringify({ keys: [publicJwk] }),
+      REMOTE_CONTROL_PLANE_URL: `http://127.0.0.1:${controlPlanePort}`,
+      REMOTE_SESSION_SECRET: randomBytes(32).toString("base64url"),
+      REMOTE_AUTH_WEBHOOK_SECRET: AUTH_WEBHOOK_SECRET,
+      TURN_SHARED_SECRET: randomBytes(32).toString("base64url"),
+      TURN_HOST: LIVE_RELAYS[0],
+      TURN_PORT: String(turnServer.address().port),
+      REMOTE_METRICS_TOKEN: METRICS_TOKEN,
+      SIGNAL_ID,
+      SIGNAL_ENTRY_HOST: ENTRY_HOST,
+      SIGNAL_PUBLIC_IPV4: ENTRY_IPV4,
+      SIGNAL_ENTRY_TEST_DNS_SERVER: `127.0.0.1:${dnsServer.address().port}`,
+      SIGNAL_ENTRY_TEST_CHECK_SECONDS: "1",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  entryChild = secondSignal;
+  secondSignal.stdout?.on("data", (chunk: Buffer) => serviceOutput.push(chunk.toString()));
+  secondSignal.stderr?.on("data", (chunk: Buffer) => serviceOutput.push(chunk.toString()));
+  const entryBase = `http://127.0.0.1:${entrySignalPort}`;
+  const entrySignalUrl = `ws://127.0.0.1:${entrySignalPort}/v1/signal`;
+  const entryTicket = (hostId: string, signal?: string) =>
+    remoteTicket({ hostId, membershipId: `${hostId}:host`, ...(signal ? { signal } : {}) });
+  const postEntryWebhook = () =>
+    fetch(`${entryBase}${WEBHOOK_EVENTS_PATH}/${WEBHOOK_ROUTE}`, { method: "POST", body: "{}" });
+  await waitForReady(`${entryBase}/health/ready`, secondSignal);
+
+  await check("A Signal whose address the entry name has is the entry", async () => {
+    const sample = await metricShows(entryHealthPort, `openbot_remote_signal_entry{signal="${SIGNAL_ID}"} 1`);
+    const webhook = await postEntryWebhook();
+    expect(webhook.status === 415, `webhook status: ${webhook.status}`);
+    return `${sample}; webhook ${webhook.status}`;
+  });
+  const entryPeer = (await helloReady(entrySignalUrl, await entryTicket("host-entry-e2e"))).peer;
+  const homedPeer = (await helloReady(entrySignalUrl, await entryTicket("host-homed-e2e", SIGNAL_ID))).peer;
+  entryDns.address = OTHER_IPV4;
+  await check("When the entry name names another machine, the Signal stops being the entry", async () => {
+    const sample = await metricShows(entryHealthPort, `openbot_remote_signal_entry{signal="${SIGNAL_ID}"} 0`);
+    return sample;
+  });
+  await check("The Signal closes the sockets without a signal claim with 1013 and no error", async () => {
+    const code = await withDeadline(entryPeer.closed, "close of a socket without a signal claim");
+    expect(code === 1013, `close code: ${code}`);
+    expect(
+      !entryPeer.frames.some((frame) => frame.includes('"type":"error"')),
+      `frames: ${entryPeer.frames.join(" ").slice(0, 200)}`,
+    );
+    expect(homedPeer.socket.readyState === WebSocket.OPEN, "The socket with the signal claim was closed.");
+    return `closed with ${code}; the socket with the signal claim stays open`;
+  });
+  await check("A ticket without a signal claim gets 1013 and no frame when the Signal is not the entry", async () => {
+    const peer = await hello(entrySignalUrl, await entryTicket("host-entry-e2e"));
+    const code = await withDeadline(peer.closed, "close after a hello without a signal claim");
+    expect(code === 1013, `close code: ${code}`);
+    expect(peer.frames.length === 0, `frames: ${peer.frames.join(" ").slice(0, 200)}`);
+    return `closed with ${code} and no frame`;
+  });
+  await check("A ticket with the signal claim of the Signal works when it is not the entry", async () => {
+    const { peer } = await helloReady(entrySignalUrl, await entryTicket("host-homed-e2e", SIGNAL_ID));
+    peer.socket.close();
+    return "ready";
+  });
+  await check("A Signal that is not the entry answers webhooks with 503", async () => {
+    const webhook = await postEntryWebhook();
+    expect(webhook.status === 503, `webhook status: ${webhook.status}`);
+    const health = await fetch(`${entryBase}/health/ready`);
+    expect(health.status === 200, `health status: ${health.status}`);
+    return `webhook ${webhook.status}; health ${health.status}`;
+  });
+  homedPeer.socket.close();
+  entryDns.address = ENTRY_IPV4;
+  await check("When the entry name names the Signal again, it is the entry again", async () => {
+    const sample = await metricShows(entryHealthPort, `openbot_remote_signal_entry{signal="${SIGNAL_ID}"} 1`);
+    const { peer } = await helloReady(entrySignalUrl, await entryTicket("host-entry-e2e"));
+    peer.socket.close();
+    return `${sample}; a ticket without a signal claim is ready`;
+  });
+
+  await check("No frame and no log line holds the Telegram bot token", async () => {
+    const framesWithToken = allFrames.filter((frame) => frame.includes(BOT_TOKEN_SECRET));
+    const logsWithToken = serviceOutput.filter((line) => line.includes(BOT_TOKEN_SECRET));
+    expect(allFrames.length > 0, "No frame was captured.");
+    expect(framesWithToken.length === 0, `${framesWithToken.length} frames hold the token.`);
+    expect(logsWithToken.length === 0, `${logsWithToken.length} log chunks hold the token.`);
+    return `${allFrames.length} frames and ${serviceOutput.length} log chunks checked`;
+  });
+} catch (error) {
+  record("Signal starts and admits a host", false, error instanceof Error ? error.message : String(error));
+} finally {
+  child.kill("SIGTERM");
+  entryChild?.kill("SIGTERM");
+  entryDnsServer?.close();
+  controlPlane.close();
+  turnServer.close();
+}
+
+mkdirSync(OUT, { recursive: true });
+const failed = checks.filter((item) => !item.passed);
+const report = {
+  service: "remote/api",
+  checks,
+  passed: checks.length - failed.length,
+  failed: failed.length,
+  skipped: [
+    "Upload token works once: the first upload calls the real Bot API, whose origin Signal does not take from its configuration.",
+    "File token download: it downloads from the real Bot API.",
+    "Webhook acknowledgement only from the receiving socket: it needs a full delivery and commit exchange.",
+    "Discord routes: they need the real Discord Gateway.",
+  ],
+};
+writeFileSync(resolve(OUT, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
+logger.info(`Wrote .openbot-build/signal-security-e2e/report.json: ${report.passed} passed, ${report.failed} failed.`);
+process.exit(failed.length === 0 ? 0 : 1);

@@ -1,0 +1,207 @@
+import type { StorageCategory, StorageUsage, StoredFileRow } from "@openbot/contracts/ipc";
+import type { MobileTextKey } from "@openbot/i18n/mobile";
+import { Typography } from "heroui-native";
+import { useThemeColor } from "heroui-native/hooks";
+import Trash2 from "lucide-react-native/icons/trash";
+import { useState } from "react";
+import { Alert, Pressable } from "react-native";
+import { showFailureAlert } from "@/features/analytics/failure-reports";
+import { AttachmentThumbnail, showsAsImage, useAttachmentFile } from "@/features/chat/components/attachment-preview";
+import { useAttachmentPreview } from "@/features/chat/components/use-attachment-preview";
+import { SettingsNote, SettingsRow, SettingsSection } from "@/features/settings/components/settings-content";
+import { type MobileAgent, useMobileWorkspaceActions } from "@/features/workspace/context/mobile-workspace-context";
+import { haptics } from "@/shared/lib/haptics";
+import { currentText, useText } from "@/shared/lib/text";
+
+const CATEGORIES: { category: StorageCategory; label: MobileTextKey }[] = [
+  { category: "workspaces", label: "mobile.agent.files.category.workspaces" },
+  { category: "attachments", label: "mobile.agent.files.category.attachments" },
+  { category: "generated", label: "mobile.agent.files.category.generated" },
+  { category: "chats", label: "mobile.agent.files.category.chats" },
+];
+const CHAT_ROWS = 4;
+
+export function AgentFiles({
+  agent,
+  usage,
+  canDelete,
+  onChanged,
+}: {
+  agent: MobileAgent;
+  usage: StorageUsage;
+  canDelete: boolean;
+  onChanged: () => void;
+}) {
+  const bytes = (category: StorageCategory) => usage.breakdown.find((entry) => entry.category === category)?.bytes ?? 0;
+  const total = usage.breakdown.reduce((sum, entry) => sum + entry.bytes, 0);
+  const { t, format } = useText();
+  const chats = [...usage.conversations].sort((left, right) => right.bytes - left.bytes).slice(0, CHAT_ROWS);
+  return (
+    <>
+      <SettingsSection title={t("mobile.agent.files.total", { name: agent.name, size: format.fileSize(total) })}>
+        {CATEGORIES.map(({ category, label }) => (
+          <SettingsRow key={category} trailing={<Size bytes={bytes(category)} />}>
+            <Typography.Paragraph>{t(label)}</Typography.Paragraph>
+          </SettingsRow>
+        ))}
+      </SettingsSection>
+      {chats.length ? (
+        <SettingsSection title={t("mobile.agent.files.chatsBySize")}>
+          {chats.map((chat) => (
+            <SettingsRow
+              key={chat.id}
+              supportingText={`${t("mobile.agent.files.fileCount", { count: chat.fileCount })} · ${t("mobile.agent.files.messageCount", { count: chat.messageCount })}`}
+              trailing={<Size bytes={chat.bytes} />}
+            >
+              <Typography.Paragraph numberOfLines={1}>{chat.title}</Typography.Paragraph>
+            </SettingsRow>
+          ))}
+        </SettingsSection>
+      ) : null}
+      <SettingsSection title={t("mobile.agent.files.files")}>
+        {usage.files.map((file) => (
+          <StoredFile
+            key={file.id}
+            serverId={agent.serverId}
+            file={file}
+            canDelete={canDelete && file.deletable}
+            onChanged={onChanged}
+          />
+        ))}
+        {!usage.files.length ? (
+          <SettingsRow>
+            <Typography.Paragraph className="text-grouped-secondary">
+              {t("mobile.agent.files.empty", { name: agent.name })}
+            </Typography.Paragraph>
+          </SettingsRow>
+        ) : null}
+      </SettingsSection>
+      {usage.truncated ? <SettingsNote>{t("mobile.agent.files.truncated")}</SettingsNote> : null}
+    </>
+  );
+}
+
+export function Size({ bytes }: { bytes: number }) {
+  const { format } = useText();
+  return <Typography className="text-grouped-secondary">{format.fileSize(bytes)}</Typography>;
+}
+
+export function RowDeleteButton({
+  label,
+  deleting,
+  onPress,
+}: {
+  label: string;
+  deleting: boolean;
+  onPress: () => void;
+}) {
+  const danger = useThemeColor("danger");
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled: deleting }}
+      disabled={deleting}
+      hitSlop={8}
+      onPress={onPress}
+    >
+      <Trash2 size={18} color={String(danger)} />
+    </Pressable>
+  );
+}
+
+export function StoredFile({
+  serverId,
+  file,
+  canDelete,
+  onChanged,
+}: {
+  serverId: string;
+  file: StoredFileRow;
+  canDelete: boolean;
+  onChanged: () => void;
+}) {
+  const { t, format } = useText();
+  const { deleting, confirmDelete } = useStoredFileDelete(serverId, file, onChanged);
+  const image = showsAsImage(file);
+  const missing = file.status === "missing";
+  const attachment = useAttachmentFile(serverId, file, image && !missing);
+  const preview = useAttachmentPreview(serverId, file);
+  const details = [
+    format.fileSize(file.size),
+    file.source === "generated" ? t("mobile.agent.files.fromAgent") : null,
+    file.conversation?.title ?? null,
+    missing ? t("mobile.agent.files.missing") : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
+    <SettingsRow
+      disclosure={false}
+      disabled={deleting}
+      leading={<AttachmentThumbnail name={file.name} uri={image ? attachment.uri : null} />}
+      supportingText={attachment.busy || preview.opening ? t("mobile.agent.files.downloading") : details}
+      trailing={
+        canDelete ? (
+          <RowDeleteButton
+            label={t(missing ? "mobile.agent.files.removeNamed" : "mobile.agent.files.deleteNamed", {
+              name: file.name,
+            })}
+            deleting={deleting}
+            onPress={confirmDelete}
+          />
+        ) : undefined
+      }
+      onPress={missing ? undefined : preview.kind ? preview.open : attachment.share}
+    >
+      <Typography numberOfLines={1}>{file.name}</Typography>
+    </SettingsRow>
+  );
+}
+
+export function useStoredFileDelete(serverId: string, file: StoredFileRow, onChanged: () => void) {
+  const { t } = useText();
+  const { deleteStoredFile } = useMobileWorkspaceActions();
+  const [deleting, setDeleting] = useState(false);
+  const missing = file.status === "missing";
+
+  function confirmDelete() {
+    Alert.alert(
+      t(missing ? "mobile.agent.files.removeTitle" : "mobile.agent.files.deleteTitle"),
+      missing
+        ? t("mobile.agent.files.removeBody", { name: file.name })
+        : t("mobile.agent.files.deleteBody", { name: file.name }),
+      [
+        { text: t("mobile.agent.files.keep"), style: "cancel" },
+        {
+          text: t(missing ? "common.remove" : "common.delete"),
+          style: "destructive",
+          onPress: () => {
+            setDeleting(true);
+            deleteStoredFile(file.id, serverId)
+              .then(() => {
+                void haptics.notification("success");
+              })
+              .catch((cause: unknown) => {
+                void haptics.notification("error");
+                const text = currentText();
+                showFailureAlert(
+                  cause,
+                  "agent",
+                  text.t("mobile.agent.files.deleteFailed"),
+                  text.errorMessage(cause, text.t("mobile.agent.files.deleteFailedBody")),
+                );
+              })
+              .finally(() => {
+                setDeleting(false);
+                onChanged();
+              });
+          },
+        },
+      ],
+    );
+  }
+
+  return { deleting, confirmDelete };
+}

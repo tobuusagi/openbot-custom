@@ -1,0 +1,120 @@
+:root[data-openbot-color-scheme="light"] {
+  color-scheme: light;
+
+  --openbot-bg-canvas: #f5f5f6;
+  --openbot-bg-canvas-clear: rgba(245, 245, 246, 0);
+  --openbot-bg-frame: #e8e8eb;
+  --openbot-bg-sidebar: #f5f5f6;
+  --openbot-bg-native-sidebar: #f5f5f6;
+  --openbot-bg-sheet: #ffffff;
+  --openbot-bg-sheet-inset: #f0f0f2;
+  --openbot-bg-grouped: #ffffff;
+  --openbot-text-grouped-secondary: #6b6b70;
+  --openbot-border-grouped: #e3e3e6;
+  --openbot-marketplace-detail-bg: #ececee;
+  --openbot-bg-surface: #ffffff;
+  --openbot-bg-surface-raised: #fcfcfc;
+  --openbot-bg-control: #ffffff;
+  --openbot-bg-control-hover: #f0f0f2;
+  --openbot-bg-control-active: #e8e8eb;
+  --openbot-tabs-bar-bg: #ececee;
+  --openbot-tabs-pill-bg: #ffffff;
+  --openbot-bg-overlay: rgba(245, 245, 246, 0.92);
+  --openbot-dialog-overlay: rgba(20, 20, 20, 0.12);
+  --openbot-dialog-ring: rgba(20, 20, 20, 0.1);
+  --openbot-bg-glass: rgba(255, 255, 255, 0.76);
+  --openbot-glass-surface: rgba(20, 20, 20, 0.04);
+  --openbot-glass-surface-hover: rgba(20, 20, 20, 0.07);
+  --openbot-glass-border: rgba(20, 20, 20, 0.12);
+  --openbot-glass-highlight: rgba(255, 255, 255, 0.6);
+  --openbot-glass-shadow: transparent;
+  --openbot-scroll-edge-overlay: rgba(245, 245, 246, 0.72);
+
+  --openbot-border: rgba(20, 20, 20, 0.07);
+  --openbot-border-strong: rgba(20, 20, 20, 0.1);
+  --openbot-image-outline: rgba(20, 20, 20, 0.1);
+  --openbot-hover: rgba(20, 20, 20, 0.05);
+
+  --openbot-text-primary: #141414;
+  --openbot-text-secondary: #3a3a3c;
+  --openbot-text-muted: #6b6b70;
+  --openbot-text-dim: #8e8e93;
+  --openbot-text-placeholder: #5c5c61;
+  --openbot-text-readable: rgba(20, 20, 20, 0.6);
+  --openbot-settings-text-muted: rgba(20, 20, 20, 0.6);
+
+  --openbot-surface-light: #1c1c1e;
+  --openbot-text-on-light: #ffffff;
+  --openbot-text-muted-on-light: rgba(255, 255, 255, 0.64);
+  --openbot-text-dim-on-light: rgba(255, 255, 255, 0.4);
+  --openbot-border-on-light: rgba(255, 255, 255, 0.16);
+
+  --openbot-accent-hover: #006ad4;
+  --openbot-accent-text: #0064c8;
+  --openbot-accent-soft: rgba(0, 124, 247, 0.12);
+  --openbot-accent-strong: rgba(0, 124, 247, 0.26);
+
+  --openbot-chart-series-codex: #8e4fc0;
+  --openbot-chart-series-grok: #16849b;
+  --openbot-chart-storage-workspaces: #2f74c9;
+  --openbot-chart-storage-files: #c64d1d;
+  --openbot-chart-storage-chats: #148a61;
+  --openbot-chart-storage-downloads: #6f62d6;
+  --openbot-chart-storage-runtimes: #a86f00;
+
+  --openbot-success: #1fa85a;
+  --openbot-success-text: #187a41;
+  --openbot-success-soft: rgba(31, 168, 90, 0.12);
+  --openbot-success-wash: rgba(31, 168, 90, 0.06);
+  --openbot-warning: #f08a00;
+  --openbot-warning-text: #9c5200;
+  --openbot-warning-soft: rgba(240, 138, 0, 0.14);
+  --openbot-approval-badge-soft: rgba(240, 138, 0, 0.18);
+  --openbot-danger: #e8222d;
+  --openbot-danger-hover: #f04a53;
+  --openbot-danger-text: #c0141d;
+  --openbot-danger-soft: rgba(232, 34, 45, 0.12);
+  --openbot-danger-soft-hover: rgba(232, 34, 45, 0.2);
+  --openbot-danger-focus: rgba(232, 34, 45, 0.36);
+  --openbot-danger-border: rgba(232, 34, 45, 0.45);
+
+  --openbot-question-option: #16849b;
+  --openbot-question-option-soft: rgba(22, 132, 155, 0.12);
+  --openbot-question-option-hover: rgba(22, 132, 155, 0.18);
+  --openbot-question-option-pressed: rgba(22, 132, 155, 0.24);
+  --openbot-question-badge-text: #0f6a7d;
+  --openbot-question-badge-soft: rgba(22, 132, 155, 0.14);
+  --openbot-message-badge-text: #0a5fb8;
+  --openbot-message-badge-soft: rgba(0, 124, 247, 0.12);
+  --openbot-badge-new: #e0004a;
+  --openbot-badge-new-soft: rgba(224, 0, 74, 0.12);
+
+  --openbot-file-blue: #1a66c4;
+  --openbot-file-blue-soft: rgba(31, 111, 209, 0.12);
+  --openbot-file-yellow: #9c5200;
+  --openbot-file-yellow-soft: rgba(240, 138, 0, 0.14);
+  --openbot-file-orange: #a8521a;
+  --openbot-file-orange-soft: rgba(181, 90, 31, 0.12);
+  --openbot-file-teal: #127589;
+  --openbot-file-teal-soft: rgba(22, 132, 155, 0.12);
+  --openbot-file-green: #187a41;
+  --openbot-file-green-soft: rgba(31, 168, 90, 0.12);
+  --openbot-file-red: #c0141d;
+  --openbot-file-red-soft: rgba(232, 34, 45, 0.12);
+  --openbot-file-pink: #a3478f;
+  --openbot-file-pink-soft: rgba(163, 71, 143, 0.12);
+  --openbot-file-default: #0064c8;
+  --openbot-file-default-soft: rgba(0, 124, 247, 0.12);
+
+  --openbot-data-table-border: #e3e3e6;
+  --openbot-data-table-header-text: #6b6b70;
+  --openbot-data-table-text: #1c1c1e;
+  --openbot-data-table-outer-border: rgba(20, 20, 20, 0);
+  --openbot-data-table-ring: rgba(20, 20, 20, 0.1);
+
+  --openbot-shadow-popover-ambient: transparent;
+  --openbot-shadow-dialog: transparent;
+  --openbot-shadow-menu: transparent;
+  --openbot-shadow-ring: rgba(20, 20, 20, 0.04);
+  --openbot-shadow-overlay: 0 0 0 transparent;
+}

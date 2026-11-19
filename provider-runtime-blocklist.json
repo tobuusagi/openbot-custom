@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "blocked": {
+    "codex": [],
+    "claude": [],
+    "opencode": [],
+    "grok": [],
+    "antigravity": [],
+    "cursor": [],
+    "cline": [],
+    "kimi": [],
+    "pi": [],
+    "muse": [],
+    "devin": [],
+    "copilot": [],
+    "mistral": []
+  }
+}

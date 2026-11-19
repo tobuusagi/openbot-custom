@@ -1,0 +1,68 @@
+#!/bin/bash
+set -euo pipefail
+umask 077
+
+fail() {
+  echo "$*" >&2
+  exit 1
+}
+
+display_size() {
+  if [[ $1 =~ ^([1-9][0-9]{2,3})x([1-9][0-9]{2,3})$ ]] &&
+    [ "${BASH_REMATCH[1]}" -ge 640 ] && [ "${BASH_REMATCH[1]}" -le 2576 ] &&
+    [ "${BASH_REMATCH[2]}" -ge 480 ] && [ "${BASH_REMATCH[2]}" -le 2576 ]; then
+    echo "$1"
+    return
+  fi
+  [ -z "$1" ] || echo "OPENBOT_DISPLAY_SIZE is not WIDTHxHEIGHT from 640x480 to 2576x2576. The display is 1280x800." >&2
+  echo 1280x800
+}
+
+[ "$(id -u)" -ne 0 ] || fail "Run the OpenBot image as its own user, not as root."
+[ -w "$HOME" ] || fail "User $(id -u) cannot write to $HOME. Give the data volume to that user: chown -R $(id -u):$(id -g) <folder>"
+unshare --user --map-root-user true 2>/dev/null ||
+  fail "OpenBot cannot make a user namespace for the Electron sandbox. Start the container with --security-opt seccomp=seccomp.json. See https://github.com/nightly-labs/openbot/blob/main/docs/docker.md"
+mkdir -p "$XDG_RUNTIME_DIR"
+chmod 0700 "$XDG_RUNTIME_DIR"
+rm -f "$XDG_RUNTIME_DIR/control.sock"
+
+session=$(dbus-launch --sh-syntax)
+eval "$session"
+rm -f /tmp/.X0-lock /tmp/.X11-unix/X0 /tmp/.X1-lock /tmp/.X11-unix/X1
+(Xvfb :0 -screen 0 1280x800x24 -nolisten tcp >/dev/null 2>&1 &)
+(Xvfb :1 -screen 0 "$(display_size "${OPENBOT_DISPLAY_SIZE:-}")x24" -nolisten tcp -wr -noreset >/dev/null 2>&1 &)
+export DISPLAY=:0 OPENBOT_AGENT_DISPLAY=:1
+for display in :0 :1; do
+  for _ in $(seq 1 100); do
+    xdpyinfo -display "$display" >/dev/null 2>&1 && break
+    sleep 0.1
+  done
+  xdpyinfo -display "$display" >/dev/null 2>&1 || fail "The virtual display $display did not start."
+done
+xsetroot -display :1 -cursor_name left_ptr || true
+(DISPLAY=:1 bash /opt/OpenBot/app/resources/hosting/openbot-desktop </dev/null &)
+
+state="$HOME/.config/openbot-container"
+keyrings="$HOME/.local/share/keyrings"
+mkdir -p "$state" "$keyrings"
+if [ ! -s "$state/keyring-password" ] && [ -e "$keyrings/login.keyring" ]; then
+  fail "The keyring exists, but its password file $state/keyring-password is missing."
+fi
+if [ ! -s "$state/keyring-password" ]; then
+  temporary=$(mktemp "$state/keyring-password.XXXXXX")
+  head -c 32 /dev/urandom | base64 | tr -d '\n' >"$temporary"
+  mv -f "$temporary" "$state/keyring-password"
+fi
+printf login >"$keyrings/default"
+unlocked=$(gnome-keyring-daemon --unlock --components=secrets <"$state/keyring-password")
+eval "$unlocked"
+started=$(gnome-keyring-daemon --start --components=secrets)
+eval "$started"
+export GNOME_KEYRING_CONTROL
+
+chromium=()
+shm=$(df --output=size -k /dev/shm 2>/dev/null | tail -n 1 | tr -d ' ') || shm=0
+[ "${shm:-0}" -ge 1048576 ] 2>/dev/null || chromium+=(--disable-dev-shm-usage)
+
+export OPENBOT_SERVER=1
+exec /opt/OpenBot/app/openbot --password-store=gnome-libsecret "${chromium[@]}"

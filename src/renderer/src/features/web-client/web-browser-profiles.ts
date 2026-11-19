@@ -1,0 +1,57 @@
+import {
+  type AgentEvent,
+  decodeAgentBrowserProfile,
+  decodeBrowserProfileList,
+  decodeBrowserProfileSummary,
+  decodeBrowserProxyList,
+  decodeBrowserProxySummary,
+  decodeHostBrowserTabProfiles,
+  type TeamRealtimeEvent,
+} from "@openbot/contracts/ipc";
+import { BROWSER_PROFILES_ROUTES } from "@openbot/contracts/team-protocol/browser-profiles-v1";
+import { BROWSER_PROXIES_ROUTES } from "@openbot/contracts/team-protocol/browser-proxies-v1";
+import type { TeamApiRequest } from "@openbot/team-client/team-api-requests";
+import type { BrowserProfileCalls } from "../browser/browser-profiles-port";
+
+const ignoreResponse = (): void => {};
+
+export function webBrowserProfileCalls(
+  request: () => TeamApiRequest,
+  onHostEvent?: (listener: (event: AgentEvent | TeamRealtimeEvent) => void) => () => void,
+  proxies: () => boolean = () => false,
+): BrowserProfileCalls {
+  const post = <T>(path: string, decode: (value: unknown) => T, body: Parameters<TeamApiRequest>[3] = {}) =>
+    request()("POST", path, decode, body);
+  return {
+    list: () => post(BROWSER_PROFILES_ROUTES.list, decodeBrowserProfileList),
+    create: (name) => post(BROWSER_PROFILES_ROUTES.create, decodeBrowserProfileSummary, { name }),
+    update: (input) => post(BROWSER_PROFILES_ROUTES.update, decodeBrowserProfileSummary, { ...input }),
+    clear: (input) => post(BROWSER_PROFILES_ROUTES.clear, ignoreResponse, { ...input }),
+    remove: (profileId) => post(BROWSER_PROFILES_ROUTES.delete, ignoreResponse, { profileId }),
+    readAgent: (agentId) => post(BROWSER_PROFILES_ROUTES.agent, decodeAgentBrowserProfile, { agentId }),
+    updateAgent: (input) =>
+      post(BROWSER_PROFILES_ROUTES.updateAgent, decodeAgentBrowserProfile, {
+        agentId: input.agentId,
+        profile: { ...input.profile },
+      }),
+    tabProfiles: () => post(BROWSER_PROFILES_ROUTES.tabs, decodeHostBrowserTabProfiles),
+    proxies: {
+      list: async () => (proxies() ? post(BROWSER_PROXIES_ROUTES.list, decodeBrowserProxyList) : null),
+      save: (input) => post(BROWSER_PROXIES_ROUTES.save, decodeBrowserProxySummary, { ...input }),
+      remove: (input) =>
+        post(BROWSER_PROXIES_ROUTES.delete, ignoreResponse, {
+          proxyId: input.proxyId,
+          profileIds: [...input.profileIds],
+        }),
+      setProfileProxy: (input) => post(BROWSER_PROXIES_ROUTES.profile, ignoreResponse, { ...input }),
+    },
+    ...(onHostEvent
+      ? {
+          onChanged: (listener: () => void) =>
+            onHostEvent((event) => {
+              if (event.type === "browser-profiles-changed") listener();
+            }),
+        }
+      : {}),
+  };
+}

@@ -1,0 +1,9 @@
+[Unit]
+Description=Rotate the container logs of the OpenBot instances every 5 minutes
+
+[Timer]
+OnCalendar=*:0/5
+Persistent=true
+
+[Install]
+WantedBy=timers.target

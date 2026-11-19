@@ -1,0 +1,246 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { chmod, mkdir, mkdtemp, readdir, readFile, readlink, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { type AgentSummary, DEFAULT_AGENT_DEFAULTS } from "@openbot/contracts/ipc";
+import { displayMessageReferences } from "../src/backend/agent/delivery-content";
+import { developerInstructions } from "../src/backend/agent/developer-instructions";
+import { ClaudeAgentClient } from "../src/backend/claude-client";
+import { runCauseEffect } from "../src/backend/effect-boundary";
+import { listHomeSkills } from "../src/backend/home-skills";
+import { listHomeFolderSkills } from "../src/main/skill-folder-discovery";
+
+const SIGN_IN_TOKEN = "e2e-sign-in-token";
+const OUT = resolve(import.meta.dirname, "../.openbot-build/home-agent-skills-e2e");
+const ROOT_VARIABLE = "OPENBOT_HOME_SKILLS_E2E_ROOT";
+
+if (!process.env[ROOT_VARIABLE]) {
+  const root = await mkdtemp(join(tmpdir(), "openbot-home-skills-e2e-"));
+  const child = spawnSync(process.execPath, [import.meta.filename], {
+    stdio: "inherit",
+    env: { ...process.env, HOME: join(root, "home"), OPENBOT_REAL_HOME: process.env.HOME ?? "", [ROOT_VARIABLE]: root },
+  });
+  await rm(root, { recursive: true, force: true });
+  process.exit(child.status ?? 1);
+}
+
+interface Report {
+  passed: boolean;
+  checks: {
+    signInSettings?: { apiKeyHelper: string; env: string[] };
+    claudePlugin?: { plugin: string; linked: string[] };
+    claudeCli?: { version: string; skills: string[] } | "skipped: no claude on PATH";
+    instructions?: string;
+    tag?: string;
+  };
+  error?: string;
+}
+const report: Report = { passed: false, checks: {} };
+const realHome = process.env.OPENBOT_REAL_HOME;
+const root = process.env[ROOT_VARIABLE] ?? "";
+const clients: ClaudeAgentClient[] = [];
+
+async function writeSkill(directory: string, name: string, description: string): Promise<void> {
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, "SKILL.md"), `---\nname: ${name}\ndescription: ${description}\n---\nSay ${name}.\n`);
+}
+
+try {
+  const home = join(root, "home");
+  const homeSkills = join(home, ".agents", "skills");
+  await writeSkill(join(homeSkills, "zeta-skill"), "zeta-skill", "Answers with zeta.");
+  await writeSkill(join(homeSkills, "linked-skill"), "linked-skill", "Already linked into Claude.");
+  await writeSkill(join(homeSkills, "broken-skill"), "other-name", "Its name is not its folder.");
+  await mkdir(join(home, ".claude", "skills"), { recursive: true });
+  await symlink("../../.agents/skills/linked-skill", join(home, ".claude", "skills", "linked-skill"));
+  delete process.env.CLAUDE_CONFIG_DIR;
+
+  const listed = await runCauseEffect(listHomeSkills());
+  assert.deepEqual(
+    listed.map((skill) => skill.slug),
+    ["linked-skill", "zeta-skill"],
+    "The scan lists the valid skills and leaves out the one whose name is not its folder.",
+  );
+
+  await writeFile(
+    join(home, ".claude", "settings.json"),
+    JSON.stringify({
+      env: { ANTHROPIC_BASE_URL: "https://gateway.example", ANTHROPIC_AUTH_TOKEN: SIGN_IN_TOKEN, SPEND_LIMIT: 5 },
+      apiKeyHelper: "/usr/local/bin/key-helper",
+      forceLoginMethod: "unknown-method",
+      enabledPlugins: { "personal@market": true },
+      hooks: { Stop: [] },
+    }),
+  );
+
+  const executable = join(root, "claude");
+  const workspace = join(root, "workspace");
+  await mkdir(workspace);
+  const state = join(root, "state");
+  async function claudeArguments(userSetup: boolean): Promise<string[]> {
+    for (const previous of clients.splice(0)) await runCauseEffect(previous.stop()).catch(() => undefined);
+    const recorded = join(root, `claude-arguments-${userSetup ? "on" : "off"}.txt`);
+    await writeFile(
+      executable,
+      `#!/bin/sh\nprintf '%s\\n' "$@" > "${recorded}.tmp"\nmv "${recorded}.tmp" "${recorded}"\nexec cat > /dev/null\n`,
+    );
+    await chmod(executable, 0o755);
+    const client = new ClaudeAgentClient(
+      { executable, version: "2.1.310", source: "system" },
+      undefined,
+      undefined,
+      30_000,
+      () => [],
+      undefined,
+      undefined,
+      undefined,
+      state,
+      () => ({}),
+      undefined,
+      undefined,
+      () => userSetup,
+    );
+    clients.push(client);
+    client.start();
+    await runCauseEffect(client.request("thread/start", { cwd: workspace, persistSession: false }, (value) => value));
+    const text = await new Promise<string>((done, fail) => {
+      let expired = false;
+      const deadline = setTimeout(() => {
+        expired = true;
+        fail(new Error("The Claude process did not start."));
+      }, 10_000);
+      const poll = () =>
+        readFile(recorded, "utf8").then(
+          (value) => {
+            clearTimeout(deadline);
+            done(value);
+          },
+          () => {
+            if (!expired) setTimeout(poll, 50);
+          },
+        );
+      poll();
+    });
+    return text.split("\n");
+  }
+  const flagValues = (argv: string[], flag: string) =>
+    argv.flatMap((value, index) => {
+      if (value === flag) return [argv[index + 1] ?? ""];
+      return value.startsWith(`${flag}=`) ? [value.slice(flag.length + 1)] : [];
+    });
+
+  const offArgv = await claudeArguments(false);
+  assert.deepEqual(flagValues(offArgv, "--plugin-dir"), [], "No home skills plugin with the user's setup off.");
+  const offSources = flagValues(offArgv, "--setting-sources");
+  assert.equal(offSources.length, 1, "The session names its setting sources.");
+  assert.ok(!offSources.some((value) => value.split(",").includes("user")), "The user settings file is not a source.");
+  assert.ok(!offArgv.some((value) => value.includes(SIGN_IN_TOKEN)), "No sign-in key is on the command line.");
+  const offSettings = flagValues(offArgv, "--settings");
+  assert.equal(offSettings.length, 1, "The sign-in settings go to the session as a flag settings file.");
+  const settingsFile = offSettings[0] ?? "";
+  assert.equal((await stat(settingsFile)).mode & 0o777, 0o600, "Only this user can read the settings file.");
+  const signInSettings = JSON.parse(await readFile(settingsFile, "utf8"));
+  assert.deepEqual(
+    signInSettings,
+    {
+      apiKeyHelper: "/usr/local/bin/key-helper",
+      env: { ANTHROPIC_BASE_URL: "https://gateway.example", ANTHROPIC_AUTH_TOKEN: SIGN_IN_TOKEN },
+    },
+    "Only the sign-in keys pass: no plugins, no hooks, no invalid login method, no value that is not text.",
+  );
+  report.checks.signInSettings = { apiKeyHelper: signInSettings.apiKeyHelper, env: Object.keys(signInSettings.env) };
+
+  const argv = await claudeArguments(true);
+  await assert.rejects(stat(settingsFile), "The settings file is deleted when its query closes.");
+  assert.deepEqual(flagValues(argv, "--settings"), [], "The user's setup loads the settings file itself.");
+  const pluginDirectories = flagValues(argv, "--plugin-dir");
+  assert.equal(pluginDirectories.length, 1, "A Full access Claude session gets one plugin: the home skills.");
+  const plugin = pluginDirectories[0] ?? "";
+  const manifest = JSON.parse(await readFile(join(plugin, ".claude-plugin", "plugin.json"), "utf8"));
+  assert.equal(manifest.name, "agents");
+  const linked = (await readdir(join(plugin, "skills"))).sort();
+  assert.deepEqual(linked, ["zeta-skill"], "The skill that ~/.claude/skills already links is left out.");
+  assert.equal(await readlink(join(plugin, "skills", "zeta-skill")), join(homeSkills, "zeta-skill"));
+  report.checks.claudePlugin = { plugin, linked };
+
+  const cli = spawnSync("claude", ["--version"], { encoding: "utf8", env: { ...process.env, HOME: realHome } });
+  if (cli.status === 0) {
+    const run = spawnSync(
+      "claude",
+      ["-p", "--output-format", "stream-json", "--verbose", "--plugin-dir", plugin, "--max-turns", "1"],
+      { cwd: workspace, input: "hi", encoding: "utf8", env: { ...process.env, HOME: realHome }, timeout: 120_000 },
+    );
+    const init = run.stdout
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .find((message) => message.type === "system" && message.subtype === "init");
+    assert.ok(init, "The Claude CLI sends its init message.");
+    assert.ok(init.skills.includes("agents:zeta-skill"), "The Claude CLI lists agents:zeta-skill.");
+    assert.ok(!init.skills.includes("agents:linked-skill"), "The Claude CLI does not list the linked skill twice.");
+    report.checks.claudeCli = {
+      version: cli.stdout.trim(),
+      skills: init.skills.filter((s: string) => s.startsWith("agents:")),
+    };
+  } else {
+    report.checks.claudeCli = "skipped: no claude on PATH";
+  }
+
+  const agent: AgentSummary = {
+    id: "agent-1",
+    name: "Tester",
+    title: "",
+    description: "",
+    notifications: false,
+    provider: "antigravity",
+    model: "gemini-3-pro",
+    reasoningEffort: "medium",
+    threadId: null,
+    workspacePath: workspace,
+    preview: "",
+    updatedAt: null,
+    avatarSeed: "agent-1",
+    avatarHue: null,
+    avatarUrl: null,
+  };
+  const instructions = (homeSkillsOption?: typeof listed) =>
+    developerInstructions(
+      agent,
+      join(root, "shared"),
+      [],
+      join(root, "automation"),
+      DEFAULT_AGENT_DEFAULTS,
+      homeSkillsOption ? { homeSkills: homeSkillsOption } : {},
+    );
+  const withSkills = instructions(listed);
+  assert.ok(withSkills.includes(`- zeta-skill: Answers with zeta. (${join(homeSkills, "zeta-skill", "SKILL.md")})`));
+  const withoutSkills = instructions();
+  assert.ok(!withoutSkills.includes("~/.agents/skills"), "No list without home skills.");
+  report.checks.instructions = "antigravity block present";
+
+  const chat = await runCauseEffect(listHomeFolderSkills(new Set(["linked-skill"])));
+  assert.deepEqual(
+    chat.map((skill) => [skill.skillId, skill.origin, skill.location]),
+    [["home:zeta-skill", "workspace", "~/.agents/skills/zeta-skill"]],
+  );
+
+  const tagged = "Use @[zeta-skill](skill:home:zeta-skill) and @[x](skill:home:../x).";
+  const provider = displayMessageReferences(tagged, [], new Map());
+  assert.equal(provider, `Use zeta-skill at ${join(homeSkills, "zeta-skill", "SKILL.md")} (skill) and x (skill).`);
+  assert.equal(
+    displayMessageReferences(tagged, [], new Map(), { fileHeadings: false }),
+    "Use zeta-skill (skill) and x (skill).",
+  );
+  report.checks.tag = provider;
+  report.passed = true;
+} catch (error) {
+  report.error = error instanceof Error ? (error.stack ?? error.message) : String(error);
+} finally {
+  for (const client of clients) await runCauseEffect(client.stop()).catch(() => undefined);
+  await mkdir(OUT, { recursive: true });
+  await writeFile(join(OUT, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
+}
+
+process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+process.exit(report.passed ? 0 : 1);

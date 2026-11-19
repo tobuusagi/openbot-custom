@@ -1,0 +1,599 @@
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import {
+  BROWSER_TAKEOVER_REASONS,
+  VAULT_PASSWORD_LIMIT,
+  VAULT_TEXT_LIMIT,
+  type VaultContactFields,
+} from "@openbot/contracts/ipc";
+import { isDynamicRecord } from "@openbot/contracts/runtime-values";
+import { TWO_STEP_KEY_LIMIT } from "@openbot/contracts/two-step-code";
+import { UI_BLOCK_LIMITS, UI_VAULT_REQUEST_KINDS } from "@openbot/contracts/ui-blocks";
+import { z } from "zod";
+import { advertisedJsonSchema } from "./agent/advertised-json-schema";
+import {
+  BROWSER_FILL_FIELDS_MAX_FIELDS,
+  BROWSER_FILL_FIELDS_MAX_TEXT_BYTES,
+  BROWSER_FILL_FIELDS_MAX_TIMEOUT_MS,
+} from "./browser-fill-fields";
+import { repairBrowserStep, repairBrowserToolInput } from "./browser-tool-input";
+
+export const OPENBOT_BROWSER_NAMESPACE = "openbot_browser";
+
+const identifier = z.string().min(1).max(INPUT_LIMITS.identifier);
+const requiredString = (max: number) =>
+  z
+    .string()
+    .min(1)
+    .max(max)
+    .refine((value) => value.trim().length > 0);
+const tabId = requiredString(INPUT_LIMITS.identifier);
+const revision = z.number().int().nonnegative();
+const timeout = z.number().int().min(0).max(30_000).optional();
+const image = z.enum(["auto", "always", "never"]).optional();
+const nonBlankString = (max: number) => z.string().max(max).trim().min(1);
+const modifiers = z
+  .array(z.enum(["Alt", "Control", "Meta", "Shift"]))
+  .min(1)
+  .max(4)
+  .optional();
+
+const MAX_TARGET_NTH = 50;
+
+const nth = z
+  .number()
+  .int()
+  .min(0)
+  .max(MAX_TARGET_NTH - 1)
+  .exactOptional();
+
+const browserTargetSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("ref"), ref: identifier, revision: revision.describe("Required for kind=ref.") }),
+  z.object({
+    kind: z.literal("role"),
+    role: nonBlankString(64),
+    name: nonBlankString(500).exactOptional(),
+    exact: z.boolean().exactOptional(),
+    nth,
+  }),
+  z.object({ kind: z.literal("text"), text: nonBlankString(500), exact: z.boolean().exactOptional(), nth }),
+  z.object({ kind: z.literal("css"), selector: nonBlankString(2_000), nth }),
+  z.object({
+    kind: z.literal("point"),
+    x: z.number().min(0).max(INPUT_LIMITS.browserCoordinate),
+    y: z.number().min(0).max(INPUT_LIMITS.browserCoordinate),
+  }),
+]);
+
+const vaultText = z.string().max(VAULT_TEXT_LIMIT).optional();
+
+const vaultContactShape = {
+  fullName: vaultText.describe("Contact: the full name."),
+  address: vaultText.describe("Contact: the street address."),
+  address2: vaultText.describe("Contact: the apartment, suite or floor."),
+  city: vaultText.describe("Contact: the city."),
+  region: vaultText.describe("Contact: the state, province or region."),
+  postalCode: vaultText.describe("Contact: the postal code."),
+  country: z
+    .string()
+    .regex(/^[A-Za-z]{2}$|^$/u)
+    .optional()
+    .describe("Contact: the ISO 3166-1 alpha-2 country code, such as US or DE."),
+  phone: vaultText.describe("Contact: the phone number."),
+  email: vaultText.describe("Contact: the email address."),
+} satisfies { [Key in Exclude<keyof VaultContactFields, "label">]: z.ZodType };
+
+function browserTool<const Name extends string, Shape extends z.ZodRawShape>(definition: {
+  name: Name;
+  description: string;
+  shape: Shape;
+}) {
+  const schema = z.strictObject(definition.shape);
+  return {
+    ...definition,
+    schema,
+    parse(value: unknown) {
+      const result = schema.safeParse(value);
+      if (!result.success) throw new Error(`Invalid browser tool arguments: ${z.prettifyError(result.error)}`);
+      return { tool: definition.name, args: result.data };
+    },
+  };
+}
+
+const legacyActionFields = {
+  ref: identifier.optional(),
+  text: z.string().max(INPUT_LIMITS.browserActionText).optional(),
+  submit: z.boolean().optional(),
+  key: z.string().max(128).optional(),
+  deltaY: z.number().optional(),
+};
+const legacyActionSchema = z.discriminatedUnion("type", [
+  z.object({ ...legacyActionFields, type: z.literal("click"), ref: tabId }),
+  z.object({
+    ...legacyActionFields,
+    type: z.literal("type"),
+    ref: tabId,
+    text: requiredString(INPUT_LIMITS.browserActionText),
+  }),
+  z.object({ ...legacyActionFields, type: z.literal("key"), key: requiredString(32) }),
+  z.object({ ...legacyActionFields, type: z.literal("scroll"), deltaY: z.number() }),
+  z.object({ ...legacyActionFields, type: z.literal("back") }),
+  z.object({ ...legacyActionFields, type: z.literal("forward") }),
+  z.object({ ...legacyActionFields, type: z.literal("reload") }),
+]);
+
+const ACTION_RESULT = "Returns a status; pass snapshot: true for a snapshot.";
+const actionSnapshot = z.boolean().optional();
+const targetAction = { tabId, target: browserTargetSchema, timeoutMs: timeout, snapshot: actionSnapshot };
+
+const navigateFields = {
+  url: requiredString(INPUT_LIMITS.browserUrl).optional(),
+  direction: z.enum(["back", "forward", "reload"]).optional(),
+  timeoutMs: timeout,
+};
+const clickFields = {
+  target: browserTargetSchema,
+  timeoutMs: timeout,
+  button: z.enum(["left", "middle", "right"]).optional(),
+  clickCount: z.number().int().min(1).max(2).optional(),
+  modifiers,
+};
+const typeFields = {
+  target: browserTargetSchema.optional(),
+  timeoutMs: timeout,
+  text: z.string().max(INPUT_LIMITS.browserActionText),
+  mode: z.enum(["replace", "append"]).optional(),
+  submit: z.boolean().optional(),
+};
+const pressFields = { key: requiredString(128), target: browserTargetSchema.optional(), timeoutMs: timeout };
+const hoverFields = { target: browserTargetSchema, timeoutMs: timeout };
+const scrollFields = {
+  target: browserTargetSchema.optional(),
+  deltaX: z.number().min(-100_000).max(100_000).optional(),
+  deltaY: z.number().min(-100_000).max(100_000).optional(),
+  timeoutMs: timeout,
+};
+const selectOptionFields = { ...hoverFields, values: z.array(z.string().max(1_000)).min(1).max(100) };
+const setCheckedFields = { ...hoverFields, checked: z.boolean() };
+const waitForFields = {
+  target: browserTargetSchema.optional(),
+  text: requiredString(2_000).optional(),
+  url: requiredString(INPUT_LIMITS.browserUrl).optional(),
+  state: z.enum(["load", "domcontentloaded", "dom-quiet"]).optional(),
+  timeoutMs: timeout,
+};
+const evaluateFields = {
+  expression: z
+    .string()
+    .min(1)
+    .max(64_000)
+    .refine((value) => value.trim().length > 0, {
+      message: "expression must not be blank",
+    }),
+  awaitPromise: z.boolean().optional(),
+  timeoutMs: timeout,
+};
+
+export const BROWSER_SCRIPT_MAX_STEPS = 200;
+export const BROWSER_SCRIPT_MAX_SLEEP_MS = 25_000;
+const BROWSER_SCRIPT_MAX_CHARS = 20_000;
+export const BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS = 60_000;
+export const BROWSER_SCRIPT_EVALUATE_MAX_BYTES = 1024 * 1024;
+const BROWSER_SCRIPT_MAX_TIMEOUT_MS = 120_000;
+
+const browserStepSchema = z.discriminatedUnion("action", [
+  z.strictObject({ action: z.literal("navigate"), ...navigateFields }),
+  z.strictObject({ action: z.literal("click"), ...clickFields }),
+  z.strictObject({ action: z.literal("type"), ...typeFields }),
+  z.strictObject({ action: z.literal("press"), ...pressFields }),
+  z.strictObject({ action: z.literal("hover"), ...hoverFields }),
+  z.strictObject({ action: z.literal("scroll"), ...scrollFields }),
+  z.strictObject({ action: z.literal("select_option"), ...selectOptionFields }),
+  z.strictObject({ action: z.literal("set_checked"), ...setCheckedFields }),
+  z.strictObject({ action: z.literal("wait_for"), ...waitForFields }),
+  z.strictObject({ action: z.literal("evaluate"), ...evaluateFields }),
+  z.strictObject({ action: z.literal("snapshot") }),
+  z.strictObject({ action: z.literal("sleep"), ms: z.number().int().min(0).max(BROWSER_SCRIPT_MAX_SLEEP_MS) }),
+]);
+
+export type BrowserStep = z.infer<typeof browserStepSchema>;
+
+export function parseBrowserStep(value: unknown): BrowserStep {
+  const result = browserStepSchema.safeParse(isDynamicRecord(value) ? repairBrowserStep(value) : value);
+  if (!result.success) throw new Error(`Invalid browser step: ${z.prettifyError(result.error)}`);
+  return result.data;
+}
+
+export const BROWSER_TOOL_DEFINITIONS = [
+  browserTool({
+    name: "open",
+    description: "Open an HTTP(S) URL in a new persistent private-browser tab; returns its first snapshot.",
+    shape: { url: requiredString(INPUT_LIMITS.browserUrl) },
+  }),
+  browserTool({
+    name: "list_tabs",
+    description:
+      "List browser tabs owned by this agent, including popup openerTabId and blocked-popup feedback. After a sign-in click, check for a new tab, take a fresh snapshot there, and continue the sign-in. When it closes, return to the opener and verify sign-in succeeded.",
+    shape: {},
+  }),
+  browserTool({
+    name: "status",
+    description: "Get tabs, active control state, environments, recordings, and diagnostic error counts.",
+    shape: {},
+  }),
+  browserTool({
+    name: "snapshot",
+    description:
+      'Read the current semantic page and obtain element refs. Refs stay valid until a navigation or the next snapshot. An adaptive image is returned separately when useful. The output is bounded: text in the viewport comes first, and truncated is true when text or elements were left out. Scroll, or wait for text, to read more. Each element is a line: ref, role, "name", then <tag>, value=, description= and states when present. diagnostics and actions list only new entries, without successful requests and plain successful actions.',
+    shape: { tabId, image },
+  }),
+  browserTool({
+    name: "submit_secret",
+    description:
+      "Request the secret card for the active authentication step found in a fresh page snapshot. Identify password, email/SMS code, or authenticator-app code from the page. Select any login-method option first. The user authorizes one fill-and-submit action to the shown origin. Never pass a secret as an argument. Use takeover if the method or (without loginId) code length is unclear, for nonnumeric/recovery codes, CAPTCHA, passkeys, or bank app approval. Fill saved cards with fill_card.",
+    shape: {
+      tabId,
+      method: z
+        .enum(["password", "otp", "authenticator"])
+        .describe(
+          "Selects the card: password for an account password; otp for a numeric email/SMS code; authenticator for a numeric authenticator-app code. Generic 2FA labels or masked inputs do not establish the method.",
+        ),
+      targets: z
+        .array(browserTargetSchema)
+        .min(1)
+        .max(12)
+        .describe(
+          "Active step only: one password/whole-code field (+ sign-up confirm field, or with loginId its code fields), or each single-digit field in order. Fresh refs; no username field.",
+        ),
+      digits: z
+        .number()
+        .int()
+        .min(0)
+        .max(12)
+        .default(6)
+        .describe(
+          "For codes, the length from the page or the count of single-digit fields, 4–12; do not assume six. Omit it with loginId and one code field: the saved code sets it. For a password alone, omit it.",
+        ),
+      submission: z
+        .enum(["click", "enter", "on_input"])
+        .describe(
+          "Use click with submitTarget when the page has a Continue, Verify, Next, or Sign in button, even if disabled before entry. OpenBot fills the fields then clicks that button. Use enter only for a form submitted by Enter. on_input ONLY fills fields; use it only when the site explicitly submits on the final digit without a button. It does not find or click a button.",
+        ),
+      submitTarget: browserTargetSchema
+        .optional()
+        .describe(
+          "Required with click: the active step’s Continue, Verify, Next, or Sign in button from the same fresh snapshot. A currently disabled button can become enabled after entry.",
+        ),
+      loginId: z
+        .string()
+        .min(1)
+        .max(INPUT_LIMITS.vaultLoginId)
+        .optional()
+        .describe(
+          "For password or authenticator: the id of a saved login from list_logins. OpenBot fills its password or current code without asking the user.",
+        ),
+      username: z
+        .string()
+        .max(VAULT_TEXT_LIMIT)
+        .optional()
+        .describe(
+          "For password without loginId: the username or email of this sign-in, as typed on the page. When the user saves the password to the Vault from the card, the login gets this username.",
+        ),
+    },
+  }),
+  browserTool({
+    name: "list_logins",
+    description:
+      "List password manager and OpenBot Vault logins for the tab's site: id, title, username and hasOneTimePassword. No passwords or codes. Type the username, then call submit_secret with loginId.",
+    shape: { tabId },
+  }),
+  browserTool({
+    name: "list_vault_items",
+    description:
+      "List what the user saved in the OpenBot Vault, not a password manager. A login shows id, website, username and hasTwoStepKey; its secrets and notes are never returned, so sign in with list_logins and submit_secret. A card shows id, label, nameOnCard, brand, last4, expiry and hasSecurityCode; its number and security code are never returned, so fill card fields with fill_card. A contact shows every field: type them with fill_fields, type, or select_option. addedBy, when present, names the agent that added the item.",
+    shape: {},
+  }),
+  browserTool({
+    name: "save_vault_item",
+    description:
+      "Add contact info or a login to the OpenBot Vault, or change a saved item. Without id, the item is new; a login needs website, username and password, and a saved login for that site and username gets it. With an id from list_vault_items (not list_logins), a login changes its username, password and twoStepKey, and a card only fields that are not secret. An omitted field keeps its value. Returns status, id, kind and name. Do not repeat a secret. A password or twoStepKey needs a request of a person in your OpenBot chat.",
+    shape: {
+      kind: z.enum(["contact", "login", "card"]),
+      id: identifier.optional().describe("The item to change. Omit it to add a contact or a login."),
+      label: vaultText.describe("Contact or card: a short name, such as Home or Work card."),
+      ...vaultContactShape,
+      website: vaultText.describe("New login: the website URL."),
+      username: vaultText.describe("Login: the username or email."),
+      password: z.string().max(VAULT_PASSWORD_LIMIT).optional().describe("Login: the password."),
+      twoStepKey: z
+        .string()
+        .max(TWO_STEP_KEY_LIMIT)
+        .optional()
+        .describe(
+          "Login: the authenticator setup key or otpauth:// link that a site shows with its 2FA QR code. Empty removes it.",
+        ),
+      nameOnCard: vaultText.describe("Card: the name on the card."),
+      expMonth: z.number().int().min(1).max(12).optional().describe("Card: the expiry month."),
+      expYear: z.number().int().min(2000).max(2099).optional().describe("Card: the four-digit expiry year."),
+      billingContactId: identifier
+        .nullable()
+        .optional()
+        .describe("Card: the id of the contact for the billing address, or null for none."),
+    },
+  }),
+  browserTool({
+    name: "request_vault_item",
+    description:
+      'Ask the user to add a login, card or contact info to the Vault, and wait. The chat shows a card that opens the Vault form with the fields that you give. The user types the password, card number and security code; you never see them. Use it when a task needs an item that list_vault_items does not have. Result JSON: {"status":"saved","id","kind","name"}, {"status":"skipped"}, or {"status":"expired"}. Only the owner or an admin can save. Not in a Slack, Discord or Telegram chat.',
+    shape: {
+      kind: z.enum(UI_VAULT_REQUEST_KINDS),
+      title: requiredString(UI_BLOCK_LIMITS.title).describe(
+        "What the item is for, in the user's language, such as Card for the flight to Lisbon.",
+      ),
+      label: vaultText.describe("Contact or card: a short name, such as Home or Work card."),
+      ...vaultContactShape,
+      website: vaultText.describe("Login: the website URL."),
+      username: vaultText.describe("Login: the username or email."),
+      nameOnCard: vaultText.describe("Card: the name on the card."),
+      expMonth: z.number().int().min(1).max(12).optional().describe("Card: the expiry month."),
+      expYear: z.number().int().min(2000).max(2099).optional().describe("Card: the four-digit expiry year."),
+    },
+  }),
+  browserTool({
+    name: "delete_vault_item",
+    description:
+      "Delete a login, card or contact from the OpenBot Vault by its id from list_vault_items (not from list_logins). A card that uses a deleted contact for billing keeps no billing address. This cannot be undone: ask first unless you added the item or the user asked for the delete.",
+    shape: { id: identifier },
+  }),
+  browserTool({
+    name: "fill_card",
+    description:
+      "Type a saved card from list_vault_items into card fields from one fresh snapshot: the number, and any of the security code, a single expiry field or month and year fields (inputs or native selects), and the name on the card. Fields can be on the HTTPS page or in an HTTPS payment frame. You never see the number or the security code: snapshots hide them. Does not submit. The first fill of a card on a site waits for the server owner's approval. Returns the filled field names and a fresh snapshot. Screenshots, evaluate and recording are unavailable until the page navigates.",
+    shape: {
+      tabId,
+      cardId: identifier,
+      targets: z
+        .strictObject({
+          number: browserTargetSchema,
+          securityCode: browserTargetSchema.optional(),
+          expiry: browserTargetSchema.optional().describe("One field for month and year, such as MM/YY."),
+          expMonth: browserTargetSchema.optional(),
+          expYear: browserTargetSchema.optional(),
+          nameOnCard: browserTargetSchema.optional(),
+        })
+        .refine((targets) => !(targets.expiry && (targets.expMonth || targets.expYear)), {
+          message: "Use expiry, or expMonth and expYear, not both.",
+        }),
+      timeoutMs: timeout,
+    },
+  }),
+  browserTool({
+    name: "request_link_payment",
+    description:
+      "Pay with the user's Link account (link.com). The user approves this one payment in Link; the call waits up to 5 minutes. On approval it returns a cardId of a one-time card for fill_card. Call it once per purchase, with the final total.",
+    shape: {
+      amount: z
+        .number()
+        .int()
+        .positive()
+        .max(100_000_000)
+        .describe("The total in the smallest currency unit, such as cents."),
+      currency: z
+        .string()
+        .regex(/^[A-Za-z]{3}$/)
+        .optional()
+        .describe("ISO 4217 code. Default: the currency of the Link card."),
+      merchantName: requiredString(200),
+      merchantUrl: requiredString(2048).refine((value) => URL.canParse(value) && new URL(value).protocol === "https:", {
+        message: "Use the https address of the merchant's site.",
+      }),
+      context: z
+        .string()
+        .trim()
+        .min(100)
+        .max(2000)
+        .describe("What you buy, the quantity, and why. The user reads it in Link."),
+    },
+  }),
+  browserTool({
+    name: "request_takeover",
+    description:
+      "Ask the user to take over a tab for unclear OAuth account selection, CAPTCHA, passkeys, a payment step that you cannot complete, or when secure password/code handoff or card fill is unavailable.",
+    shape: {
+      tabId,
+      reason: z
+        .enum(BROWSER_TAKEOVER_REASONS)
+        .optional()
+        .describe("sign-in-blocked: the site refused the sign-in from the browser's network address."),
+    },
+  }),
+  browserTool({
+    name: "navigate",
+    description:
+      "Navigate to an HTTP(S) URL, history entry, or reload, wait for the page to settle, and return a fresh snapshot.",
+    shape: { tabId, ...navigateFields },
+  }),
+  browserTool({
+    name: "click",
+    description: `Click a unique semantic, CSS, ref, or coordinate target using trusted CDP input. ${ACTION_RESULT}`,
+    shape: { tabId, ...clickFields, snapshot: actionSnapshot },
+  }),
+  browserTool({
+    name: "type",
+    description: `Enter text in a unique target using trusted CDP input. ${ACTION_RESULT} Omit the target to send the text as keystrokes to whatever the page has focused, which is how an application that draws its own surface, such as a spreadsheet grid on a canvas, takes input: click or navigate to the cell first, then type. In that mode a tab character moves to the next column and a newline commits the row, so one call can fill a row or a column, and the focus field says where those keystrokes will land. Mode applies only to an element target.`,
+    shape: { tabId, ...typeFields, snapshot: actionSnapshot },
+  }),
+  browserTool({
+    name: "fill_fields",
+    description:
+      "Replace 1 to 16 already inspected ordinary main-frame text fields from one fresh snapshot, with at most 16 KiB combined UTF-8 text. Performs one queued operation and returns one final snapshot. Does not submit. Refuses known password, code, and payment fields: use fill_card for card fields. Partial results report confirmed and uncertain zero-based indices. Read the page before continuing; never automatically retry or undo a partial fill.",
+    shape: {
+      tabId,
+      revision,
+      fields: z
+        .array(z.strictObject({ ref: identifier, text: z.string().max(BROWSER_FILL_FIELDS_MAX_TEXT_BYTES) }))
+        .min(1)
+        .max(BROWSER_FILL_FIELDS_MAX_FIELDS)
+        .refine((fields) => new Set(fields.map((field) => field.ref)).size === fields.length, "Duplicate field refs.")
+        .refine(
+          (fields) =>
+            fields.reduce((bytes, field) => bytes + new TextEncoder().encode(field.text).byteLength, 0) <=
+            BROWSER_FILL_FIELDS_MAX_TEXT_BYTES,
+          "Combined field text exceeds 16 KiB UTF-8.",
+        ),
+      timeoutMs: z.number().int().min(1).max(BROWSER_FILL_FIELDS_MAX_TIMEOUT_MS).optional(),
+    },
+  }),
+  browserTool({
+    name: "press",
+    description: `Press a key or shortcut such as Enter, Control+A, or Meta+Shift+P. ${ACTION_RESULT}`,
+    shape: { tabId, ...pressFields, snapshot: actionSnapshot },
+  }),
+  browserTool({
+    name: "hover",
+    description: `Hover a unique target with trusted CDP pointer input. ${ACTION_RESULT}`,
+    shape: { tabId, ...hoverFields, snapshot: actionSnapshot },
+  }),
+  browserTool({
+    name: "scroll",
+    description: `Scroll the page or a target container by X/Y pixels. ${ACTION_RESULT}`,
+    shape: { tabId, ...scrollFields, snapshot: actionSnapshot },
+  }),
+  browserTool({
+    name: "select_option",
+    description: `Select one or more native select options by value or label. ${ACTION_RESULT}`,
+    shape: { tabId, ...selectOptionFields, snapshot: actionSnapshot },
+  }),
+  browserTool({
+    name: "set_checked",
+    description: `Set a checkbox or radio target to the requested checked state. ${ACTION_RESULT}`,
+    shape: { tabId, ...setCheckedFields, snapshot: actionSnapshot },
+  }),
+  browserTool({
+    name: "drag",
+    description: `Drag from one unique target to another with trusted CDP pointer input. ${ACTION_RESULT}`,
+    shape: {
+      tabId,
+      source: browserTargetSchema,
+      target: browserTargetSchema,
+      timeoutMs: timeout,
+      snapshot: actionSnapshot,
+    },
+  }),
+  browserTool({
+    name: "upload_files",
+    description: `Set local files on a file input or the file chooser a clicked target opens. ${ACTION_RESULT}`,
+    shape: {
+      ...targetAction,
+      paths: z.array(z.string().min(1).max(INPUT_LIMITS.path)).min(1).max(INPUT_LIMITS.attachments),
+    },
+  }),
+  browserTool({
+    name: "wait_for",
+    description:
+      "Wait for a URL, text, semantic target, load state, or DOM quiet condition, then return a fresh snapshot.",
+    shape: { tabId, ...waitForFields },
+  }),
+  browserTool({
+    name: "evaluate",
+    description:
+      "Evaluate JavaScript in the main frame's own page context, with the same access to page scripts, DOM and cookies as the page itself. Prefer snapshots and semantic actions; use this for inspection or unsupported interactions. Returns only a JSON-serializable value up to 64 KB.",
+    shape: { tabId, ...evaluateFields },
+  }),
+  browserTool({
+    name: "set_environment",
+    description:
+      "Set a memory-bounded viewport, color scheme, and reduced-motion emulation without changing browser identity or user agent.",
+    shape: {
+      tabId,
+      preset: z.enum(["fill", "desktop", "tablet", "mobile", "custom"]).optional(),
+      width: z.number().int().min(320).max(INPUT_LIMITS.browserDimension).optional(),
+      height: z.number().int().min(240).max(INPUT_LIMITS.browserDimension).optional(),
+      deviceScaleFactor: z.number().min(0.5).max(4).optional(),
+      colorScheme: z.enum(["light", "dark", "system"]).optional(),
+      reducedMotion: z.boolean().optional(),
+    },
+  }),
+  browserTool({
+    name: "recording_start",
+    description:
+      "Start a sandboxed video-only WebM recording of a tab. It stops automatically after 5 minutes or 100 MB.",
+    shape: { tabId },
+  }),
+  browserTool({
+    name: "recording_stop",
+    description: "Stop a tab recording and return the saved Downloads path and artifact metadata.",
+    shape: { tabId },
+  }),
+  browserTool({
+    name: "act",
+    description:
+      "Legacy compatibility tool. Prefer the specialized tools. Click, type, press, scroll, navigate history, or reload.",
+    shape: {
+      tabId,
+      revision,
+      action: legacyActionSchema,
+    },
+  }),
+  browserTool({
+    name: "screenshot",
+    description:
+      "Capture the visible page as an image; with a ref, only that element, which costs less context. save: true also writes a PNG to your workspace and returns its path.",
+    shape: { tabId, ref: identifier.optional(), save: z.boolean().optional() },
+  }),
+  browserTool({
+    name: "run_script",
+    description:
+      "Run a short JavaScript program that drives one tab in one call and returns a final snapshot. Use it for a known sequence, such as typing a search, pressing Enter, and waiting for results, or a loop, such as paging. It runs in a sandbox, not in the page, with no network, files, require, or process. It can await these helpers: navigate(url), click(target, options?), type(target, text, options?), press(key, target?), hover(target), scroll(deltaY, target?), selectOption(target, values), setChecked(target, checked), waitFor(text, condition, or page function), sleep(ms), evaluate(expression or function) (runs in the page; returns JSON), snapshot(), and step({ action, ...fields }), where action names one of these tools. A target is a CSS selector string, role(role, name?), text(text), or a target object; .nth(i), from 0, picks one of several matches, as in text('Delete').nth(1). A failed helper throws; try/catch works. Steps before a failure stay done. log(...values) adds to a short log. Return a JSON value. At most 200 steps and timeoutMs (default 60 s) per call.",
+    shape: {
+      tabId,
+      script: requiredString(BROWSER_SCRIPT_MAX_CHARS).describe(
+        "JavaScript source text. It runs in the browser sandbox, not in your own code: navigate, click, evaluate, and the other helpers exist only in this text.",
+      ),
+      finalSnapshot: z.boolean().optional(),
+      timeoutMs: z.number().int().min(1_000).max(BROWSER_SCRIPT_MAX_TIMEOUT_MS).optional(),
+    },
+  }),
+  browserTool({
+    name: "handle_dialog",
+    description:
+      "Answer the dialog that your action opened. accept: true is OK, false is Cancel. Returns the next dialog or the page status.",
+    shape: { tabId, dialogId: identifier, accept: z.boolean() },
+  }),
+  browserTool({
+    name: "close_tab",
+    description: "Close a browser tab.",
+    shape: { tabId },
+  }),
+] as const;
+
+export const BROWSER_DYNAMIC_TOOLS = [
+  {
+    type: "namespace" as const,
+    name: OPENBOT_BROWSER_NAMESPACE,
+    description: "Operate OpenBot's private, persistent native Electron/CDP browser.",
+    tools: BROWSER_TOOL_DEFINITIONS.map((definition) => ({
+      type: "function" as const,
+      name: definition.name,
+      description: definition.description,
+      inputSchema: advertisedJsonSchema(definition.schema),
+    })),
+  },
+];
+
+export type BrowserToolCall = ReturnType<(typeof BROWSER_TOOL_DEFINITIONS)[number]["parse"]>;
+export type BrowserToolArguments<Name extends BrowserToolCall["tool"]> = Extract<
+  BrowserToolCall,
+  { tool: Name }
+>["args"];
+
+export function parseBrowserToolCall(tool: string, value: unknown): BrowserToolCall {
+  const definition = BROWSER_TOOL_DEFINITIONS.find((candidate) => candidate.name === tool);
+  if (!definition) throw new Error(`Unknown browser tool: ${tool}`);
+  return definition.parse(repairBrowserToolInput(tool, value).value);
+}
+
+export function parseBrowserToolArguments(tool: "upload_files", value: unknown): BrowserToolArguments<"upload_files">;
+export function parseBrowserToolArguments(tool: string, value: unknown): BrowserToolCall["args"];
+export function parseBrowserToolArguments(tool: string, value: unknown): BrowserToolCall["args"] {
+  return parseBrowserToolCall(tool, value).args;
+}

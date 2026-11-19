@@ -1,0 +1,134 @@
+.mcp-connect-card {
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--openbot-radius-lg);
+  background: var(--openbot-bg-grouped);
+}
+
+.mcp-connect-row {
+  position: relative;
+  margin: 0;
+  padding: var(--openbot-space-3);
+}
+
+.mcp-connect-row + .mcp-connect-row {
+  border-top: 1px solid var(--openbot-border-grouped);
+}
+
+.mcp-local-heading {
+  margin: 0;
+  padding-inline-end: var(--openbot-space-6);
+  color: var(--openbot-text-primary);
+  font-size: var(--openbot-text-sm);
+  font-weight: var(--openbot-weight-semibold);
+  line-height: var(--openbot-leading-sm);
+}
+
+.mcp-local-steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--openbot-space-2);
+  margin: var(--openbot-space-2) 0 0;
+  padding-inline-start: var(--openbot-space-4);
+  list-style: decimal;
+  color: var(--openbot-text-primary);
+  font-size: var(--openbot-text-sm);
+  line-height: var(--openbot-leading-sm);
+}
+
+.mcp-local-steps > li::marker {
+  color: var(--openbot-text-muted);
+}
+
+.mcp-local-address {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--openbot-space-3);
+  font-size: var(--openbot-text-sm);
+  line-height: var(--openbot-leading-sm);
+}
+
+.mcp-local-address > code {
+  overflow-wrap: anywhere;
+  color: var(--openbot-text-primary);
+  font-family: var(--openbot-font-mono);
+}
+
+.mcp-connect-docs {
+  position: absolute;
+  top: var(--openbot-space-3);
+  inset-inline-end: var(--openbot-space-3);
+  gap: var(--openbot-space-1-5);
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-sm);
+  line-height: var(--openbot-leading-sm);
+}
+
+.mcp-connect-docs > svg {
+  width: var(--openbot-icon-sm);
+  height: var(--openbot-icon-sm);
+  flex: 0 0 auto;
+  stroke-width: var(--openbot-icon-stroke);
+}
+
+.mcp-connect-privacy {
+  display: flex;
+  align-items: center;
+  gap: var(--openbot-space-2);
+  font-size: var(--openbot-text-sm);
+  line-height: var(--openbot-leading-sm);
+}
+
+.mcp-connect-privacy svg {
+  flex: none;
+  width: var(--openbot-icon-sm);
+  height: var(--openbot-icon-sm);
+  color: var(--openbot-text-muted);
+}
+
+.mcp-sign-in-page {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--openbot-border);
+  border-radius: var(--openbot-radius-lg);
+  background: var(--openbot-bg-surface);
+}
+
+.mcp-sign-in-page-note {
+  min-width: 0;
+  margin: 0;
+}
+
+.mcp-sign-in-relay-open {
+  display: flex;
+  gap: var(--openbot-space-2);
+  margin-top: var(--openbot-space-4);
+}
+
+.provider-code-login-body > .mcp-sign-in-relay-open > :first-child {
+  flex: 1;
+}
+
+.mcp-sign-in-relay-form {
+  margin-top: var(--openbot-space-4);
+}
+
+:is(.integration-wizard-body, .provider-code-login-body) > :is(.mcp-sign-in-relay-open, .mcp-sign-in-relay-form) {
+  margin-top: 0;
+}
+
+.integration-wizard-body > :is(.mcp-sign-in-relay-open, .mcp-sign-in-copy) {
+  justify-self: start;
+}
+
+.mcp-sign-in-relay-row {
+  display: flex;
+  gap: var(--openbot-space-2);
+}
+
+.mcp-sign-in-relay-row > .ui-input {
+  flex: 1;
+  min-width: 0;
+}

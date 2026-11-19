@@ -1,0 +1,493 @@
+import type {
+  AgentApproval,
+  BrowserPreview,
+  BrowserTab,
+  BrowserTakeoverRequest,
+  LocalBrowserSecretResponse,
+} from "@openbot/contracts/ipc";
+import { type FeedbackApproval, feedbackApproval } from "@openbot/team-client/feedback-approval";
+import { approvalIsCut } from "@openbot/team-client/runtime-attention";
+import { classifyFailure } from "@openbot/telemetry";
+import { Button, LogIn, Maximize2, Monitor, toast } from "@openbot/ui";
+import { StandingApprovalConfirmation } from "@openbot/ui/components/StandingApprovalConfirmation";
+import { BrowserSecretCard, type BrowserSecretVault } from "@openbot/ui/features/conversation/BrowserSecretCard";
+import { BrowserTakeoverPreview } from "@openbot/ui/features/conversation/BrowserTakeoverPreview";
+import { type TextValue, useText } from "@openbot/ui/text";
+import { createMemo, createSignal, For, Show } from "solid-js";
+import { UiBlockCard } from "./ui-blocks/UiBlockCard";
+
+export function ApprovalCard(props: {
+  approval: AgentApproval;
+  onApprove: () => Promise<boolean>;
+  onReject: () => Promise<boolean>;
+  onAlwaysAllow?: (() => Promise<boolean>) | undefined;
+  agentName?: string | undefined;
+  sending?: boolean | undefined;
+}) {
+  const { t, errorMessage, sourceText } = useText();
+  const [submitting, setSubmitting] = createSignal(false);
+  const [accepting, setAccepting] = createSignal(false);
+  const [confirmingAlways, setConfirmingAlways] = createSignal(false);
+  let alwaysAllowButton: HTMLButtonElement | undefined;
+  const report = createMemo(() => feedbackApproval(props.approval));
+  const cut = () => approvalIsCut(props.approval);
+  const submit = async (decision: "accept" | "decline") => {
+    if (submitting()) return;
+    setSubmitting(true);
+    setAccepting(decision === "accept");
+    try {
+      const completed = await (decision === "accept" ? props.onApprove() : props.onReject());
+      if (!completed) setSubmitting(false);
+    } catch (error) {
+      toast.error(errorMessage(error, t("prompt.approval.answerFailed")), {
+        report: { operation: "turn", source: "system", cause_code: classifyFailure(error) },
+      });
+      setSubmitting(false);
+    }
+  };
+  const alwaysAllow = async () => {
+    const grant = props.onAlwaysAllow;
+    if (!grant || submitting()) return;
+    setConfirmingAlways(false);
+    setSubmitting(true);
+    try {
+      const completed = await grant();
+      if (!completed) setSubmitting(false);
+    } catch (error) {
+      toast.error(errorMessage(error, t("prompt.approval.grantFailed")), {
+        report: { operation: "turn", source: "system", cause_code: classifyFailure(error) },
+      });
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Show
+      when={report()}
+      fallback={
+        <>
+          <UiBlockCard
+            class="approval-card"
+            status="pending"
+            title={t(approvalTitle(props.approval))}
+            subtitle={props.approval.reason ? sourceText(props.approval.reason) : undefined}
+            busy={submitting()}
+            waiting
+            actions={
+              <>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  type="button"
+                  disabled={submitting()}
+                  data-cuelume-tap="close"
+                  data-cuelume-emphasis="normal"
+                  onClick={() => void submit("decline")}
+                >
+                  {t("prompt.approval.deny")}
+                </Button>
+                <Show when={props.onAlwaysAllow && !cut()}>
+                  <Button
+                    ref={alwaysAllowButton}
+                    variant="secondary"
+                    size="sm"
+                    type="button"
+                    disabled={submitting()}
+                    onClick={() => setConfirmingAlways(true)}
+                  >
+                    {t("prompt.approval.alwaysAllow")}
+                  </Button>
+                </Show>
+                <Show when={!cut()}>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    type="button"
+                    disabled={submitting()}
+                    onClick={() => void submit("accept")}
+                  >
+                    {t("prompt.approval.allow")}
+                  </Button>
+                </Show>
+              </>
+            }
+          >
+            <Show when={props.approval.command}>
+              {(command) => (
+                <div class="approval-command-block">
+                  <Show when={props.approval.cwd}>
+                    <div class="approval-cwd">{props.approval.cwd}</div>
+                  </Show>
+                  <code>{command()}</code>
+                </div>
+              )}
+            </Show>
+            <Show when={props.approval.kind === "file-change"}>
+              <div class="approval-detail-row">
+                <span class="approval-detail-label">{t("prompt.approval.files")}</span>
+                <strong>{props.approval.grantRoot ?? t("prompt.approval.agentWorkspace")}</strong>
+              </div>
+            </Show>
+            <Show when={props.approval.kind === "permissions"}>
+              <PermissionDetails permissions={props.approval.permissions} />
+            </Show>
+            <Show when={cut()}>
+              <p class="approval-cut-note">{t("prompt.approval.cut")}</p>
+            </Show>
+          </UiBlockCard>
+          <StandingApprovalConfirmation
+            open={confirmingAlways()}
+            agentName={props.agentName}
+            onCancel={() => setConfirmingAlways(false)}
+            onConfirm={() => void alwaysAllow()}
+            restoreFocusTarget={alwaysAllowButton}
+          />
+        </>
+      }
+    >
+      {(offer) => (
+        <FeedbackOffer
+          report={offer()}
+          cut={cut()}
+          submitting={submitting()}
+          sending={(submitting() && accepting()) || props.sending === true}
+          onSend={() => void submit("accept")}
+          onDismiss={() => void submit("decline")}
+        />
+      )}
+    </Show>
+  );
+}
+
+function FeedbackOffer(props: {
+  report: FeedbackApproval;
+  cut: boolean;
+  submitting: boolean;
+  sending: boolean;
+  onSend: () => void;
+  onDismiss: () => void;
+}) {
+  const { t, sourceText } = useText();
+  const idea = () => props.report.kind === "idea";
+  const text = () =>
+    props.report.text
+      .split("\n\n")
+      .map((part) => sourceText(part))
+      .join("\n\n");
+  return (
+    <section
+      class="approval-card conversation-interaction-card feedback-offer"
+      aria-label={t("prompt.approval.label")}
+      aria-busy={props.sending ? "true" : undefined}
+    >
+      <span class="feedback-offer-emoji" aria-hidden="true">
+        {idea() ? "💡" : "🐞"}
+      </span>
+      <strong class="feedback-offer-headline">
+        {t(idea() ? "prompt.approval.report.ideaHeadline" : "prompt.approval.report.bugHeadline")}
+      </strong>
+      <blockquote class="feedback-offer-quote">
+        <strong>{props.report.title}</strong>
+        <Show when={text()}>{(body) => <p>{body()}</p>}</Show>
+      </blockquote>
+      <Show when={props.cut}>
+        <p class="approval-cut-note">{t("prompt.approval.cut")}</p>
+      </Show>
+      <Show when={props.report.phone}>
+        <p class="approval-cut-note">{t("prompt.approval.report.phoneOnly")}</p>
+      </Show>
+      <div class="feedback-offer-actions">
+        <Button
+          variant="secondary"
+          type="button"
+          class="approval-button"
+          disabled={props.submitting || props.sending}
+          data-cuelume-tap="close"
+          data-cuelume-emphasis="normal"
+          onClick={() => props.onDismiss()}
+        >
+          {t("prompt.approval.report.dontSend")}
+        </Button>
+        <Show when={!props.cut && !props.report.phone}>
+          <Button
+            variant="default"
+            type="button"
+            class="approval-button"
+            disabled={props.submitting && !props.sending}
+            loading={props.sending}
+            loadingLabel={t("common.sending")}
+            onClick={() => props.onSend()}
+          >
+            {t("prompt.approval.report.send")}
+          </Button>
+        </Show>
+      </div>
+    </section>
+  );
+}
+
+interface BrowserTakeoverCardProps {
+  request?: BrowserTakeoverRequest | undefined;
+  agentName: string;
+  tab: BrowserTab | undefined;
+  preview: BrowserPreview | null;
+  previewStatus: "idle" | "loading" | "ready" | "failed";
+  decision?: "complete" | "cancel" | null;
+  onOpen?: (() => void) | undefined;
+  onComplete?: (() => Promise<boolean>) | undefined;
+  onCancel: () => Promise<boolean>;
+  onSignInLocally?: (() => void) | undefined;
+  signInBlocked?: { server: string; signingIn: boolean } | undefined;
+  signInOnDesktop?: boolean | undefined;
+  browserSecret?: {
+    loadPreview?: (tabId: string) => Promise<BrowserPreview>;
+    vault?: BrowserSecretVault | undefined;
+    onRespond: (input: LocalBrowserSecretResponse) => Promise<void>;
+  };
+}
+
+export function BrowserTakeoverCard(props: BrowserTakeoverCardProps) {
+  const secretRequest = () =>
+    props.request?.secret && !props.request.secret.requiresReload && props.browserSecret ? props.request : undefined;
+  return (
+    <Show when={secretRequest()} fallback={<BrowserManualTakeoverCard {...props} />}>
+      {(request) => {
+        const actions = props.browserSecret;
+        if (!actions) return null;
+        return (
+          <BrowserSecretCard
+            request={request()}
+            onOpen={props.onOpen}
+            loadPreview={actions.loadPreview}
+            vault={actions.vault}
+            onRespond={actions.onRespond}
+          />
+        );
+      }}
+    </Show>
+  );
+}
+
+function BrowserManualTakeoverCard(props: BrowserTakeoverCardProps) {
+  const { t } = useText();
+  const [submitting, setSubmitting] = createSignal<"complete" | "cancel" | null>(null);
+  const [openedRequest, setOpenedRequest] = createSignal<BrowserTakeoverRequest>();
+  const opened = () => {
+    const done = openedRequest();
+    const request = props.request;
+    return (
+      done !== undefined &&
+      request !== undefined &&
+      done.requestId === request.requestId &&
+      done.agentId === request.agentId &&
+      done.threadId === request.threadId
+    );
+  };
+  const openPage = () => {
+    setOpenedRequest(props.request);
+    props.onOpen?.();
+  };
+  const pageDetails = createMemo(() => browserPageDetails(props.tab, t));
+  const completed = () => props.decision === "complete";
+  const cancelled = () => props.decision === "cancel";
+  const title = () => {
+    const host = pageDetails().host;
+    const blocked = props.signInBlocked;
+    if (!blocked)
+      return t(
+        completed()
+          ? "prompt.browser.title.complete"
+          : cancelled()
+            ? "prompt.browser.title.cancelled"
+            : "prompt.browser.title.pending",
+        { host },
+      );
+    if (completed()) return t("browser.signIn.sent", { site: host, server: blocked.server });
+    if (cancelled()) return t("prompt.browser.signInBlocked.cancelledTitle", { host });
+    return t("prompt.browser.signInBlocked.title", { host, server: blocked.server });
+  };
+  const body = () => {
+    const blocked = props.signInBlocked;
+    if (completed()) return t("prompt.browser.continuing", { name: props.agentName });
+    if (cancelled()) return t(blocked ? "prompt.browser.signInBlocked.cancelledBody" : "prompt.browser.cancelledBody");
+    if (blocked)
+      return t("prompt.browser.signInBlocked.body", {
+        host: pageDetails().host,
+        server: blocked.server,
+        name: props.agentName,
+      });
+    return props.signInOnDesktop
+      ? t("prompt.browser.signInBlocked.desktopBody", { host: pageDetails().host, name: props.agentName })
+      : t("prompt.browser.pendingBody", { name: props.agentName });
+  };
+  const pageHost = () => {
+    const blocked = props.signInBlocked;
+    return blocked
+      ? t("prompt.browser.signInBlocked.page", { host: pageDetails().host, server: blocked.server })
+      : pageDetails().host;
+  };
+  const submit = async (decision: "complete" | "cancel") => {
+    const respond = decision === "complete" ? props.onComplete : props.onCancel;
+    if (submitting() || props.decision || !respond) return;
+    setSubmitting(decision);
+    const completed = await respond();
+    if (!completed) setSubmitting(null);
+  };
+
+  return (
+    <UiBlockCard
+      class="browser-takeover-card"
+      status={completed() ? "answered" : cancelled() ? "closed" : "pending"}
+      outcome={completed() ? t("common.done") : cancelled() ? t("prompt.browser.cancelled") : undefined}
+      title={title()}
+      subtitle={body()}
+      outcomeBadge
+      busy={Boolean(submitting())}
+      waiting
+      waitingLabel={props.signInBlocked?.signingIn ? t("prompt.browser.signInBlocked.waiting") : undefined}
+      actions={
+        <>
+          <Button
+            variant="secondary"
+            size="sm"
+            type="button"
+            disabled={Boolean(submitting())}
+            data-cuelume-tap="close"
+            onClick={() => void submit("cancel")}
+          >
+            {t("common.cancel")}
+          </Button>
+          <Show
+            when={props.signInBlocked && props.onSignInLocally}
+            fallback={
+              <>
+                <Show when={props.onSignInLocally}>
+                  {(signIn) => (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      type="button"
+                      disabled={Boolean(submitting())}
+                      onClick={() => signIn()()}
+                    >
+                      {t("browser.signIn.local")}
+                    </Button>
+                  )}
+                </Show>
+                <Show when={props.onOpen}>
+                  <Button
+                    variant={opened() ? "secondary" : "default"}
+                    size="sm"
+                    type="button"
+                    disabled={Boolean(submitting())}
+                    onClick={openPage}
+                  >
+                    <Maximize2 data-icon="inline-start" aria-hidden="true" />
+                    {t("common.open")}
+                  </Button>
+                </Show>
+                <Show when={props.onComplete}>
+                  <Button
+                    variant={props.onOpen && !opened() ? "secondary" : "default"}
+                    size="sm"
+                    type="button"
+                    disabled={Boolean(submitting())}
+                    onClick={() => void submit("complete")}
+                  >
+                    {t("prompt.browser.done")}
+                  </Button>
+                </Show>
+              </>
+            }
+          >
+            {(signIn) => (
+              <Button
+                variant="default"
+                size="sm"
+                type="button"
+                loading={props.signInBlocked?.signingIn}
+                loadingLabel={t("prompt.browser.signInBlocked.waitingButton")}
+                disabled={Boolean(submitting()) || props.signInBlocked?.signingIn}
+                onClick={() => signIn()()}
+              >
+                <LogIn data-icon="inline-start" aria-hidden="true" />
+                {t("browser.signIn.local")}
+              </Button>
+            )}
+          </Show>
+        </>
+      }
+    >
+      <Show when={props.request?.secret?.requiresReload}>
+        <p>{t("prompt.browser.reload")}</p>
+      </Show>
+      <figure class="browser-takeover-preview">
+        <figcaption class="browser-takeover-preview-bar">
+          <Monitor aria-hidden="true" />
+          <span title={pageDetails().title}>{pageDetails().title}</span>
+          <small title={pageHost()}>{pageHost()}</small>
+        </figcaption>
+        <Show
+          when={props.onOpen}
+          fallback={
+            <div class="browser-takeover-preview-viewport">
+              <BrowserTakeoverPreview
+                preview={props.preview}
+                previewStatus={props.previewStatus}
+                page={pageDetails()}
+              />
+            </div>
+          }
+        >
+          <Button
+            variant="ghost"
+            type="button"
+            class="browser-takeover-preview-viewport browser-takeover-preview-open"
+            aria-label={t("prompt.browser.openPage", { title: pageDetails().title })}
+            onClick={openPage}
+          >
+            <BrowserTakeoverPreview preview={props.preview} previewStatus={props.previewStatus} page={pageDetails()} />
+            <span class="browser-takeover-preview-open-label" aria-hidden="true">
+              <Maximize2 />
+              {t("common.open")}
+            </span>
+          </Button>
+        </Show>
+      </figure>
+    </UiBlockCard>
+  );
+}
+
+function browserPageDetails(tab: BrowserTab | undefined, t: TextValue["t"]): { title: string; host: string } {
+  const title = tab?.title.trim() || t("prompt.browser.pageFallback");
+  if (!tab?.url) return { title, host: t("prompt.browser.hostFallback") };
+  try {
+    return { title, host: new URL(tab.url).hostname || t("prompt.browser.hostFallback") };
+  } catch {
+    return { title, host: tab.url };
+  }
+}
+
+function approvalTitle(approval: AgentApproval | undefined) {
+  if (approval?.kind === "command") return "prompt.approval.title.command";
+  if (approval?.kind === "file-change") return "prompt.approval.title.fileChange";
+  return "prompt.approval.title.permissions";
+}
+
+function PermissionDetails(props: { permissions: AgentApproval["permissions"] }) {
+  const { t } = useText();
+  const details = createMemo(() => {
+    const permissions = props.permissions;
+    if (!permissions) return [];
+    return [
+      ...(permissions.network ? [t("prompt.approval.network")] : []),
+      ...permissions.fileSystem.read.map((path) => t("prompt.approval.read", { path })),
+      ...permissions.fileSystem.write.map((path) => t("prompt.approval.write", { path })),
+    ];
+  });
+  return (
+    <section class="approval-permissions" aria-label={t("prompt.approval.permissions")}>
+      <For each={details()}>{(detail) => <span>{detail}</span>}</For>
+    </section>
+  );
+}

@@ -1,0 +1,102 @@
+import type { PartialTranslation } from "../../../message";
+import type { messages as source } from "../../en/error/workflow";
+
+export const messages = {
+  "error.workflow.missing": "이 워크플로는 더 이상 존재하지 않아요.",
+  "error.workflow.versionMissing": "이 버전의 워크플로는 더 이상 존재하지 않아요.",
+  "error.workflow.annotation": "텍스트, 메모, 도형에는 연결을 추가할 수 없어요.",
+  "error.workflow.port": "단계가 이 유형의 입력을 받을 수 없어요.",
+  "error.workflow.branch": "‘예’와 ‘아니요’ 연결은 조건에만 있을 수 있어요.",
+  "error.workflow.conditionBranch": "조건에서 나가는 각 연결은 ‘예’ 또는 ‘아니요’여야 해요.",
+  "error.workflow.duplicateEdge": "이 두 단계에는 이미 이 연결이 있어요.",
+  "error.workflow.serverTooOld":
+    "이 서버는 워크플로를 지원하지 않아요. 서버를 실행하는 컴퓨터에서 OpenBot을 업데이트하세요.",
+  "error.workflow.nodeUnsupported": "이 버전의 OpenBot은 아직 이미지, 파일, 메시지 단계를 실행할 수 없어요.",
+  "error.workflow.interrupted": "이 단계가 실행되는 동안 OpenBot이 중지됐어요. 다시 실행해 주세요.",
+  "error.workflow.agentMissing": "이 단계의 에이전트를 선택하세요.",
+  "error.workflow.handoffFailed": "OpenBot이 이 단계를 에이전트에 보내지 못했어요.",
+  "error.workflow.agentStepEnded": "에이전트가 답하기 전에 이 단계의 메시지가 삭제됐어요.",
+  "error.workflow.agentStepStopped": "에이전트가 이 단계에 답하기 전에 멈췄어요. 단계를 다시 실행해 주세요.",
+  "error.workflow.conditionUnclear": "모델이 ‘예’ 또는 ‘아니요’로 답하지 않았어요.",
+  "error.workflow.modelFailed": "모델이 답할 수 없었어요. 단계를 다시 실행해 주세요.",
+  "error.workflow.modelTimedOut":
+    "모델이 제때 답하지 않았어요. 이 단계의 강도를 낮추거나 더 빠른 모델을 고른 다음 다시 실행해 주세요.",
+  "error.workflow.modelToolUse":
+    "모델이 도구를 쓰려고 했지만 이 단계는 텍스트로만 답할 수 있어요. 단계를 다시 실행하거나 다른 모델을 골라 주세요.",
+  "error.workflow.modelUnavailable": "이 단계의 모델을 사용할 수 없어요. 이 단계에 다른 모델을 골라 주세요.",
+  "error.workflow.providerBusy": "제공자가 바빠요. 몇 분 기다린 다음 단계를 다시 실행해 주세요.",
+  "error.workflow.providerOffline":
+    "OpenBot이 제공자에 연결할 수 없었어요. 인터넷 연결을 확인한 다음 단계를 다시 실행해 주세요.",
+  "error.workflow.modelBusy": "다른 모델 요청이 실행 중이에요. 잠시 후 단계를 다시 실행해 주세요.",
+  "error.workflow.mediaFailed": "모델이 이미지나 동영상을 만들 수 없었어요. 단계를 다시 실행해 주세요.",
+  "error.workflow.pictureMissing": "이미지가 서버에 더 이상 없어요. 다시 보내 주세요.",
+  "error.workflow.pictureType": "PNG, JPEG 또는 WebP 이미지를 사용해 주세요.",
+  "error.workflow.mediaInputMissing": "이전 단계의 이미지를 사용할 수 없어요. 그 단계를 다시 실행해 주세요.",
+  "error.workflow.mediaEmptyRequest": "설명을 작성하거나 앞 단계를 실행해 텍스트나 이미지가 들어오게 해 주세요.",
+  "error.workflow.mediaInputNotImage": "이 단계는 동영상이 아닌 이미지만 받아요. 동영상에서 오는 연결을 지워 주세요.",
+  "error.workflow.stepMissing": "이 단계는 더 이상 존재하지 않아요.",
+  "error.workflow.nodeMissing": "이 단계는 워크플로에 없어요.",
+  "error.workflow.runMissing": "이 실행은 더 이상 존재하지 않아요.",
+  "error.workflow.notRetryable": "실패했거나 중지된 단계만 다시 실행할 수 있어요.",
+  "error.workflow.noDecision": "이 단계는 결정을 기다리고 있지 않아요.",
+  "error.workflow.outputPlaceMissing": "이 출력의 메시징 위치를 선택하세요.",
+  "error.workflow.outputChannelMissing": "이 출력의 채널을 선택하세요.",
+  "error.workflow.outputChannelFailed": "OpenBot이 결과를 채널에 게시하지 못했습니다. 단계를 다시 실행하세요.",
+  "error.workflow.discordNoMessage":
+    "이 출력은 실행을 시작한 Discord 메시지에 작동합니다. Discord 멘션으로 실행을 시작하거나 채널에 게시를 선택하세요.",
+  "error.workflow.slackNoMessage":
+    "이 출력은 실행을 시작한 Slack 메시지에 작동합니다. Slack 멘션으로 실행을 시작하거나 채널에 게시를 선택하세요.",
+  "error.workflow.telegramNoMessage":
+    "이 출력은 실행을 시작한 Telegram 메시지에 작동합니다. Telegram 멘션으로 실행을 시작하거나 채팅에 게시를 선택하세요.",
+  "error.workflow.outputConnectionOff": "이 출력의 메시징 연결이 꺼져 있거나 삭제됐어요. 위치를 다시 선택하세요.",
+  "error.workflow.outputNotRunning": "메시징 연결이 지금 실행되고 있지 않아요. 실행될 때 다시 시도해 주세요.",
+  "error.workflow.outputRefused": "위치에서 게시를 거부했어요. OpenBot이 그곳에 게시할 수 있는지 확인하세요.",
+  "error.workflow.outputUncertain":
+    "게시가 도중에 멈췄어요. 일부가 이미 그 위치에 있을 수 있어요. 다시 시도하기 전에 확인하세요.",
+  "error.workflow.tooLarge":
+    "이 워크플로는 너무 커서 저장할 수 없어요. 그림이나 긴 텍스트를 일부 삭제한 후 다시 시도해 주세요.",
+  "error.workflow.tooLargeToSend":
+    "이 워크플로는 너무 커서 다른 컴퓨터로 보낼 수 없어요. 서버를 실행하는 컴퓨터에서 여세요.",
+  "error.workflow.webhookMissing": "이 단계는 웹훅 트리거가 아니에요. 워크플로를 저장한 후 다시 시도해 주세요.",
+  "error.workflow.githubActionMissing": "이 출력이 GitHub에서 할 동작을 선택하세요.",
+  "error.workflow.githubRepositoryMissing": "이 출력의 저장소를 선택하세요.",
+  "error.workflow.githubItemMissing":
+    "이 출력에는 이슈나 풀 리퀘스트가 없어요. GitHub 이벤트에서 실행을 시작하거나 입력에 번호를 넣으세요.",
+  "error.workflow.githubPullRequestOnly": "이 동작은 풀 리퀘스트에서만 작동해요.",
+  "error.workflow.githubTextMissing": "이 출력에는 보낼 텍스트가 없어요. 텍스트를 작성하는 단계를 연결하세요.",
+  "error.workflow.githubEventText":
+    "이 출력은 트리거의 원본 이벤트를 보낼 수 없어요. 트리거와 이 출력 사이에 에이전트를 넣으세요.",
+  "error.workflow.githubChoiceMissing": "이 출력의 레이블 또는 사용자를 선택하세요.",
+  "error.workflow.githubChoseNothing": "모델이 이 저장소의 레이블이나 사용자를 하나도 선택하지 않았어요.",
+  "error.workflow.githubNotConnected": "이 워크플로를 실행하는 컴퓨터에서 GitHub를 연결하세요.",
+  "error.workflow.githubNoAccess":
+    "OpenBot GitHub App이 이 저장소나 항목을 볼 수 없어요. GitHub를 열고 액세스 권한을 주세요.",
+  "error.workflow.githubNoWrite":
+    "OpenBot GitHub App이 이 저장소를 변경할 수 없어요. GitHub를 열고 액세스 권한을 주세요.",
+  "error.workflow.githubLocked": "이 대화는 GitHub에서 잠겨 있어요.",
+  "error.workflow.githubRefused": "GitHub가 변경을 거부했어요: {detail}",
+  "error.workflow.githubUnreachable": "OpenBot이 GitHub에 연결하지 못했어요. 단계를 다시 실행해 주세요.",
+  "error.workflow.githubUncertain":
+    "변경이 도중에 멈췄어요. GitHub에 이미 반영됐을 수 있어요. 단계를 다시 실행하기 전에 GitHub를 확인하세요.",
+  "error.workflow.githubNoEvent": "이 트리거가 시작할 이슈나 풀 리퀘스트가 GitHub에 없어요.",
+  "error.workflow.sunraSignIn": "Sunra 모델을 사용하려면 앱에서 Sunra에 로그인하세요.",
+  "error.workflow.sunraNoCredits":
+    "Sunra 계정의 크레딧이 부족합니다. sunra.ai/pricing에서 크레딧을 추가한 다음 단계를 다시 실행하세요.",
+  "error.workflow.sunraNeedsPlan":
+    "이 Sunra 모델에는 Sunra 플랜이 필요합니다. sunra.ai/pricing에서 플랜을 선택하거나 다른 모델을 선택하세요.",
+  "error.workflow.sunraTeamInputs":
+    "Sunra는 개인 계정에서만 입력 이미지를 사용합니다. Sunra에서 개인 계정을 선택하거나 이미지 연결을 제거하세요.",
+  "error.workflow.sunraFailed": "Sunra가 파일을 만들지 못했습니다: {reason}",
+  "error.workflow.sunraTimeout":
+    "Sunra가 제시간에 파일을 완성하지 못했습니다. 단계를 다시 실행하기 전에 sunra.ai의 OpenBot 프로젝트를 확인하세요.",
+  "error.workflow.higgsfieldSignIn": "Higgsfield 모델을 사용하려면 앱에서 Higgsfield에 로그인하세요.",
+  "error.workflow.higgsfieldNoCredits":
+    "Higgsfield 계정의 크레딧이 부족해요. higgsfield.ai/pricing에서 크레딧을 추가한 다음 단계를 다시 실행하세요.",
+  "error.workflow.higgsfieldNeedsPlan":
+    "이 Higgsfield 모델에는 Higgsfield 요금제가 필요해요. higgsfield.ai/pricing에서 요금제를 선택하거나 다른 모델을 선택하세요.",
+  "error.workflow.higgsfieldBlocked":
+    "Higgsfield의 콘텐츠 검사가 막아서 파일을 만들지 않았어요. 프롬프트나 입력 이미지를 바꾼 다음 단계를 다시 실행하세요.",
+  "error.workflow.higgsfieldFailed": "Higgsfield에서 파일을 만들지 못했어요: {reason}",
+  "error.workflow.higgsfieldTimeout":
+    "Higgsfield가 제시간에 파일을 완성하지 못했어요. 단계를 다시 실행하기 전에 higgsfield.ai의 기록을 확인하세요.",
+} as const satisfies PartialTranslation<typeof source>;

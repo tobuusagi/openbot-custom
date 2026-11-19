@@ -1,0 +1,298 @@
+import { providerDisplayName } from "@openbot/contracts/agent-providers";
+import type { QueueDelivery } from "@openbot/contracts/ipc";
+import { GlassView } from "expo-glass-effect";
+import { router } from "expo-router";
+import { Typography } from "heroui-native";
+import { useThemeColor } from "heroui-native/hooks";
+import ChevronUp from "lucide-react-native/icons/chevron-up";
+import Clock from "lucide-react-native/icons/clock";
+import CornerDownRight from "lucide-react-native/icons/corner-down-right";
+import GitBranch from "lucide-react-native/icons/git-branch";
+import Pencil from "lucide-react-native/icons/pencil";
+import Trash2 from "lucide-react-native/icons/trash";
+import { memo, type ReactNode, useState } from "react";
+import { Alert, Pressable, View, type ViewStyle } from "react-native";
+import Animated, { cubicBezier } from "react-native-reanimated";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useCSSVariable } from "uniwind";
+import { haptics } from "@/shared/lib/haptics";
+import { useReducedMotion } from "@/shared/lib/motion";
+import { useText } from "@/shared/lib/text";
+import { lineDirectionStyle, MIRROR_IN_RTL } from "@/shared/lib/text-direction";
+import type { QueuedUpload } from "../context/queued-messages-context";
+import { queuedMessageLocks, queuedMessagePreview } from "../model/queued-message-view";
+import { ChatGlassButton } from "./chat-glass-icon-button";
+import type { ChatQueueController } from "./use-chat-queue";
+
+const NEXT_HEIGHT = 44;
+const MORE_HEIGHT = 36;
+const RADIUS = NEXT_HEIGHT / 2;
+const GROW_MS = 280;
+const EASE_OUT = cubicBezier(0.23, 1, 0.32, 1);
+
+interface ChatQueueButtonProps {
+  queue: ChatQueueController;
+  count: number;
+  rows: readonly QueueDelivery[];
+  pending: QueuedUpload | null;
+  liquidGlassAvailable: boolean;
+  fallbackBackground: ViewStyle["backgroundColor"];
+}
+
+function openSheet(chatId: string) {
+  void haptics.selection();
+  router.push({ pathname: "/queued-messages", params: { chat: chatId } });
+}
+
+export const ChatQueueButton = memo(function ChatQueueButton({
+  queue,
+  count,
+  rows,
+  pending,
+  liquidGlassAvailable,
+  fallbackBackground,
+}: ChatQueueButtonProps) {
+  const { t } = useText();
+  const muted = useThemeColor("muted");
+  const waiting = queue.waiting.length > 0;
+  const next = rows[0] ?? null;
+  const preview = next
+    ? queuedMessagePreview(next)
+    : pending
+      ? pending.message.body || (pending.message.attachments ?? []).map((file) => file.name).join(", ")
+      : null;
+  if (preview !== null)
+    return (
+      <ChatQueueCard
+        queue={queue}
+        next={next}
+        preview={preview}
+        rest={count - 1}
+        waiting={waiting}
+        liquidGlassAvailable={liquidGlassAvailable}
+        fallbackBackground={fallbackBackground}
+      />
+    );
+  if (!waiting) return null;
+  const label = t("mobile.chat.queue.repliesTitle");
+  return (
+    <View className="mb-2 items-center">
+      <ChatGlassButton
+        accessibilityLabel={label}
+        className="h-11 flex-row items-center gap-2 px-4"
+        fallbackBackground={fallbackBackground}
+        height={44}
+        liquidGlassAvailable={liquidGlassAvailable}
+        onPress={() => openSheet(queue.chatId)}
+      >
+        <Clock color={String(muted)} size={16} strokeWidth={2} />
+        <Typography.Paragraph type="body-sm" weight="semibold">
+          {label}
+        </Typography.Paragraph>
+        <ChevronUp color={String(muted)} size={16} strokeWidth={2} />
+      </ChatGlassButton>
+    </View>
+  );
+});
+
+interface ChatQueueCardProps {
+  queue: ChatQueueController;
+  next: QueueDelivery | null;
+  preview: string;
+  rest: number;
+  waiting: boolean;
+  liquidGlassAvailable: boolean;
+  fallbackBackground: ViewStyle["backgroundColor"];
+}
+
+function ChatQueueCard({
+  queue,
+  next,
+  preview,
+  rest,
+  waiting,
+  liquidGlassAvailable,
+  fallbackBackground,
+}: ChatQueueCardProps) {
+  const { t } = useText();
+  const insets = useSafeAreaInsets();
+  const reducedMotion = useReducedMotion();
+  const muted = String(useThemeColor("muted"));
+  const foreground = String(useThemeColor("foreground"));
+  const danger = String(useCSSVariable("--openbot-danger-text"));
+  const held = queue.edit?.delivery ?? null;
+  const locks = next ? queuedMessageLocks(next, { busy: queue.busy, online: queue.online, held }) : null;
+  const locked = locks?.locked ?? true;
+  const editedElsewhere = locks?.editedElsewhere ?? false;
+  const holdLabel = queue.restartingProvider
+    ? t("mobile.chat.queue.providerRestart", { provider: providerDisplayName(queue.restartingProvider) })
+    : null;
+  const more = rest > 0 || waiting || holdLabel !== null;
+  const moreLabel =
+    holdLabel ??
+    (rest > 0 ? t("mobile.chat.queue.more", { count: rest }) : waiting ? t("mobile.chat.queue.repliesTitle") : null);
+  const [shownMoreLabel, setShownMoreLabel] = useState(moreLabel);
+  if (moreLabel && moreLabel !== shownMoreLabel) setShownMoreLabel(moreLabel);
+  const finish = (action: Promise<boolean>) => {
+    void action.then((done) => void haptics.notification(done ? "success" : "error"));
+  };
+  const transition = {
+    transitionDuration: reducedMotion ? 0 : GROW_MS,
+    transitionTimingFunction: EASE_OUT,
+  };
+  return (
+    <View className="mb-2" style={{ paddingLeft: insets.left + 16, paddingRight: insets.right + 16 }}>
+      <Animated.View
+        style={{
+          borderCurve: "continuous",
+          borderRadius: RADIUS,
+          overflow: "hidden",
+          height: NEXT_HEIGHT + (more ? MORE_HEIGHT : 0),
+          transitionProperty: "height",
+          ...transition,
+        }}
+      >
+        <GlassView
+          glassEffectStyle={liquidGlassAvailable ? "regular" : "none"}
+          isInteractive={false}
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            inset: 0,
+            borderCurve: "continuous",
+            borderRadius: RADIUS,
+            backgroundColor: liquidGlassAvailable ? "transparent" : fallbackBackground,
+          }}
+        />
+        <View className="flex-row items-center pr-1" style={{ height: NEXT_HEIGHT }}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t("mobile.chat.queue.nextLabel", { text: preview })}
+            className="min-w-0 flex-1 flex-row items-center gap-2 self-stretch pl-4"
+            style={({ pressed }) => ({ opacity: pressed ? 0.55 : 1 })}
+            onPress={() => openSheet(queue.chatId)}
+          >
+            <Clock color={muted} size={16} strokeWidth={2} />
+            <Typography.Paragraph
+              type="body-sm"
+              numberOfLines={1}
+              className="min-w-0 flex-1"
+              style={lineDirectionStyle(preview)}
+            >
+              {preview}
+            </Typography.Paragraph>
+          </Pressable>
+          {queue.activeTurnId ? (
+            <CardAction
+              accessibilityLabel={t(queue.steers ? "mobile.chat.queue.steerNext" : "mobile.chat.queue.sendNowNext")}
+              disabled={locked || editedElsewhere || queue.steerRefused}
+              onPress={() => {
+                if (!next) return;
+                void haptics.selection();
+                finish(queue.steers ? queue.steer(next) : queue.sendNow(next));
+              }}
+            >
+              <View className="flex-row items-center gap-1 px-1">
+                <CornerDownRight color={foreground} size={18} strokeWidth={2} style={MIRROR_IN_RTL} />
+                <Typography.Paragraph type="body-sm" weight="semibold">
+                  {t(queue.steers ? "mobile.chat.queue.steer" : "mobile.chat.queue.sendNow")}
+                </Typography.Paragraph>
+              </View>
+            </CardAction>
+          ) : null}
+          <CardAction
+            accessibilityLabel={t("mobile.chat.queue.editNext")}
+            disabled={locked || editedElsewhere || !queue.canEdit}
+            onPress={() => {
+              if (!next) return;
+              void haptics.selection();
+              router.push({ pathname: "/queued-messages/edit", params: { chat: queue.chatId, deliveryId: next.id } });
+            }}
+          >
+            <Pencil color={foreground} size={18} strokeWidth={2} />
+          </CardAction>
+          {queue.canRunAsThread ? (
+            <CardAction
+              accessibilityLabel={t("mobile.chat.queue.runNextInNewThread")}
+              disabled={locked || editedElsewhere || Boolean(locks?.heldForEdit)}
+              onPress={() => {
+                if (!next) return;
+                void haptics.selection();
+                void queue.runAsThread(next).then((task) => {
+                  void haptics.notification(task ? "success" : "error");
+                  if (task)
+                    router.push({
+                      pathname: "/task/[taskId]",
+                      params: { taskId: task.id, agentId: task.agentId, serverId: queue.serverId },
+                    });
+                });
+              }}
+            >
+              <GitBranch color={foreground} size={18} strokeWidth={2} />
+            </CardAction>
+          ) : null}
+          <CardAction
+            accessibilityLabel={t("mobile.chat.queue.deleteNext")}
+            disabled={locked}
+            onPress={() =>
+              Alert.alert(t("mobile.chat.queue.deleteTitle"), t("mobile.chat.queue.deleteMessage"), [
+                { text: t("mobile.chat.queue.keep"), style: "cancel" },
+                { text: t("common.delete"), style: "destructive", onPress: () => next && finish(queue.remove(next)) },
+              ])
+            }
+          >
+            <Trash2 color={danger} size={18} strokeWidth={2} />
+          </CardAction>
+        </View>
+        <Animated.View
+          accessibilityElementsHidden={!more}
+          importantForAccessibility={more ? "auto" : "no-hide-descendants"}
+          pointerEvents={more ? "auto" : "none"}
+          style={{ height: MORE_HEIGHT, opacity: more ? 1 : 0, transitionProperty: "opacity", ...transition }}
+        >
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={
+              holdLabel ??
+              (rest > 0 ? t("mobile.chat.queue.buttonLabel", { count: rest + 1 }) : (shownMoreLabel ?? undefined))
+            }
+            className="flex-1 flex-row items-center justify-center gap-1.5 border-separator border-t"
+            style={({ pressed }) => ({ opacity: pressed ? 0.55 : 1 })}
+            onPress={() => openSheet(queue.chatId)}
+          >
+            <Typography.Paragraph type="body-xs" weight="semibold" className="text-muted">
+              {shownMoreLabel}
+            </Typography.Paragraph>
+            <ChevronUp color={muted} size={14} strokeWidth={2} />
+          </Pressable>
+        </Animated.View>
+      </Animated.View>
+    </View>
+  );
+}
+
+function CardAction({
+  accessibilityLabel,
+  children,
+  disabled,
+  onPress,
+}: {
+  accessibilityLabel: string;
+  children: ReactNode;
+  disabled: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      className="h-11 min-w-11 items-center justify-center px-1"
+      style={({ pressed }) => ({ opacity: disabled ? 0.45 : pressed ? 0.55 : 1 })}
+      onPress={onPress}
+    >
+      {children}
+    </Pressable>
+  );
+}

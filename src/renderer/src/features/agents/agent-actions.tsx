@@ -1,0 +1,410 @@
+import type { ClientAgentSummary } from "@openbot/contracts/ipc";
+import { AGENT_WELCOME_CAPABILITY, TEAM_AGENT_CREATE_MODEL_CAPABILITY } from "@openbot/contracts/team-protocol/current";
+import { classifyFailure } from "@openbot/telemetry";
+import { toast } from "@openbot/ui";
+import type { AgentProfile } from "@openbot/ui/data";
+import { AgentDeleteUndoToast, startUndoCountdown } from "@openbot/ui/features/agents/AgentDeleteUndoToast";
+import type { FirstAgentDraft } from "@openbot/ui/features/agents/FirstAgentSetup";
+import { duplicateSection as duplicateSectionWith } from "@openbot/ui/features/sidebar/duplicate-section";
+import { currentText } from "@openbot/ui/text";
+import { createSignal, onCleanup } from "solid-js";
+import { actionToast } from "../../action-toast";
+import { desktopAnalytics } from "../../analytics";
+import { toAgentProfile, withoutAgent } from "../../app-message-projection";
+import { createStoredProfile } from "../../app-stored-values";
+import { useNavigation } from "../../navigation";
+import { createScopeGuard } from "../../scope-lifetime";
+import { createSimpleContext } from "../../simple-context";
+import { useTurns } from "../../turns";
+import { useAgentThreads } from "../agent-threads/agent-threads-context";
+import { useConversation } from "../conversation/conversation-context";
+import { agentConversationKey } from "../conversation/conversation-keys";
+import { useServers } from "../servers/servers-context";
+import { useSidebar } from "../sidebar/sidebar-context";
+import { type NewAgentDraft, newAgentInput } from "./agent-create-input";
+import { attentionAgentId, withoutAttention } from "./agent-runtime-snapshot";
+import { useAgents } from "./agents-context";
+import { agentsPort } from "./agents-port";
+
+const AgentActions = createSimpleContext({
+  name: "Agent actions",
+  init: () => {
+    const { activeServer, activeServerId, activeServerSupportsCapability } = useServers();
+    const scopeIsCurrent = createScopeGuard();
+    const {
+      agentList,
+      setAgentList,
+      agentSetupOpen,
+      agentSetupDraft,
+      setAgentSetupError,
+      creatingAgent,
+      setCreatingAgent,
+      duplicatingAgentIds,
+      setDuplicatingAgentIds,
+      activeAgentId,
+      setActiveAgentId,
+      setSettingsRequest,
+      setUiErrors,
+      analyticsAgentProperties,
+      hideAgent,
+      forgetHiddenAgent,
+      userHiddenAgents,
+      userHiddenAgentIds,
+      applyUserHiddenAgents,
+      ownAgentLevels,
+      applyOwnAgentLevels,
+    } = useAgents();
+    const { initializeConversation, removeConversation } = useConversation();
+    const threads = useAgentThreads();
+    const { setActiveTurns, setFailedTurns, setQueues, setPendingPrompts } = useTurns();
+    const { sidebarLayout, setSidebarLayout, applySidebarLayoutAction, removePinnedSidebarItemEverywhere } =
+      useSidebar();
+    const { selectAgent, openCreatedAgent } = useNavigation();
+    const [duplicatingSectionIds, setDuplicatingSectionIds] = createSignal<Set<string>>(new Set());
+
+    function requestNewAgent(draft: NewAgentDraft) {
+      const local = activeServer()?.kind !== "remote";
+      const createModelSupported = local || activeServerSupportsCapability(TEAM_AGENT_CREATE_MODEL_CAPABILITY);
+      const welcomeSupported = local || activeServerSupportsCapability(AGENT_WELCOME_CAPABILITY);
+      return agentsPort().agent.createAgent(newAgentInput(draft, createModelSupported, welcomeSupported));
+    }
+
+    function addNewAgent(stored: ClientAgentSummary): AgentProfile {
+      const newAgent = createStoredProfile(toAgentProfile(stored));
+      setAgentList((current) => [newAgent, ...current.filter((item) => item.id !== newAgent.id)]);
+      initializeConversation(newAgent.id);
+      return newAgent;
+    }
+
+    async function createAgentInPlace(draft: Parameters<typeof requestNewAgent>[0]) {
+      const analytics = desktopAnalytics.scope();
+      try {
+        const newAgent = addNewAgent(await requestNewAgent(draft));
+        const properties = analyticsAgentProperties(newAgent.id);
+        analytics.track("agent_action", { action: "create", result: "succeeded", ...(properties ?? {}) });
+        return newAgent;
+      } catch (error) {
+        analytics.track("agent_action", { action: "create", result: "failed", failure_code: "create_failed" });
+        throw error;
+      }
+    }
+
+    async function createAgent(draft: FirstAgentDraft = agentSetupDraft()) {
+      if (creatingAgent()) return;
+      const analytics = desktopAnalytics.scope();
+      const submitted = { ...draft };
+      setCreatingAgent(true);
+      setAgentSetupError(null);
+      try {
+        const newAgent = addNewAgent(await requestNewAgent(submitted));
+        openCreatedAgent(newAgent.id);
+        const properties = analyticsAgentProperties(newAgent.id);
+        analytics.track("agent_action", { action: "create", result: "succeeded", ...(properties ?? {}) });
+      } catch (error) {
+        analytics.track("agent_action", { action: "create", result: "failed", failure_code: "create_failed" });
+        const { t, errorMessage } = currentText();
+        setAgentSetupError(errorMessage(error, t("agent.error.createFailed")));
+      } finally {
+        setCreatingAgent(false);
+      }
+    }
+
+    function editAgent(agentId: string) {
+      if (agentSetupOpen() && creatingAgent()) return;
+      selectAgent(agentId);
+      setSettingsRequest({ agentId, nonce: Date.now() });
+    }
+
+    async function copyAgent(agentId: string) {
+      const result = await agentsPort().agent.duplicateAgent(agentId);
+      if (!scopeIsCurrent()) return null;
+      const profile = createStoredProfile(toAgentProfile(result.agent));
+      setAgentList((current) => [profile, ...current.filter((candidate) => candidate.id !== profile.id)]);
+      setSidebarLayout(result.layout);
+      return result;
+    }
+
+    async function duplicateAgent(agentId: string): Promise<void> {
+      if (agentSetupOpen() && creatingAgent()) return;
+      if (!activeServerSupportsCapability("agent-duplication") || duplicatingAgentIds().has(agentId)) return;
+      const analytics = desktopAnalytics.scope();
+      const properties = analyticsAgentProperties(agentId);
+      setDuplicatingAgentIds((current) => new Set(current).add(agentId));
+      try {
+        const result = await copyAgent(agentId);
+        if (!result) return;
+        selectAgent(result.agent.id);
+        analytics.track("agent_action", { action: "duplicate", result: "succeeded", ...(properties ?? {}) });
+      } catch (error) {
+        analytics.track("agent_action", {
+          action: "duplicate",
+          result: "failed",
+          failure_code: "duplicate_failed",
+          ...(properties ?? {}),
+        });
+        const { t, errorMessage } = currentText();
+        actionToast.error(t("agent.error.duplicateTitle"), {
+          ...{
+            description: errorMessage(error, t("agent.error.duplicateFailed")),
+          },
+          report: { operation: "agent", source: "action", cause_code: classifyFailure(error) },
+        });
+        throw error;
+      } finally {
+        setDuplicatingAgentIds((current) => {
+          const next = new Set(current);
+          next.delete(agentId);
+          return next;
+        });
+      }
+    }
+
+    async function duplicateSection(sectionId: string): Promise<void> {
+      if (agentSetupOpen() && creatingAgent()) return;
+      if (!activeServerSupportsCapability("agent-duplication") || !activeServerSupportsCapability("sidebar-layout")) {
+        return;
+      }
+      if (duplicatingSectionIds().has(sectionId)) return;
+      setDuplicatingSectionIds((current) => new Set(current).add(sectionId));
+      try {
+        const hidden = userHiddenAgentIds();
+        await duplicateSectionWith(
+          {
+            layout: sidebarLayout(),
+            agentIds: agentList()
+              .filter((agent) => !hidden.has(agent.id))
+              .map((agent) => agent.id),
+            duplicateAgent: async (agentId) => {
+              if (!scopeIsCurrent()) return null;
+              setDuplicatingAgentIds((current) => new Set(current).add(agentId));
+              try {
+                const result = await copyAgent(agentId);
+                return result && { agentId: result.agent.id, layout: result.layout };
+              } finally {
+                setDuplicatingAgentIds((current) => {
+                  const next = new Set(current);
+                  next.delete(agentId);
+                  return next;
+                });
+              }
+            },
+            mutateLayout: async (action) => {
+              if (!scopeIsCurrent()) return null;
+              const layout = await applySidebarLayoutAction(action);
+              return scopeIsCurrent() ? layout : null;
+            },
+          },
+          sectionId,
+        );
+      } catch (error) {
+        const { t, errorMessage } = currentText();
+        actionToast.error(t("sidebar.section.duplicateTitle"), {
+          description: errorMessage(error, t("sidebar.section.duplicateFailed")),
+          report: { operation: "agent", source: "action", cause_code: classifyFailure(error) },
+        });
+        throw error;
+      } finally {
+        setDuplicatingSectionIds((current) => {
+          const next = new Set(current);
+          next.delete(sectionId);
+          return next;
+        });
+      }
+    }
+
+    const pendingDeletes = new Map<string, () => void>();
+    onCleanup(() => {
+      for (const commit of [...pendingDeletes.values()]) commit();
+    });
+
+    async function deleteAgent(agentId: string) {
+      if (agentSetupOpen() && creatingAgent()) return;
+      if (pendingDeletes.has(agentId)) return;
+      const agent = agentList().find((candidate) => candidate.id === agentId);
+      if (!agent) return;
+      const serverId = activeServerId();
+      const analytics = desktopAnalytics.scope();
+      const properties = analyticsAgentProperties(agentId);
+      const marketplaceAgent = Boolean(agent.marketplaceSource);
+      const wasActive = activeAgentId() === agentId;
+      const others = agentList().filter((candidate) => candidate.id !== agentId);
+      const userHidden = userHiddenAgentIds();
+      const nextAgentId = (others.find((candidate) => !userHidden.has(candidate.id)) ?? others[0])?.id ?? "";
+      const hidden = hideAgent(agentId);
+      if (!hidden) return;
+      const showAgent: () => void = hidden;
+      if (wasActive) setActiveAgentId(nextAgentId);
+      setSettingsRequest((current) => (current?.agentId === agentId ? null : current));
+
+      const toastId = `agent-delete-${serverId}-${agentId}`;
+      let settled = false;
+      function settle(): boolean {
+        if (settled) return false;
+        settled = true;
+        countdown.stop();
+        pendingDeletes.delete(agentId);
+        queueMicrotask(() => toast.dismiss(toastId));
+        return true;
+      }
+
+      function undo(): void {
+        if (!settle() || !scopeIsCurrent()) return;
+        showAgent();
+        if (wasActive) setActiveAgentId(agentId);
+      }
+
+      function forgetDeletedAgent(): void {
+        analytics.track("agent_action", { action: "delete", result: "succeeded", ...(properties ?? {}) });
+        if (marketplaceAgent) {
+          analytics.track("marketplace_action", { entity: "agent", action: "uninstall", result: "succeeded" });
+        }
+        if (!scopeIsCurrent()) return;
+        forgetHiddenAgent(agentId);
+        threads.forgetAgent(agentId);
+        removeConversation(agentId);
+        setUiErrors((current) => withoutAgent(current, agentConversationKey(serverId, agentId)));
+        setActiveTurns((current) => withoutAgent(current, agentId));
+        setFailedTurns((current) => withoutAgent(current, agentId));
+        setQueues((current) => withoutAgent(current, agentId));
+        setPendingPrompts((current) => withoutAttention(current, (event) => attentionAgentId(event) === agentId));
+      }
+
+      async function commit(): Promise<void> {
+        if (!settle()) return;
+        removePinnedSidebarItemEverywhere({ kind: "agent", id: agentId });
+        try {
+          await agentsPort().agent.deleteAgent(agentId, serverId);
+          forgetDeletedAgent();
+        } catch (error) {
+          const stillListed = await agentsPort()
+            .agent.listAgents(serverId)
+            .then(
+              (agents) => agents.some((candidate) => candidate.id === agentId),
+              () => true,
+            );
+          if (!stillListed) {
+            forgetDeletedAgent();
+            return;
+          }
+          analytics.track("agent_action", {
+            action: "delete",
+            result: "failed",
+            failure_code: "delete_failed",
+            ...(properties ?? {}),
+          });
+          if (marketplaceAgent) {
+            analytics.track("marketplace_action", {
+              entity: "agent",
+              action: "uninstall",
+              result: "failed",
+              failure_code: "uninstall_failed",
+            });
+          }
+          if (scopeIsCurrent()) showAgent();
+          const { t, errorMessage } = currentText();
+          actionToast.error(t("agent.error.deleteFailed"), {
+            description: errorMessage(error, t("sidebar.delete.failed")),
+            report: { operation: "agent", source: "action", cause_code: classifyFailure(error) },
+          });
+        }
+      }
+
+      const countdown = startUndoCountdown(() => void commit());
+      pendingDeletes.set(agentId, () => void commit());
+      toast(() => <AgentDeleteUndoToast agent={agent} countdown={countdown} onUndo={undo} />, {
+        id: toastId,
+        duration: Number.POSITIVE_INFINITY,
+        unstyled: true,
+        closeButton: false,
+        class: "agent-delete-undo-toast-host",
+        onDismiss: () => void commit(),
+      });
+    }
+
+    const hideToastIds = new Set<string>();
+    onCleanup(() => {
+      const ids = [...hideToastIds];
+      queueMicrotask(() => {
+        for (const id of ids) toast.dismiss(id);
+      });
+    });
+
+    async function setAgentHiddenByUser(agentId: string, hidden: boolean): Promise<void> {
+      if (agentSetupOpen() && creatingAgent()) return;
+      const agent = agentList().find((candidate) => candidate.id === agentId);
+      if (!agent || userHiddenAgentIds().has(agentId) === hidden) return;
+      const serverId = activeServerId();
+      const toastId = `agent-hide-${serverId}-${agentId}`;
+      const previous = userHiddenAgents().find((entry) => entry.agentId === agentId);
+      const withoutAgent = () => userHiddenAgents().filter((entry) => entry.agentId !== agentId);
+      applyUserHiddenAgents(
+        hidden ? [...withoutAgent(), { agentId, hiddenAt: new Date().toISOString() }] : withoutAgent(),
+      );
+      if (hidden) {
+        const { t } = currentText();
+        hideToastIds.add(toastId);
+        toast(t("agent.hideUndo.title", { name: agent.name }), {
+          id: toastId,
+          action: { label: t("agent.hideUndo.action"), onClick: () => void setAgentHiddenByUser(agentId, false) },
+          onDismiss: () => hideToastIds.delete(toastId),
+          onAutoClose: () => hideToastIds.delete(toastId),
+        });
+      } else if (hideToastIds.delete(toastId)) {
+        toast.dismiss(toastId);
+      }
+      try {
+        const snapshot = await agentsPort().agent.setAgentHidden({ agentId, hidden }, serverId);
+        applyUserHiddenAgents(snapshot.agents);
+      } catch (error) {
+        if (!scopeIsCurrent()) return;
+        applyUserHiddenAgents(previous ? [...withoutAgent(), previous] : withoutAgent());
+        if (hideToastIds.delete(toastId)) toast.dismiss(toastId);
+        const { t, errorMessage } = currentText();
+        actionToast.error(t(hidden ? "agent.error.hideFailed" : "agent.error.restoreFailed"), {
+          description: errorMessage(error, t("agent.error.hiddenFailed")),
+          report: { operation: "agent", source: "action", cause_code: classifyFailure(error) },
+        });
+      }
+    }
+
+    async function setAgentMuted(agentId: string, muted: boolean): Promise<void> {
+      const previous = ownAgentLevels().get(agentId) ?? null;
+      const level = muted ? "nothing" : null;
+      if (previous === level) return;
+      const serverId = activeServerId();
+      const withLevel = (next: typeof previous) => ({
+        agents: [
+          ...[...ownAgentLevels()].flatMap(([id, own]) => (id === agentId ? [] : [{ agentId: id, level: own }])),
+          ...(next ? [{ agentId, level: next }] : []),
+        ],
+      });
+      applyOwnAgentLevels(withLevel(level));
+      try {
+        applyOwnAgentLevels(await agentsPort().agent.setAgentNotificationLevel({ agentId, level }, serverId));
+      } catch (error) {
+        if (!scopeIsCurrent()) return;
+        applyOwnAgentLevels(withLevel(previous));
+        const { t, errorMessage } = currentText();
+        actionToast.error(t("agent.error.muteFailed"), {
+          description: errorMessage(error, t("agent.error.hiddenFailed")),
+          report: { operation: "agent", source: "action", cause_code: classifyFailure(error) },
+        });
+      }
+    }
+
+    return {
+      createAgent,
+      createAgentInPlace,
+      editAgent,
+      duplicateAgent,
+      duplicateSection,
+      duplicatingSectionIds,
+      deleteAgent,
+      setAgentHiddenByUser,
+      setAgentMuted,
+    };
+  },
+});
+
+export const AgentActionsProvider = AgentActions.provider;
+export const useAgentActions = AgentActions.use;

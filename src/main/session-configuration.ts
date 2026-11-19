@@ -1,0 +1,261 @@
+import { readFile, stat } from "node:fs/promises";
+import { isAbsolute, relative, resolve } from "node:path";
+import { CHAT_VISUAL_PAGE_LIMIT, isChatVisualMimeType } from "@openbot/contracts/chat-visual";
+import { LOCAL_SERVER_ID } from "@openbot/contracts/ipc";
+import { createOpenBotLogger, toLogValue } from "@openbot/logging";
+import { app, session } from "electron";
+import type { AgentService } from "../backend/agent-service";
+import { runCauseEffect } from "../backend/effect-boundary";
+import type { MailboxStore } from "../backend/mailbox-store";
+import { applicationContentType } from "./application-content-type";
+import { attachmentCorsHeaders, attachmentDocumentHeaders, chatVisualResponse } from "./chat-visual-protocol";
+import { inlineContentDisposition } from "./content-disposition";
+import { buildContentSecurityPolicy, readSelfHostedSignalOrigin } from "./content-security-policy";
+import { filePreviewPages } from "./file-preview-pages";
+import { bytesResponse, fileResponse } from "./file-response";
+import { canAnswerRemoteRanges } from "./remote-attachment-cache";
+import type { RemoteServerManager } from "./remote-server-manager";
+import { parseRemoteAvatarUrl, remoteAttachmentPreviewSize } from "./remote-server-urls";
+import { canCheckRendererPermission, canRequestRendererPermission } from "./renderer-permissions";
+import type { TeamStore } from "./team-store";
+import { isTrustedRendererUrl } from "./trusted-renderer";
+
+export function configureContentSecurityPolicy(): void {
+  const policy = buildContentSecurityPolicy(
+    app.isPackaged,
+    process.env.REMOTE_SIGNAL_URL,
+    readSelfHostedSignalOrigin(process.env.OPENBOT_AUTH_API_URL, process.env.OPENBOT_REMOTE_SIGNAL_URL),
+  );
+
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    if (details.resourceType !== "mainFrame" || !isTrustedRendererUrl(details.url)) {
+      callback(details.responseHeaders === undefined ? {} : { responseHeaders: details.responseHeaders });
+      return;
+    }
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        "Content-Security-Policy": [policy],
+      },
+    });
+  });
+}
+
+export function configureRendererPermissions(): void {
+  session.defaultSession.setPermissionCheckHandler((_webContents, permission, requestingOrigin, details) =>
+    canCheckRendererPermission(permission, requestingOrigin, details),
+  );
+  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback, details) => {
+    const mediaTypes = ("mediaTypes" in details ? details.mediaTypes : undefined) ?? [];
+    callback(
+      canRequestRendererPermission(permission, {
+        requestingUrl: details.requestingUrl,
+        isMainFrame: details.isMainFrame,
+        mediaTypes,
+      }),
+    );
+  });
+}
+
+export interface AttachmentProtocolDependencies {
+  mailbox: MailboxStore;
+  agents: AgentService;
+  remoteServers: RemoteServerManager;
+}
+
+function asksForPreview(url: URL): boolean {
+  return url.searchParams.get("preview") === "1";
+}
+
+export function configureAttachmentProtocol({ mailbox, agents, remoteServers }: AttachmentProtocolDependencies): void {
+  const logger = createOpenBotLogger("attachment-protocol");
+  session.defaultSession.protocol.handle("openbot-attachment", async (request) => {
+    try {
+      const url = new URL(request.url);
+      const id = url.pathname.split("/").filter(Boolean).at(-1);
+      const attachment = id ? await runCauseEffect(mailbox.resolveAttachment(id)) : null;
+      if (!attachment) return new Response("Not found", { status: 404 });
+      return await runCauseEffect(
+        fileResponse(
+          attachment.path,
+          {
+            "Content-Type": attachment.mimeType,
+            "Cache-Control": "no-store",
+            ...attachmentCorsHeaders(request.headers.get("Origin")),
+            ...attachmentDocumentHeaders(attachment.mimeType),
+            "X-Content-Type-Options": "nosniff",
+            "Content-Disposition": inlineContentDisposition(attachment.name),
+          },
+          request.headers.get("Range"),
+        ),
+      );
+    } catch {
+      return new Response("Not found", { status: 404 });
+    }
+  });
+  session.defaultSession.protocol.handle("openbot-remote-attachment", async (request) => {
+    try {
+      const url = new URL(request.url);
+      const serverId = decodeURIComponent(url.hostname);
+      const attachmentId = decodeURIComponent(url.pathname.split("/").filter(Boolean)[0] ?? "");
+      if (!serverId || !attachmentId) return new Response("Not found", { status: 404 });
+      const attachment = await runCauseEffect(
+        asksForPreview(url)
+          ? remoteServers.downloadAttachmentPreview(attachmentId, serverId)
+          : remoteServers.downloadAttachment(attachmentId, serverId, true, remoteAttachmentPreviewSize(url)),
+      );
+      return bytesResponse(
+        attachment.bytes,
+        {
+          "Content-Type": attachment.mimeType,
+          "Cache-Control": "no-store",
+          ...attachmentCorsHeaders(request.headers.get("Origin")),
+          ...attachmentDocumentHeaders(attachment.mimeType),
+          "X-Content-Type-Options": "nosniff",
+          "Content-Disposition": inlineContentDisposition(attachment.name),
+        },
+        canAnswerRemoteRanges(attachment) ? request.headers.get("Range") : undefined,
+      );
+    } catch (error) {
+      logger.warn("A remote attachment could not be shown.", { cause: toLogValue(error) });
+      return new Response("Not found", { status: 404 });
+    }
+  });
+  session.defaultSession.protocol.handle("openbot-visual", async (request) => {
+    try {
+      const url = new URL(request.url);
+      if (url.hostname === "preview") return await filePreviewPages.response(request);
+      const id = url.hostname === "file" ? url.pathname.split("/").filter(Boolean).at(-1) : undefined;
+      const attachment = id ? await runCauseEffect(mailbox.resolveAttachment(id)) : null;
+      if (!attachment || !isChatVisualMimeType(attachment.mimeType)) return new Response("Not found", { status: 404 });
+      if ((await stat(attachment.path)).size > CHAT_VISUAL_PAGE_LIMIT)
+        return new Response("Not found", { status: 404 });
+      return chatVisualResponse(await readFile(attachment.path));
+    } catch {
+      return new Response("Not found", { status: 404 });
+    }
+  });
+  session.defaultSession.protocol.handle("openbot-remote-visual", async (request) => {
+    try {
+      const url = new URL(request.url);
+      const serverId = decodeURIComponent(url.hostname);
+      const attachmentId = decodeURIComponent(url.pathname.split("/").filter(Boolean)[0] ?? "");
+      if (!serverId || !attachmentId) return new Response("Not found", { status: 404 });
+      const attachment = await runCauseEffect(remoteServers.downloadAttachment(attachmentId, serverId));
+      if (!isChatVisualMimeType(attachment.mimeType)) return new Response("Not found", { status: 404 });
+      return chatVisualResponse(attachment.bytes);
+    } catch (error) {
+      logger.warn("A remote visual reply could not be shown.", { cause: toLogValue(error) });
+      return new Response("Not found", { status: 404 });
+    }
+  });
+  session.defaultSession.protocol.handle("openbot-avatar", async (request) => {
+    try {
+      const url = new URL(request.url);
+      if (url.hostname !== "agent" && url.hostname !== "channel") return new Response("Not found", { status: 404 });
+      const id = decodeURIComponent(url.pathname.split("/").filter(Boolean)[0] ?? "");
+      const avatar = !id ? null : url.hostname === "agent" ? agents.resolveAvatar(id) : agents.resolveChannelImage(id);
+      if (!avatar || avatar.version !== url.searchParams.get("v")) {
+        return new Response("Not found", { status: 404 });
+      }
+      return await runCauseEffect(
+        fileResponse(avatar.path, {
+          "Content-Type": avatar.mimeType,
+          "Cache-Control": "private, max-age=31536000, immutable",
+          "X-Content-Type-Options": "nosniff",
+        }),
+      );
+    } catch {
+      return new Response("Not found", { status: 404 });
+    }
+  });
+  session.defaultSession.protocol.handle("openbot-remote-avatar", async (request) => {
+    try {
+      const target = parseRemoteAvatarUrl(request.url);
+      if (!target) return new Response("Not found", { status: 404 });
+      const avatar = await runCauseEffect(
+        target.kind === "agent"
+          ? remoteServers.downloadAgentAvatar(target.id, target.serverId, target.version)
+          : remoteServers.downloadChannelImage(target.id, target.serverId, target.version),
+      );
+      return new Response(Buffer.from(avatar.bytes), {
+        headers: {
+          "Content-Type": avatar.mimeType,
+          "Cache-Control": "private, max-age=31536000, immutable",
+          "X-Content-Type-Options": "nosniff",
+        },
+      });
+    } catch {
+      return new Response("Not found", { status: 404 });
+    }
+  });
+}
+
+export interface ServerLogoProtocolDependencies {
+  teamStore: TeamStore;
+  remoteServers: RemoteServerManager;
+}
+
+export function configureServerLogoProtocols({ teamStore, remoteServers }: ServerLogoProtocolDependencies): void {
+  session.defaultSession.protocol.handle("openbot-server-logo", async (request) => {
+    try {
+      const url = new URL(request.url);
+      const logo = teamStore.resolveLogo();
+      if (url.hostname !== LOCAL_SERVER_ID || !logo || logo.version !== url.searchParams.get("v")) {
+        return new Response("Not found", { status: 404 });
+      }
+      return await runCauseEffect(
+        fileResponse(logo.path, {
+          "Content-Type": logo.mimeType,
+          "Cache-Control": "private, max-age=31536000, immutable",
+          "X-Content-Type-Options": "nosniff",
+        }),
+      );
+    } catch {
+      return new Response("Not found", { status: 404 });
+    }
+  });
+  session.defaultSession.protocol.handle("openbot-remote-server-logo", async (request) => {
+    try {
+      const url = new URL(request.url);
+      const serverId = decodeURIComponent(url.hostname);
+      const version = url.searchParams.get("v");
+      if (!serverId || !version) return new Response("Not found", { status: 404 });
+      const logo = await runCauseEffect(remoteServers.downloadServerLogo(serverId, version));
+      return new Response(Buffer.from(logo.bytes), {
+        headers: {
+          "Content-Type": logo.mimeType,
+          "Cache-Control": "private, max-age=31536000, immutable",
+          "X-Content-Type-Options": "nosniff",
+        },
+      });
+    } catch {
+      return new Response("Not found", { status: 404 });
+    }
+  });
+}
+
+export function configureApplicationProtocol(): void {
+  const rendererRoot = resolve(__dirname, "../renderer");
+  session.defaultSession.protocol.handle("openbot-app", async (request) => {
+    try {
+      const url = new URL(request.url);
+      if (url.host !== "app") return new Response("Not found", { status: 404 });
+      const pathname = decodeURIComponent(url.pathname === "/" ? "/index.html" : url.pathname);
+      const filePath = resolve(rendererRoot, `.${pathname}`);
+      const candidate = relative(rendererRoot, filePath);
+      if (candidate.startsWith("..") || isAbsolute(candidate)) {
+        return new Response("Not found", { status: 404 });
+      }
+      return new Response(await readFile(filePath), {
+        headers: {
+          "Content-Type": applicationContentType(filePath),
+          "Cache-Control": "no-store",
+          "X-Content-Type-Options": "nosniff",
+        },
+      });
+    } catch {
+      return new Response("Not found", { status: 404 });
+    }
+  });
+}

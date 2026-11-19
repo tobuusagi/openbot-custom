@@ -1,0 +1,2 @@
+ALTER TABLE remote_invites ADD COLUMN max_uses INTEGER DEFAULT 1;
+ALTER TABLE remote_invites ADD COLUMN use_count INTEGER NOT NULL DEFAULT 0;

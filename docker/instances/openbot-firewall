@@ -1,0 +1,38 @@
+#!/bin/bash
+set -euo pipefail
+
+BRIDGE=br-openbot
+CHAIN=OPENBOT-EGRESS
+DENY=/etc/openbot-docker/deny
+BLOCKED=(0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.0.0.0/24
+  192.168.0.0/16 198.18.0.0/15 224.0.0.0/4 240.0.0.0/4)
+
+[ "$(id -u)" -eq 0 ] || {
+  echo "Run openbot-firewall as root." >&2
+  exit 1
+}
+
+DENIED=()
+if [ -f "$DENY" ]; then
+  while read -r range _; do
+    case $range in '' | '#'*) continue ;; esac
+    [[ $range =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}(/[0-9]{1,2})?$ ]] || {
+      echo "$DENY: $range is not an IPv4 address or range." >&2
+      exit 1
+    }
+    DENIED+=("$range")
+  done <"$DENY"
+fi
+
+iptables --check INPUT --in-interface "$BRIDGE" --jump DROP 2>/dev/null ||
+  iptables --insert INPUT 1 --in-interface "$BRIDGE" --jump DROP
+iptables --new-chain DOCKER-USER 2>/dev/null || true
+iptables --new-chain "$CHAIN" 2>/dev/null || true
+iptables --insert DOCKER-USER 1 --in-interface "$BRIDGE" --jump DROP
+iptables --flush "$CHAIN"
+for range in "${BLOCKED[@]}" "${DENIED[@]}"; do
+  iptables --append "$CHAIN" --destination "$range" --jump DROP
+done
+iptables --check DOCKER-USER --in-interface "$BRIDGE" --jump "$CHAIN" 2>/dev/null ||
+  iptables --insert DOCKER-USER 2 --in-interface "$BRIDGE" --jump "$CHAIN"
+iptables --delete DOCKER-USER --in-interface "$BRIDGE" --jump DROP

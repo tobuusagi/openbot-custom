@@ -1,0 +1,186 @@
+.app-loading {
+  --app-loading-at: 0s;
+  --app-loading-exit-delay: 300ms;
+  position: absolute;
+  z-index: var(--openbot-layer-dialog);
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: var(--openbot-bg-canvas);
+  -webkit-app-region: drag;
+}
+
+.app-loading-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 28px;
+}
+
+.app-loading[data-scene="pile"] .app-loading-stage {
+  position: absolute;
+  inset: 0;
+  justify-content: center;
+}
+
+.app-loading-pit-frame {
+  position: absolute;
+  inset: 0;
+}
+
+.app-loading-pit {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  translate: -50% 0;
+  transform-origin: 50% 100%;
+}
+
+.app-loading-plush {
+  position: absolute;
+  top: 0;
+  left: 0;
+  visibility: hidden;
+  pointer-events: none;
+  user-select: none;
+  will-change: transform;
+}
+
+.app-loading-squash {
+  width: 100%;
+  height: 100%;
+  will-change: transform;
+}
+
+.app-loading-status {
+  min-height: 20px;
+  margin: 0;
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-md);
+}
+
+.app-loading-line {
+  display: block;
+}
+
+.app-loading:not([data-phase="loading"]) {
+  pointer-events: none;
+  -webkit-app-region: no-drag;
+}
+
+.app-loading:is([data-phase="fade"], [data-phase="exit"]) {
+  animation: app-loading-exit var(--openbot-duration-overlay) var(--openbot-ease-in-out) forwards;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .app-loading[data-phase="exit"] {
+    animation-duration: 1100ms;
+    animation-delay: var(--app-loading-exit-delay);
+  }
+
+  .app-loading-stage {
+    animation: app-loading-enter var(--openbot-duration-overlay) var(--openbot-ease-out)
+      calc(250ms - var(--app-loading-at)) both;
+  }
+
+  .app-loading-line {
+    animation: app-loading-line-in 280ms var(--openbot-ease-out);
+  }
+
+  .app-loading:not([data-phase="loading"]) .app-loading-status {
+    animation: app-loading-fade 200ms var(--openbot-ease-out) forwards;
+  }
+}
+
+@keyframes app-loading-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@keyframes app-loading-line-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@keyframes app-loading-fade {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes app-loading-exit {
+  to {
+    opacity: 0;
+  }
+}
+
+.server-connection-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--openbot-space-3);
+  padding: var(--openbot-space-3);
+  background: var(--openbot-bg-canvas);
+  border-bottom: 1px solid var(--openbot-border);
+}
+.server-connection-notice p {
+  margin: 0;
+}
+.server-connection-detail {
+  color: var(--openbot-text-muted);
+  font-variant-numeric: tabular-nums;
+  text-wrap: pretty;
+}
+.server-connection-actions {
+  display: flex;
+  gap: var(--openbot-space-2);
+  -webkit-app-region: no-drag;
+}
+
+.server-connection-toast-host {
+  width: var(--width);
+}
+.server-connection-toast {
+  position: relative;
+  display: grid;
+  gap: var(--openbot-space-2);
+  padding: var(--openbot-space-4) var(--openbot-space-4) var(--openbot-space-2);
+  border-radius: var(--openbot-radius-card);
+  background: var(--openbot-bg-surface-raised);
+  box-shadow: 0 0 0 1px var(--openbot-border);
+  color: var(--openbot-text-primary);
+  font-family: var(--openbot-font-sans);
+  font-size: var(--openbot-text-md);
+  line-height: var(--openbot-leading-md);
+}
+.server-connection-toast-title {
+  padding-right: var(--openbot-space-1);
+  font-weight: var(--openbot-weight-semibold);
+  text-wrap: balance;
+}
+.server-connection-toast-body {
+  margin: 0;
+  color: var(--openbot-text-secondary);
+  font-size: var(--openbot-text-sm);
+  line-height: var(--openbot-leading-sm);
+  font-variant-numeric: tabular-nums;
+  text-wrap: pretty;
+}
+.server-connection-toast-actions {
+  margin-top: var(--openbot-space-1);
+}
+.server-connection-content {
+  position: relative;
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.server-connection-content[hidden] {
+  display: none;
+}

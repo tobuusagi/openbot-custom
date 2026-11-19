@@ -1,0 +1,216 @@
+.marketplace-suggestion.ui-block-card {
+  max-width: 520px;
+}
+
+.marketplace-suggestion .marketplace-suggestion-icon {
+  width: var(--openbot-control-lg);
+  height: var(--openbot-control-lg);
+  flex: none;
+  border: 1px solid var(--openbot-border);
+  border-radius: var(--openbot-radius-md);
+  background: var(--openbot-bg-surface-raised);
+  color: var(--openbot-text-primary);
+}
+
+.marketplace-suggestion .marketplace-suggestion-icon img {
+  border-radius: inherit;
+}
+
+.marketplace-suggestion .marketplace-suggestion-icon > .connector-brand-tile {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+}
+
+.marketplace-suggestion .ui-block-title,
+.marketplace-suggestion .ui-block-subtitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.marketplace-suggestion .marketplace-suggestion-name {
+  display: inline-block;
+  height: auto;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-overflow: ellipsis;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.marketplace-suggestion-controls {
+  display: contents;
+}
+
+.marketplace-suggestion-question {
+  margin: 0;
+  color: var(--openbot-text-secondary);
+  font-size: var(--openbot-text-sm);
+  line-height: var(--openbot-leading-sm);
+  overflow-wrap: anywhere;
+}
+
+.marketplace-suggestion-action {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.marketplace-suggestion .marketplace-suggestion-button {
+  overflow: clip;
+}
+
+.marketplace-suggestion .marketplace-suggestion-button.ui-button[data-state="connected"],
+.marketplace-suggestion .marketplace-suggestion-button.ui-button[data-state="connected"]:hover {
+  border-color: transparent;
+  background: var(--openbot-success);
+  color: var(--openbot-text-on-light);
+  cursor: default;
+}
+
+:root[data-openbot-color-scheme="light"]
+  .marketplace-suggestion
+  .marketplace-suggestion-button.ui-button[data-state="connected"] {
+  background: var(--openbot-success-text);
+}
+
+.marketplace-suggestion-stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  justify-items: center;
+}
+
+.marketplace-suggestion-layer {
+  display: inline-flex;
+  grid-area: 1 / 1;
+  align-items: center;
+  gap: var(--openbot-space-1-5);
+  white-space: nowrap;
+}
+
+.marketplace-suggestion-button[data-state="connected"] [data-layer="start"],
+.marketplace-suggestion-button:not([data-state="connected"]) [data-layer="done"] {
+  opacity: 0;
+}
+
+.marketplace-suggestion-layer > svg {
+  width: var(--openbot-icon-sm);
+  height: var(--openbot-icon-sm);
+}
+
+.marketplace-suggestion-spinner {
+  display: inline-flex;
+  width: 0;
+  margin-inline-end: calc(-1 * var(--openbot-space-1-5));
+  opacity: 0;
+}
+
+.marketplace-suggestion-button[data-state="busy"] .marketplace-suggestion-spinner {
+  width: auto;
+  margin-inline-end: 0;
+  opacity: 1;
+}
+
+.marketplace-suggestion-controls[data-state="connected"] .marketplace-suggestion-dismiss {
+  width: 0;
+  min-width: 0;
+  margin-inline-start: calc(-1 * var(--openbot-space-2));
+  overflow: hidden;
+  border-width: 0;
+  padding: 0;
+  opacity: 0;
+  visibility: hidden;
+}
+
+.marketplace-suggestion-controls[data-motion] .marketplace-suggestion-button.ui-button {
+  transition:
+    background-color var(--openbot-duration-slow) var(--openbot-ease-out),
+    color var(--openbot-duration-slow) var(--openbot-ease-out),
+    opacity var(--openbot-duration-normal) var(--openbot-ease-out);
+}
+
+.marketplace-suggestion-controls[data-motion] .marketplace-suggestion-layer {
+  transition: opacity var(--openbot-duration-normal) var(--openbot-ease-out);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .marketplace-suggestion-controls[data-motion] .marketplace-suggestion-stage {
+    transition: width var(--openbot-duration-slow) var(--openbot-ease-out);
+  }
+
+  .marketplace-suggestion-controls[data-motion] .marketplace-suggestion-layer {
+    transition:
+      opacity var(--openbot-duration-normal) var(--openbot-ease-out),
+      transform var(--openbot-duration-slow) var(--openbot-ease-out);
+  }
+
+  .marketplace-suggestion-button[data-state="connected"] [data-layer="start"] {
+    transform: translateY(-40%);
+  }
+
+  .marketplace-suggestion-button:not([data-state="connected"]) [data-layer="done"] {
+    transform: translateY(40%);
+  }
+
+  .marketplace-suggestion-controls[data-motion] .marketplace-suggestion-layer > svg path {
+    stroke-dasharray: 24 24;
+    stroke-dashoffset: -24;
+    transition: stroke-dashoffset var(--openbot-duration-overlay) var(--openbot-ease-out) var(--openbot-duration-fast);
+  }
+
+  .marketplace-suggestion-controls[data-motion] .marketplace-suggestion-button[data-state="connected"] svg path {
+    stroke-dashoffset: 0;
+  }
+
+  .marketplace-suggestion-controls[data-motion] .marketplace-suggestion-spinner {
+    transform: scale(0.6);
+    transition:
+      opacity var(--openbot-duration-normal) var(--openbot-ease-out),
+      transform var(--openbot-duration-normal) var(--openbot-ease-out);
+  }
+
+  .marketplace-suggestion-controls[data-motion]
+    .marketplace-suggestion-button[data-state="busy"]
+    .marketplace-suggestion-spinner {
+    transform: none;
+  }
+
+  .marketplace-suggestion-controls[data-motion] .marketplace-suggestion-dismiss {
+    transition:
+      opacity var(--openbot-duration-fast) var(--openbot-ease-out),
+      width var(--openbot-duration-slow) var(--openbot-ease-out),
+      margin var(--openbot-duration-slow) var(--openbot-ease-out),
+      visibility 0s linear var(--openbot-duration-slow);
+  }
+}
+
+.marketplace-suggestion-unavailable {
+  display: flex;
+  margin: 0;
+  gap: var(--openbot-space-2);
+  color: var(--openbot-text-secondary);
+  font-size: var(--openbot-text-sm);
+  line-height: var(--openbot-leading-sm);
+}
+
+.marketplace-suggestion-unavailable svg {
+  width: var(--openbot-icon-sm);
+  height: var(--openbot-icon-sm);
+  flex: 0 0 auto;
+  margin-top: var(--openbot-space-0-5);
+  color: var(--openbot-text-muted);
+}
+
+.marketplace-suggestion-dismissed {
+  display: flex;
+  align-items: center;
+  gap: var(--openbot-space-2);
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-sm);
+  line-height: var(--openbot-leading-sm);
+}

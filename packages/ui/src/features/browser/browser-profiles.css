@@ -1,0 +1,150 @@
+.browser-profiles-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--openbot-space-3);
+}
+
+.browser-profiles-row {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: var(--openbot-space-2);
+}
+
+.browser-profiles-name {
+  min-width: 0;
+  flex: 1;
+}
+
+.ui-select-item.browser-profile-select-new {
+  margin-top: calc(var(--openbot-space-1) * 2 + 1px);
+}
+
+.ui-select-item.browser-profile-select-new::before {
+  position: absolute;
+  top: calc(-1 * var(--openbot-space-1) - 1px);
+  right: calc(-1 * var(--openbot-space-1));
+  left: calc(-1 * var(--openbot-space-1));
+  border-top: 1px solid var(--openbot-border);
+  content: "";
+}
+
+.ui-select-item.browser-profile-select-new[hidden] {
+  display: none;
+}
+
+.browser-profile-select-option .ui-select-item-label,
+.browser-profile-select-value {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--openbot-space-2);
+}
+
+.browser-profile-select-proxy {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--openbot-space-1);
+  color: var(--openbot-text-muted);
+}
+
+.browser-profile-select-proxy svg {
+  width: var(--openbot-icon-sm);
+  height: var(--openbot-icon-sm);
+  flex: 0 0 auto;
+}
+
+.browser-profile-select-proxy span {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-profile-select-mark {
+  display: inline-flex;
+  width: var(--openbot-icon-sm);
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+}
+
+.browser-profile-select-mark svg {
+  width: var(--openbot-icon-sm);
+  height: var(--openbot-icon-sm);
+}
+
+.browser-profile-shared-mark {
+  display: inline-flex;
+  width: var(--openbot-control-md);
+  height: var(--openbot-control-md);
+  align-items: center;
+  justify-content: center;
+}
+
+.browser-profile-color-trigger .browser-profile-dot {
+  width: 12px;
+  height: 12px;
+}
+
+.browser-profile-color-option {
+  gap: var(--openbot-space-2);
+}
+
+.browser-profile-color-option > span:not(.browser-profile-dot) {
+  flex: 1 1 auto;
+}
+
+.browser-profile-select-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--openbot-space-1);
+}
+
+.browser-profile-select-form .browser-profiles-name {
+  font-size: var(--openbot-text-sm);
+}
+
+.browser-profile-select-form .ui-text {
+  padding-inline: var(--openbot-space-2);
+}
+
+.browser-profiles-panel:has(> .ui-settings-section) {
+  gap: var(--openbot-space-6);
+}
+
+.browser-profiles-panel > .ui-settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--openbot-space-3);
+}
+
+.browser-profiles-panel > .ui-settings-section .browser-profiles-row {
+  flex: none;
+}
+
+.browser-proxy-badge svg {
+  width: var(--openbot-icon-xs);
+  height: var(--openbot-icon-xs);
+}
+
+.browser-proxy-icon {
+  display: inline-flex;
+  width: var(--openbot-control-md);
+  height: var(--openbot-control-md);
+  align-items: center;
+  justify-content: center;
+  color: var(--openbot-text-muted);
+}
+
+.browser-proxy-icon svg {
+  width: var(--openbot-icon-sm);
+  height: var(--openbot-icon-sm);
+}
+
+.browser-proxy-submenu-chevron {
+  margin-inline-start: auto;
+  color: var(--openbot-text-muted);
+}

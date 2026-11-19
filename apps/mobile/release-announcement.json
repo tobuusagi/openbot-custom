@@ -1,0 +1,10 @@
+{
+  "version": "1.4.11",
+  "highlights": [
+    "Added new integrations and expanded app connectivity.",
+    "Improved chat with context tracking, subagent progress, and memory updates.",
+    "Redesigned workflow editor with interactive Flow view.",
+    "Added more customization options for chat appearance and behavior.",
+    "Improved file handling, connection reliability, and overall app stability."
+  ]
+}

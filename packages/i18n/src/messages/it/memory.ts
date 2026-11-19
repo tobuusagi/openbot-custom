@@ -1,0 +1,53 @@
+import type { PartialTranslation } from "../../message";
+import type { messages as source } from "../en/memory";
+
+export const messages = {
+  "memory.title": "Memorie",
+  "memory.single": "Memoria",
+  "memory.backToSettings": "Torna alle impostazioni",
+  "memory.backToList": "Torna alle memorie",
+  "memory.closePane": "Chiudi i dettagli",
+  "memory.add": "Aggiungi memoria",
+  "memory.new": "Nuova memoria",
+  "memory.newPlaceholder": "Aggiungi un fatto o una preferenza duratura",
+  "memory.save": "Salva memoria",
+  "memory.group.always": "Sempre usate",
+  "memory.group.relevant": "Usate quando servono",
+  "memory.everyChat": "Usa in ogni chat",
+  "memory.inclusion.automatic": "Decide l'agente",
+  "memory.limitAgent":
+    "Questo agente ha raggiunto il limite di {limit} memorie. Modifica, unisci o elimina una memoria prima di aggiungerne un'altra.",
+  "memory.limitChannel":
+    "Questo canale ha raggiunto il limite di {limit} memorie. Modifica, unisci o elimina una memoria prima di aggiungerne un'altra.",
+  "memory.loading": "Caricamento delle memorie…",
+  "memory.search": "Cerca memorie",
+  "memory.noMatches": "Nessuna memoria corrisponde a questa ricerca.",
+  "memory.emptyLead": "Dillo una volta.",
+  "memory.emptyTitle": "Lo {remember}.",
+  "memory.emptyRemember": "ricorderà",
+  "memory.emptyLearnsAgent": "{name} salva ciò che impara nelle tue chat.",
+  "memory.emptyLearnsChannel": "Gli agenti di {name} salvano ciò che imparano qui.",
+  "memory.emptyAddOwn": "Puoi anche aggiungere una memoria tu stesso.",
+  "memory.sample.updates": "L’utente preferisce aggiornamenti brevi, con il risultato all’inizio.",
+  "memory.sample.scripts": "Usa Bun per gli script dei pacchetti.",
+  "memory.sample.brief": "Invia il briefing del mattino alle 7:00 nei giorni feriali.",
+  "memory.sample.confirm": "Chiedi prima di eliminare file fuori dal workspace.",
+  "memory.edit": "Modifica memoria",
+  "memory.editAction": "Modifica",
+  "memory.deleteAction": "Elimina",
+  "memory.learned": "Appresa automaticamente",
+  "memory.manual": "Aggiunta a mano",
+  "memory.unknownDate": "Data sconosciuta",
+  "memory.clearAll": "Cancella tutte le memorie",
+  "memory.clearTitle": "Cancellare tutte le memorie?",
+  "memory.clearDescription":
+    "OpenBot rimuoverà definitivamente tutte le {total} memorie salvate per {name}. I messaggi originali resteranno nella cronologia della conversazione.",
+
+  "memory.loadFailed": "Impossibile caricare le memorie.",
+  "memory.saveFailed": "Impossibile salvare la memoria.",
+  "memory.updateFailed": "Impossibile aggiornare la memoria.",
+  "memory.deleteFailed": "Impossibile eliminare la memoria.",
+  "memory.deleteUndo.title": "Memoria eliminata",
+  "memory.deleteUndo.action": "Annulla",
+  "memory.clearFailed": "Impossibile cancellare le memorie.",
+} as const satisfies PartialTranslation<typeof source>;

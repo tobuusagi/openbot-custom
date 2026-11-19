@@ -1,0 +1,318 @@
+import { MASKED_WEBHOOK_SECRET } from "@openbot/contracts/event-filter-value";
+import {
+  Bot,
+  Button,
+  ConfirmDialog,
+  CopyButton,
+  Field,
+  IconButton,
+  Input,
+  KeyRound,
+  RefreshCw,
+  Text,
+} from "@openbot/ui";
+import { createEffect, createMemo, createSignal, Show } from "solid-js";
+import { useText } from "../../text";
+
+export interface RoutineWebhookUrlFieldProps {
+  url: string | null;
+  connected: boolean | null;
+  onCopy?: (() => void) | undefined;
+}
+
+export function RoutineWebhookUrlField(props: RoutineWebhookUrlFieldProps) {
+  const { t } = useText();
+  return (
+    <div class="routine-webhook-field">
+      <span class="routine-webhook-label">{t("routine.webhook.url")}</span>
+      <Show
+        when={props.url}
+        fallback={
+          <Text variant="caption" tone="muted" role="status" class="routine-webhook-value">
+            {t(props.connected === false ? "routine.webhook.urlPendingOffline" : "routine.webhook.urlPending")}
+          </Text>
+        }
+      >
+        {(url) => (
+          <>
+            <code class="routine-webhook-value" title={url()}>
+              {url().replace(/^https:\/\//, "")}
+            </code>
+            <CopyButton
+              value={url()}
+              label={t("routine.webhook.copyUrl")}
+              copiedLabel={t("common.copied")}
+              iconOnly
+              onCopy={() => props.onCopy?.()}
+            />
+          </>
+        )}
+      </Show>
+    </div>
+  );
+}
+
+export interface RoutineWebhookAgentSecret {
+  routineId: string;
+  agentName: string;
+  give: () => Promise<void>;
+}
+
+export interface RoutineWebhookSecretFieldProps {
+  secret: string | null;
+  onSecretDismiss: () => void;
+  onRegenerateSecret: () => Promise<void>;
+  onUseSenderSecret?: ((secret: string) => Promise<void>) | undefined;
+  agentSecret?: RoutineWebhookAgentSecret | undefined;
+  onCopy?: (() => void) | undefined;
+}
+
+export function RoutineWebhookSecretField(props: RoutineWebhookSecretFieldProps) {
+  const { t, errorMessage } = useText();
+  const [confirm, setConfirm] = createSignal<{ pending: boolean; error: string | null } | null>(null);
+  const [sender, setSender] = createSignal<{ value: string; pending: boolean; error: string | null } | null>(null);
+  const [agent, setAgent] = createSignal<{ pending: boolean; error: string | null; given: boolean }>({
+    pending: false,
+    error: null,
+    given: false,
+  });
+  const [agentConfirm, setAgentConfirm] = createSignal(false);
+  const agentRoutine = createMemo(() => props.agentSecret?.routineId);
+  createEffect(agentRoutine, () => {
+    setAgent({ pending: false, error: null, given: false });
+    setAgentConfirm(false);
+  });
+
+  async function giveToAgent(): Promise<void> {
+    const action = props.agentSecret;
+    if (!action || agent().pending) return;
+    const sameRoutine = () => props.agentSecret?.routineId === action.routineId;
+    setAgent({ pending: true, error: null, given: false });
+    try {
+      await action.give();
+      if (!sameRoutine()) return;
+      setAgent({ pending: false, error: null, given: true });
+      setAgentConfirm(false);
+    } catch (cause) {
+      if (!sameRoutine()) return;
+      setAgent({
+        pending: false,
+        error: errorMessage(cause, t("routine.webhook.giveSecretFailed", { name: action.agentName })),
+        given: false,
+      });
+    }
+  }
+
+  async function saveSenderSecret(): Promise<void> {
+    const current = sender();
+    const action = props.onUseSenderSecret;
+    if (!current || current.pending || !action) return;
+    const value = current.value.trim();
+    if (!value) {
+      setSender({ ...current, error: t("error.backend.webhookSenderSecretInvalid") });
+      return;
+    }
+    setSender({ ...current, pending: true, error: null });
+    try {
+      await action(value);
+      setSender(null);
+    } catch (cause) {
+      setSender({ ...current, pending: false, error: errorMessage(cause, t("routine.webhook.senderSecretFailed")) });
+    }
+  }
+
+  async function regenerate(): Promise<void> {
+    if (confirm()?.pending) return;
+    setConfirm({ pending: true, error: null });
+    try {
+      await props.onRegenerateSecret();
+      setConfirm(null);
+    } catch (cause) {
+      setConfirm({ pending: false, error: errorMessage(cause, t("routine.webhook.regenerateFailed")) });
+    }
+  }
+
+  return (
+    <>
+      <div class="routine-webhook-field">
+        <span class="routine-webhook-label">{t("routine.webhook.secretTitle")}</span>
+        <Show
+          when={props.secret}
+          fallback={
+            <>
+              <code class="routine-webhook-value" aria-hidden="true">
+                {MASKED_WEBHOOK_SECRET}
+              </code>
+              <span class="sr-only">{t("routine.webhook.secretHidden")}</span>
+            </>
+          }
+        >
+          {(secret) => (
+            <code class="routine-webhook-value routine-webhook-secret" title={secret()}>
+              {secret()}
+            </code>
+          )}
+        </Show>
+        <span class="routine-webhook-actions">
+          <Show
+            when={props.secret}
+            fallback={
+              <IconButton
+                variant="ghost"
+                label={t("routine.webhook.regenerateSecret")}
+                onClick={() => setConfirm({ pending: false, error: null })}
+              >
+                <RefreshCw aria-hidden="true" />
+              </IconButton>
+            }
+          >
+            {(secret) => (
+              <CopyButton
+                value={secret()}
+                label={t("routine.webhook.copySecret")}
+                copiedLabel={t("common.copied")}
+                iconOnly
+                onCopy={() => props.onCopy?.()}
+              />
+            )}
+          </Show>
+          <Show when={props.agentSecret}>
+            {(action) => (
+              <IconButton
+                variant="ghost"
+                label={t("routine.webhook.giveSecret", { name: action().agentName })}
+                onClick={() => {
+                  setAgent({ pending: false, error: null, given: false });
+                  setAgentConfirm(true);
+                }}
+              >
+                <Bot aria-hidden="true" />
+              </IconButton>
+            )}
+          </Show>
+          <Show when={props.onUseSenderSecret}>
+            <IconButton
+              variant="ghost"
+              label={t("routine.webhook.useSenderSecret")}
+              onClick={() => setSender({ value: "", pending: false, error: null })}
+            >
+              <KeyRound aria-hidden="true" />
+            </IconButton>
+          </Show>
+        </span>
+      </div>
+      <Show when={props.secret}>
+        <div class="routine-webhook-note routine-webhook-secret-note">
+          <Text variant="caption" tone="warning">
+            {t("routine.webhook.secretWarning")}
+          </Text>
+          <Button type="button" size="xs" variant="ghost" onClick={props.onSecretDismiss}>
+            {t("common.done")}
+          </Button>
+        </div>
+      </Show>
+      <Show when={!props.secret && agent().given ? props.agentSecret : undefined}>
+        {(action) => (
+          <Text variant="caption" tone="success" role="status" class="routine-webhook-note">
+            {t("routine.webhook.secretGiven", { name: action().agentName })}
+          </Text>
+        )}
+      </Show>
+
+      <ConfirmDialog
+        open={confirm() !== null}
+        tone="destructive"
+        title={t("routine.webhook.regenerateTitle")}
+        description={t("routine.webhook.regenerateDescription")}
+        confirmLabel={t("routine.webhook.regenerateConfirm")}
+        cancelLabel={t("common.cancel")}
+        pending={confirm()?.pending ?? false}
+        error={confirm()?.error ?? undefined}
+        initialFocus="cancel"
+        onCancel={() => setConfirm(null)}
+        onConfirm={regenerate}
+      />
+      <ConfirmDialog
+        open={agentConfirm()}
+        tone="default"
+        icon={<Bot />}
+        title={t("routine.webhook.giveSecretTitle", { name: props.agentSecret?.agentName ?? "" })}
+        description={t("routine.webhook.giveSecretDescription", { name: props.agentSecret?.agentName ?? "" })}
+        confirmLabel={t("routine.webhook.giveSecretConfirm")}
+        cancelLabel={t("common.cancel")}
+        pending={agent().pending}
+        error={agent().error ?? undefined}
+        initialFocus="cancel"
+        onCancel={() => setAgentConfirm(false)}
+        onConfirm={giveToAgent}
+      />
+      <ConfirmDialog
+        open={sender() !== null}
+        tone="default"
+        icon={<KeyRound />}
+        title={t("routine.webhook.senderSecretTitle")}
+        description={t("routine.webhook.senderSecretDescription")}
+        confirmLabel={t("routine.webhook.senderSecretConfirm")}
+        cancelLabel={t("common.cancel")}
+        pending={sender()?.pending ?? false}
+        error={sender()?.error ?? undefined}
+        initialFocus="field"
+        onCancel={() => setSender(null)}
+        onConfirm={saveSenderSecret}
+      >
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void saveSenderSecret();
+          }}
+        >
+          <Field label={t("routine.webhook.senderSecretLabel")}>
+            <Input
+              type="password"
+              size="sm"
+              autocomplete="off"
+              spellcheck={false}
+              disabled={sender()?.pending ?? false}
+              value={sender()?.value ?? ""}
+              onInput={(event) => {
+                const current = sender();
+                if (current) setSender({ ...current, value: event.currentTarget.value });
+              }}
+            />
+          </Field>
+        </form>
+      </ConfirmDialog>
+    </>
+  );
+}
+
+export interface RoutineWebhookEndpointProps {
+  url: string | null;
+  connected: boolean | null;
+  secret: string | null;
+  onSecretDismiss: () => void;
+  onRegenerateSecret: () => Promise<void>;
+  onUseSenderSecret?: ((secret: string) => Promise<void>) | undefined;
+  agentSecret?: RoutineWebhookAgentSecret | undefined;
+}
+
+export function RoutineWebhookEndpoint(props: RoutineWebhookEndpointProps) {
+  const { t } = useText();
+  return (
+    <>
+      <RoutineWebhookUrlField url={props.url} connected={props.connected} />
+      <Show when={props.url && props.connected === false}>
+        <Text variant="caption" tone="warning" class="routine-webhook-note">
+          {t("routine.webhook.relayOffline")}
+        </Text>
+      </Show>
+      <RoutineWebhookSecretField
+        secret={props.secret}
+        onSecretDismiss={props.onSecretDismiss}
+        onRegenerateSecret={props.onRegenerateSecret}
+        onUseSenderSecret={props.onUseSenderSecret}
+        agentSecret={props.agentSecret}
+      />
+    </>
+  );
+}

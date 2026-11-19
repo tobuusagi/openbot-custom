@@ -1,0 +1,338 @@
+.window-rail {
+  position: relative;
+  display: flex;
+  width: 52px;
+  min-height: 0;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  padding: calc(var(--left-header-height, 38px) + var(--openbot-space-1)) 0 var(--openbot-space-3);
+  -webkit-app-region: drag;
+}
+
+.window-rail-logo {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  display: flex;
+  height: var(--left-header-height, 38px);
+  align-items: center;
+  justify-content: center;
+  padding-top: 2px;
+}
+
+.window-rail-logo .app-logo {
+  display: block;
+  width: var(--openbot-icon-lg);
+  height: var(--openbot-icon-lg);
+}
+
+.window-rail-logo-link {
+  display: flex;
+  border-radius: var(--openbot-radius-logo);
+  -webkit-app-region: no-drag;
+}
+
+.window-rail-logo-link:focus-visible {
+  outline: 0;
+  box-shadow: var(--openbot-focus-ring);
+}
+
+.window-rail-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--openbot-space-1-5);
+
+  -webkit-app-region: no-drag;
+}
+
+.window-rail-end,
+.window-rail-server-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--openbot-space-1-5);
+}
+
+.window-rail-server-slot {
+  -webkit-app-region: no-drag;
+}
+
+.window-rail-server-slot:empty {
+  display: none;
+}
+
+.window-rail-server-slot::before {
+  width: var(--openbot-space-6);
+  height: 1px;
+  margin-block: var(--openbot-space-0-5);
+  background: var(--openbot-border);
+  content: "";
+}
+
+.window-rail-button.window-rail-server > .server-menu-mark {
+  width: var(--openbot-space-6);
+  height: var(--openbot-space-6);
+}
+
+.window-rail-button.window-rail-server > .window-rail-server-sleep {
+  position: absolute;
+  inset-block-end: var(--openbot-space-1);
+  inset-inline-end: var(--openbot-space-1);
+}
+
+.window-rail-button {
+  --openbot-icon-stroke: var(--openbot-icon-stroke-lg);
+
+  position: relative;
+  display: flex;
+  width: var(--openbot-control-lg);
+  height: var(--openbot-control-lg);
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--openbot-radius-lg);
+  background: transparent;
+  padding: 0;
+  color: var(--openbot-text-muted);
+  font: inherit;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .window-rail-button:hover {
+    background: var(--openbot-bg-control-hover);
+    color: var(--openbot-text-primary);
+  }
+}
+
+.window-rail-button[aria-current="page"],
+.window-rail-button[aria-current="page"]:hover:not(:disabled):not([data-disabled]) {
+  background: var(--openbot-bg-control-active);
+  color: var(--openbot-text-primary);
+}
+
+.window-rail-button:focus-visible {
+  outline: 0;
+  box-shadow: var(--openbot-focus-ring);
+}
+
+.window-rail-button svg {
+  width: var(--openbot-icon-lg);
+  height: var(--openbot-icon-lg);
+}
+.window-rail-notice {
+  position: absolute;
+  top: var(--openbot-space-1-5);
+  inset-inline-end: var(--openbot-space-1-5);
+  width: var(--openbot-space-2);
+  height: var(--openbot-space-2);
+  border-radius: var(--openbot-radius-pill);
+  background: var(--openbot-badge-new);
+}
+
+.window-rail-usage-card .account-usage-refresh {
+  display: none;
+}
+
+.account-usage-popover.window-rail-usage-card {
+  display: flex;
+  overflow: hidden;
+  flex-direction: column;
+  transition: none;
+  transform-origin: var(--kb-tooltip-content-transform-origin);
+}
+
+.window-rail-usage-card .account-usage-popover-header {
+  flex: none;
+}
+
+.window-rail-usage-card .account-usage-providers {
+  --window-rail-usage-fade-top: 0px;
+  --window-rail-usage-fade-bottom: 0px;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+  mask-image: linear-gradient(
+    to bottom,
+    var(--openbot-transparent),
+    var(--openbot-text-primary) var(--window-rail-usage-fade-top),
+    var(--openbot-text-primary) calc(100% - var(--window-rail-usage-fade-bottom)),
+    var(--openbot-transparent)
+  );
+}
+
+.window-rail-usage-card .account-usage-providers::-webkit-scrollbar {
+  display: none;
+}
+
+.window-rail-usage-card .account-usage-providers.scroll-fade-top {
+  --window-rail-usage-fade-top: calc(var(--openbot-space-1) * 6);
+}
+
+.window-rail-usage-card .account-usage-providers.scroll-fade-bottom {
+  --window-rail-usage-fade-bottom: calc(var(--openbot-space-1) * 6);
+}
+
+.window-rail-button.window-rail-usage {
+  border-radius: var(--openbot-radius-pill);
+}
+
+.window-rail-button .window-rail-usage-ring {
+  position: absolute;
+  inset: 1px;
+  width: 34px;
+  height: 34px;
+  transform: rotate(-90deg);
+}
+
+.window-rail-button .window-rail-usage-logo {
+  width: var(--openbot-icon-xs);
+  height: var(--openbot-icon-xs);
+  overflow: visible;
+  fill: var(--openbot-provider-current);
+}
+
+.window-rail-usage-track {
+  stroke: currentcolor;
+  opacity: 0.15;
+}
+
+.window-rail-usage-arc {
+  stroke: var(--openbot-success);
+}
+
+.window-rail-usage-arc[data-usage-tone="warning"] {
+  stroke: var(--openbot-warning);
+}
+
+.window-rail-usage-arc[data-usage-tone="critical"] {
+  stroke: var(--openbot-danger);
+}
+
+.window-rail-usage-more .window-rail-usage-count {
+  color: var(--openbot-text-secondary);
+  font-size: var(--openbot-text-sm);
+  font-weight: var(--openbot-weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.window-rail-button.window-rail-credits {
+  height: auto;
+  flex-direction: column;
+  gap: var(--openbot-space-1);
+  padding-block: var(--openbot-space-1-5);
+}
+
+.window-rail-button .window-rail-credits-logo {
+  width: var(--openbot-icon-sm);
+  height: var(--openbot-icon-sm);
+  overflow: visible;
+  fill: var(--openbot-provider-current);
+}
+
+.window-rail-credits-count {
+  color: var(--openbot-text-secondary);
+  font-size: var(--openbot-text-sm);
+  font-weight: var(--openbot-weight-semibold);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.window-rail-credits-count[data-usage-tone="warning"] {
+  color: var(--openbot-warning-text);
+}
+
+.window-rail-credits-count[data-usage-tone="critical"] {
+  color: var(--openbot-danger-text);
+}
+
+.window-rail-credits-badge {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  display: grid;
+  place-items: center;
+  min-width: 12px;
+  height: 12px;
+  padding: 0 2px;
+  box-sizing: border-box;
+  border-radius: var(--openbot-radius-pill);
+  background: var(--openbot-bg-control);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--openbot-text-primary) 10%, transparent);
+  color: var(--openbot-text-primary);
+  font-size: var(--openbot-glyph-sm);
+  font-weight: var(--openbot-weight-medium);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.window-rail-button .window-rail-agent-usage-logo {
+  width: var(--openbot-icon-md);
+  height: var(--openbot-icon-md);
+}
+
+.window-rail-agent-usage {
+  display: grid;
+  padding-inline: var(--openbot-space-1);
+  gap: var(--openbot-space-1);
+}
+
+.window-rail-agent-usage-text {
+  margin: 0;
+  color: var(--openbot-text-secondary);
+  font-size: var(--openbot-text-sm);
+  line-height: var(--openbot-leading-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.window-rail-more-menu .window-rail-more-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--openbot-control-md);
+  align-items: center;
+  border-radius: var(--ui-menu-item-radius);
+  transition: background-color var(--openbot-duration-hover) var(--openbot-ease-out);
+}
+
+.ui-action-menu.window-rail-more-menu .window-rail-more-row:is(:hover, :has([data-highlighted])) {
+  background: var(--ui-menu-item-hover);
+}
+
+.ui-action-menu.window-rail-more-menu
+  .window-rail-more-row
+  :is([role="menuitem"], [role="menuitemcheckbox"]):is(:hover, :focus-visible, [data-highlighted]) {
+  background: transparent;
+}
+
+.ui-action-menu.window-rail-more-menu .window-rail-more-pin[role="menuitemcheckbox"] {
+  justify-content: center;
+  padding: 0;
+  opacity: 0;
+}
+
+.ui-action-menu.window-rail-more-menu
+  .window-rail-more-row:is([data-pinned], :hover, :focus-within)
+  .window-rail-more-pin {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .ui-action-menu.window-rail-more-menu .window-rail-more-pin[role="menuitemcheckbox"] {
+    opacity: 1;
+  }
+}
+
+.window-rail-more-menu .window-rail-more-row[data-pinned] .window-rail-more-pin > .agent-context-icon {
+  color: var(--openbot-text-primary);
+}
+
+.ui-action-menu.window-rail-more-menu
+  .window-rail-more-row:is(:hover, :has([data-highlighted]))
+  > [role="menuitem"]
+  > .agent-context-icon {
+  color: var(--openbot-text-primary);
+}

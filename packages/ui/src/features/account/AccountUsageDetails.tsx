@@ -1,0 +1,171 @@
+import { ProviderLogo } from "@openbot/brand";
+import { usagePaceRemainingPercent } from "@openbot/team-client/plan-limits";
+import { Button, Gauge, RefreshCw } from "@openbot/ui";
+import type { JSX } from "@solidjs/web";
+import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
+import { createScrollFades } from "../../components/createScrollFades";
+import { useText } from "../../text";
+import {
+  type AccountUsageProviderRow,
+  type AccountUsageWindowRow,
+  accountUsageRowKey,
+  accountUsageRowLabel,
+  formatUsageResetIn,
+} from "./account-usage-view";
+
+const RESET_CLOCK_MS = 30_000;
+
+export function AccountUsageDetails(props: {
+  rows: AccountUsageProviderRow[];
+  loading: boolean;
+  error: string | null;
+  refreshActive: boolean;
+  refreshDisabled: boolean;
+  onRefresh: () => void;
+  title: JSX.Element;
+}) {
+  const text = useText();
+  const { t } = text;
+  const empty = () => !props.loading && props.rows.length === 0;
+  const [now, setNow] = createSignal(Date.now());
+  const clock = window.setInterval(() => setNow(Date.now()), RESET_CLOCK_MS);
+  onCleanup(() => window.clearInterval(clock));
+  const fades = createScrollFades();
+  onCleanup(() => fades.stop());
+  createEffect(
+    () => props.rows.length,
+    () => fades.remeasure(),
+  );
+  return (
+    <>
+      <header class="account-usage-popover-header">
+        <div class="account-usage-popover-heading">
+          <Gauge aria-hidden="true" />
+          {props.title}
+        </div>
+        <Button
+          variant="ghost"
+          type="button"
+          size="icon-sm"
+          class="account-usage-refresh"
+          aria-label={
+            props.refreshActive
+              ? t("account.usage.refreshing")
+              : props.error
+                ? t("common.tryAgain")
+                : t("account.usage.refresh")
+          }
+          title={t("account.usage.refreshTitle")}
+          onClick={props.onRefresh}
+          disabled={props.refreshDisabled}
+        >
+          <RefreshCw class={props.refreshActive ? "icon-spinning" : ""} aria-hidden="true" />
+        </Button>
+      </header>
+      <Show when={props.loading && props.rows.length === 0}>
+        <p class="account-usage-empty" role="status">
+          {t("account.usage.loading")}
+        </p>
+      </Show>
+      <Show when={empty()}>
+        <p class="account-usage-empty" role="status">
+          {t("account.usage.empty")}
+        </p>
+      </Show>
+      <Show when={props.rows.length > 0}>
+        <ul
+          class={["account-usage-providers", fades.classes()]}
+          aria-label={t("account.usage.providers")}
+          ref={(element) => fades.bind(element)}
+          onScroll={fades.measure}
+        >
+          <For each={props.rows} keyed={accountUsageRowKey}>
+            {(row) => (
+              <li class="account-usage-provider" aria-label={accountUsageRowLabel(row(), text, props.loading)}>
+                <ProviderLogo provider={row().provider} class="account-usage-provider-logo" />
+                <Show
+                  when={row().windows.length > 0}
+                  fallback={
+                    <>
+                      <span class="account-usage-provider-copy">
+                        <strong class="account-usage-provider-name">{row().name}</strong>
+                        <span class="account-usage-provider-meta">
+                          {!row().reportsUsage
+                            ? t("account.usage.providerNotReported")
+                            : props.loading
+                              ? t("account.usage.window.limit")
+                              : t("account.usage.notReported")}
+                        </span>
+                      </span>
+                      <strong class="account-usage-provider-remaining">
+                        {!row().reportsUsage
+                          ? t("account.usage.value.notReported")
+                          : props.loading
+                            ? t("account.usage.value.loading")
+                            : t("account.usage.value.unavailable")}
+                      </strong>
+                    </>
+                  }
+                >
+                  <strong class="account-usage-provider-name">{row().name}</strong>
+                  <AccountUsageWindowList windows={row().windows} now={now()} />
+                </Show>
+              </li>
+            )}
+          </For>
+        </ul>
+      </Show>
+      <Show when={props.error}>{(message) => <p class="account-usage-popover-error">{message()}</p>}</Show>
+    </>
+  );
+}
+
+export function AccountUsageWindowList(props: { windows: readonly AccountUsageWindowRow[]; now: number }) {
+  const text = useText();
+  const { t } = text;
+  return (
+    <span class="account-usage-windows">
+      <For each={props.windows}>
+        {(usageWindow, index) => (
+          <>
+            <Show
+              when={
+                usageWindow.group && props.windows[index() - 1]?.group?.name !== usageWindow.group.name
+                  ? usageWindow.group.name
+                  : undefined
+              }
+            >
+              {(groupName) => <span class="account-usage-window-group">{groupName()}</span>}
+            </Show>
+            <span class="account-usage-window" data-usage-tone={usageWindow.tone}>
+              <span class="account-usage-window-label" title={usageWindow.label}>
+                {usageWindow.group?.window ?? usageWindow.label}
+              </span>
+              <span class="account-usage-window-bar" aria-hidden="true">
+                <span class="account-usage-window-fill" style={{ "inline-size": `${usageWindow.remainingPercent}%` }} />
+                <Show when={usagePaceRemainingPercent(usageWindow.durationMins, usageWindow.resetsAt, props.now)}>
+                  {(pace) => <span class="account-usage-window-pace" style={{ "inset-inline-start": `${pace()}%` }} />}
+                </Show>
+              </span>
+              <strong class="account-usage-window-remaining">
+                {t("account.usage.window.remaining", {
+                  percent: text.format.percent(usageWindow.remainingPercent / 100),
+                })}
+              </strong>
+              <span
+                class="account-usage-window-reset"
+                title={
+                  usageWindow.resetsAtLabel
+                    ? t("account.usage.resetsAt", { time: usageWindow.resetsAtLabel })
+                    : undefined
+                }
+              >
+                {formatUsageResetIn(usageWindow.resetsAt, props.now, text)}
+              </span>
+            </span>
+          </>
+        )}
+      </For>
+    </span>
+  );
+}

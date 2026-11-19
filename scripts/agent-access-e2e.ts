@@ -1,0 +1,774 @@
+import assert from "node:assert/strict";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import {
+  type AgentAccessChange,
+  type AgentAccessSnapshot,
+  decodeAgentAccessSnapshot,
+  decodeServerAuditLog,
+  type ServerAuditLog,
+} from "@openbot/contracts/ipc";
+import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
+import {
+  TEAM_APP_VERSION_HEADER,
+  TEAM_CAPABILITIES_HEADER,
+  TEAM_PROTOCOL_V1_WEBSOCKET,
+  TEAM_PROTOCOL_VERSION_HEADER,
+} from "@openbot/contracts/team-protocol";
+import {
+  AGENT_ACCESS_CAPABILITY,
+  AGENT_ACCESS_CODECS,
+  AGENT_ACCESS_ROUTES,
+  agentAccessEvent,
+} from "@openbot/contracts/team-protocol/agent-access-v1";
+import { AGENT_MEMORY_INCLUSION_ROUTE } from "@openbot/contracts/team-protocol/agent-memories-v1";
+import { CHAT_COLORS_ROUTES } from "@openbot/contracts/team-protocol/chat-colors-v1";
+import { teamCapabilitiesForProtocol } from "@openbot/contracts/team-protocol/current";
+import {
+  SERVER_AUDIT_CAPABILITY,
+  SERVER_AUDIT_CODECS,
+  SERVER_AUDIT_ROUTES,
+} from "@openbot/contracts/team-protocol/server-audit-v1";
+import { STORAGE_ROUTES } from "@openbot/contracts/team-protocol/storage-v1";
+import { TEAM_PROTOCOL_V7 } from "@openbot/contracts/team-protocol/v7";
+import { TEAM_PROTOCOL_V9 } from "@openbot/contracts/team-protocol/v9";
+import { sourceText } from "@openbot/i18n/source";
+import { plugin } from "bun";
+import { Effect } from "effect";
+import type { AgentBrowserHost } from "../src/backend/agent/turn-lifecycle";
+import { AgentService } from "../src/backend/agent-service";
+import { AgentStore } from "../src/backend/agent-store";
+import { runCauseEffect } from "../src/backend/effect-boundary";
+import { MailboxStore } from "../src/backend/mailbox-store";
+import { OpenBotDatabase } from "../src/backend/openbot-database";
+import { SidebarLayoutStore } from "../src/backend/sidebar-layout-store";
+import { StorageUsageScanner, StorageUsageService } from "../src/backend/storage-usage";
+import type { TeamApiBrowser } from "../src/main/team-api/dependencies";
+
+const OUT = resolve(import.meta.dirname, "../.openbot-build/agent-access-e2e");
+const HOST_VERSION = "0.0.0-e2e";
+const OWNER = { username: "owner-user", password: "owner-password-123" };
+const MEMBER = { username: "member-user", password: "member-password-123" };
+const STEP_DEADLINE_MS = 30_000;
+
+plugin({
+  name: "agent-access-electron-boundary",
+  setup(build) {
+    class Inert {}
+    build.module("electron", () => ({
+      loader: "object",
+      exports: {
+        app: { getPath: () => tmpdir(), getVersion: () => HOST_VERSION, isPackaged: false, on: () => undefined },
+        BrowserWindow: Object.assign(class extends Inert {}, { getAllWindows: () => [] }),
+        MessageChannelMain: class extends Inert {},
+        Notification: Object.assign(class extends Inert {}, { isSupported: () => false }),
+        clipboard: {},
+        dialog: {},
+        ipcMain: { handle: () => undefined, removeHandler: () => undefined, on: () => undefined },
+        nativeImage: {},
+        net: {},
+        powerMonitor: { on: () => undefined },
+        safeStorage: { isEncryptionAvailable: () => false },
+        screen: {},
+        session: {},
+        shell: { openExternal: async () => undefined },
+        systemPreferences: {},
+        webContents: { getAllWebContents: () => [] },
+      },
+    }));
+  },
+});
+
+const { TeamApiServer } = await import("../src/main/team-api-server");
+const { AGENT_ACCESS_FILE, AgentAccessStore } = await import("../src/main/agent-access-store");
+const { SERVER_AUDIT_FILE, ServerAuditStore, memberAuditName, serverAuditNames } = await import(
+  "../src/main/server-audit-store"
+);
+const { TeamStore } = await import("../src/main/team-store");
+
+interface Step {
+  name: string;
+  passed: boolean;
+  detail?: unknown;
+  error?: string;
+}
+
+const report: { passed: boolean; unverified: string[]; steps: Step[] } = {
+  passed: false,
+  unverified: [
+    "A message or an interrupt to a `chat` agent. Both start a provider CLI, which this check does not run; the step sends a queue cancel, which is also a `chat` write.",
+  ],
+  steps: [],
+};
+
+async function step<T>(
+  name: string,
+  run: () => Promise<T>,
+  summarize: (value: T) => unknown = (value) => value,
+): Promise<T> {
+  process.stdout.write(`- ${name}\n`);
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const value = await Promise.race([
+      run(),
+      new Promise<never>((_, reject) => {
+        deadline = setTimeout(() => reject(new Error(`No result within ${STEP_DEADLINE_MS} ms.`)), STEP_DEADLINE_MS);
+      }),
+    ]);
+    report.steps.push({ name, passed: true, detail: summarize(value) });
+    return value;
+  } catch (error) {
+    report.steps.push({ name, passed: false, error: error instanceof Error ? error.message : String(error) });
+    throw error;
+  } finally {
+    clearTimeout(deadline);
+  }
+}
+
+type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
+type JsonObject = { [key: string]: Json };
+
+function isRecord(value: unknown): value is JsonObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function record(value: unknown, label: string): JsonObject {
+  assert.ok(isRecord(value), `${label} is not an object.`);
+  return value;
+}
+
+function text(value: unknown, label: string): string {
+  assert.equal(typeof value, "string", `${label} is not text.`);
+  return String(value);
+}
+
+const unused = () => Effect.die(new Error("Not used by this check."));
+const agentBrowser: AgentBrowserHost = {
+  listTabs: () => [],
+  beginTakeover: unused,
+  endTakeover: () => {},
+  userControlTabFor: () => null,
+  awaitUserControlRelease: unused,
+  resolveUploadTarget: unused,
+  handleDynamicTool: unused,
+  onChanged: () => () => {},
+  onControlChanged: () => () => {},
+  onDocumentChanged: () => () => {},
+  clearControls: () => {},
+  endControl: () => {},
+  close: () => Effect.void,
+  clearAgentSession: () => Effect.void,
+  shareTab: () => undefined,
+  unshareThread: () => undefined,
+  agentTab: () => null,
+};
+const teamBrowser: TeamApiBrowser = {
+  listTabs: () => [],
+  getControlState: () => ({ sessions: [] }),
+  open: unused,
+  activate: unused,
+  navigate: unused,
+  reload: unused,
+  stop: unused,
+  takeUserControl: unused,
+  startTeach: unused,
+  stopTeach: () => [],
+  releaseUserControl: () => {},
+  releaseUserControlHeldBy: () => {},
+  releaseUserControlRefused: () => {},
+  close: unused,
+  capturePreview: unused,
+  setVisible: unused,
+  getDisplayState: () => ({ tabs: [], activeTabId: null }),
+  loadUrl: unused,
+  isPrivate: () => false,
+  startView: unused,
+  dispatchViewInput: unused,
+  copyViewSelection: unused,
+  importSignIn: unused,
+};
+
+const root = await mkdtemp(join(tmpdir(), "openbot-agent-access-"));
+const userData = join(root, "user-data");
+const home = join(root, "home");
+
+interface Host {
+  database: OpenBotDatabase;
+  agents: AgentService;
+  mailbox: MailboxStore;
+  storage: StorageUsageService;
+  server: InstanceType<typeof TeamApiServer>;
+  team: InstanceType<typeof TeamStore>;
+  access: InstanceType<typeof AgentAccessStore>;
+  audit: InstanceType<typeof ServerAuditStore>;
+  port: number;
+}
+
+let host: Host | null = null;
+const sockets: WebSocket[] = [];
+
+async function startHost(): Promise<Host> {
+  const database = new OpenBotDatabase(userData);
+  const agentStore = new AgentStore(userData, home, database);
+  const mailbox = new MailboxStore(userData, agentStore.sharedRoot, agentStore.database);
+  const sidebar = new SidebarLayoutStore(join(userData, "sidebar-layout.json"));
+  const team = new TeamStore(join(userData, "openbot-team-server-v2.json"));
+  const audit = new ServerAuditStore(join(userData, SERVER_AUDIT_FILE));
+  await runCauseEffect(audit.load());
+  const access = new AgentAccessStore(join(userData, AGENT_ACCESS_FILE), {
+    audit: (serverId, before, after, actor) =>
+      audit.recordAgentAccess(serverId, actor, before, after, () =>
+        serverAuditNames(team.listMembers(), agents.listAgents()),
+      ),
+  });
+  await runCauseEffect(sidebar.initialize());
+  await runCauseEffect(agentStore.initialize());
+  await runCauseEffect(mailbox.initialize());
+  await runCauseEffect(team.initialize());
+  assert.equal(await runCauseEffect(access.load()), true, "The roles file did not load.");
+  if (!team.getIdentity()) await runCauseEffect(team.configure("E2E Host", OWNER.username, OWNER.password));
+  const agents = new AgentService({ store: agentStore, mailbox, browser: agentBrowser, sidebarLayout: sidebar });
+  const storageSources = {
+    roots: {
+      database: join(userData, "openbot.db"),
+      downloads: join(root, "downloads"),
+      caches: [join(userData, "remote-attachments")],
+      logs: [join(userData, "logs")],
+      runtimes: join(root, "runtimes"),
+      data: userData,
+    },
+    database: () => database.connection,
+    mailbox,
+    agents: () => agents.listAgents(),
+  };
+  const storage = new StorageUsageService(new StorageUsageScanner(storageSources), storageSources);
+  const server = new TeamApiServer({
+    store: team,
+    agents,
+    mailbox,
+    browser: teamBrowser,
+    sidebarLayout: sidebar,
+    appVersion: HOST_VERSION,
+    hiddenAgents: agents,
+    agentAccess: access,
+    serverAudit: audit,
+    storage,
+  });
+  const port = await Effect.runPromise(server.start());
+  return { database, agents, mailbox, storage, server, team, access, audit, port };
+}
+
+async function stopHost(): Promise<void> {
+  if (!host) return;
+  const stopping = host;
+  host = null;
+  await Effect.runPromise(stopping.server.stop()).catch(() => undefined);
+  await Effect.runPromise(stopping.storage.dispose()).catch(() => undefined);
+  await runCauseEffect(stopping.agents.stop()).catch(() => undefined);
+  stopping.database.close();
+}
+
+function current(): Host {
+  assert.ok(host, "The host is not running.");
+  return host;
+}
+
+async function call(
+  method: string,
+  path: string,
+  input: { token?: string; body?: unknown; protocol?: number; capabilities?: readonly string[] } = {},
+): Promise<{ status: number; body: unknown }> {
+  const protocol = input.protocol ?? TEAM_PROTOCOL_V7;
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    [TEAM_PROTOCOL_VERSION_HEADER]: String(protocol),
+    [TEAM_APP_VERSION_HEADER]: HOST_VERSION,
+    [TEAM_CAPABILITIES_HEADER]: (input.capabilities ?? teamCapabilitiesForProtocol(protocol)).join(","),
+  };
+  if (input.body !== undefined) headers["Content-Type"] = "application/json";
+  if (input.token) headers.Authorization = `Bearer ${input.token}`;
+  const response = await fetch(`http://127.0.0.1:${current().port}${path}`, {
+    method,
+    headers,
+    body: input.body === undefined ? null : JSON.stringify(input.body),
+  });
+  const body = await response.text();
+  return { status: response.status, body: body ? JSON.parse(body) : null };
+}
+
+async function access(path: string, token: string, body: unknown): Promise<{ status: number; body: unknown }> {
+  const codec = AGENT_ACCESS_CODECS.get(path);
+  assert.ok(codec, `No agent-access-v1 codec for ${path}.`);
+  codec.request(body);
+  const response = await call("POST", path, { token, body });
+  return { status: response.status, body: codec.response(response.status, response.body) };
+}
+
+async function readAccess(token: string): Promise<AgentAccessSnapshot> {
+  const response = await access(AGENT_ACCESS_ROUTES.read, token, {});
+  assert.equal(response.status, 200, `Reading the roles returned ${response.status}.`);
+  return decodeAgentAccessSnapshot(response.body);
+}
+
+async function setAccess(token: string, change: AgentAccessChange) {
+  return access(AGENT_ACCESS_ROUTES.set, token, change);
+}
+
+async function readAudit(
+  token: string,
+  capabilities?: readonly string[],
+): Promise<{ status: number; log: ServerAuditLog | null }> {
+  const codec = SERVER_AUDIT_CODECS.get(SERVER_AUDIT_ROUTES.read);
+  assert.ok(codec, "No server-audit-v1 codec for the read route.");
+  codec.request({});
+  const response = await call("POST", SERVER_AUDIT_ROUTES.read, {
+    token,
+    body: {},
+    protocol: TEAM_PROTOCOL_V9,
+    ...(capabilities ? { capabilities } : {}),
+  });
+  if (response.status !== 200) return { status: response.status, log: null };
+  return { status: 200, log: decodeServerAuditLog(codec.response(response.status, response.body)) };
+}
+
+function auditName(memberId: string): string {
+  const member = current()
+    .team.listMembers()
+    .find((value) => value.id === memberId);
+  assert.ok(member, `No member ${memberId}.`);
+  return memberAuditName(member).name;
+}
+
+function auditLines(log: ServerAuditLog): string[] {
+  return log.entries.map(({ change }) => {
+    switch (change.kind) {
+      case "agent-level":
+        return `agent-level ${change.role?.name ?? "Everyone"} ${change.agent.name} ${change.from}->${change.to}`;
+      case "role-member":
+        return `role-member ${change.role.name} ${change.member.name} ${change.added ? "added" : "removed"}`;
+      case "role-created":
+      case "role-deleted":
+        return `${change.kind} ${change.role.name}`;
+      default:
+        return change.kind;
+    }
+  });
+}
+
+async function login(credentials: { username: string; password: string }): Promise<string> {
+  const response = await call("POST", TEAM_API_ROUTES.auth.login, { body: credentials });
+  assert.equal(response.status, 200, `Sign-in returned ${response.status}.`);
+  return text(record(response.body, "login").sessionToken, "session token");
+}
+
+async function listedIds(token: string): Promise<string[]> {
+  const listed = await call("GET", TEAM_API_ROUTES.agents.all, { token });
+  assert.equal(listed.status, 200);
+  assert.ok(Array.isArray(listed.body));
+  return listed.body.map((agent) => text(record(agent, "agent").id, "agent id")).sort();
+}
+
+async function sendFile(agentId: string, name: string): Promise<string> {
+  const { mailbox } = current();
+  const [draft] = await runCauseEffect(
+    mailbox.prepareImportedAttachments([], [{ name, mimeType: "text/plain", bytes: Buffer.from(name) }]),
+  );
+  assert.ok(draft, "The file was not prepared.");
+  const receipt = await runCauseEffect(
+    mailbox.enqueue({ sender: { kind: "user" }, recipientAgentIds: [agentId], text: name, draftIds: [draft.id] }),
+  );
+  for (const delivery of receipt.deliveries) {
+    await runCauseEffect(mailbox.markStarting(delivery.id));
+    await runCauseEffect(mailbox.markRunning(delivery.id, `turn-${delivery.id}`));
+    await runCauseEffect(mailbox.markTerminal(delivery.id, "completed"));
+  }
+  return draft.id;
+}
+
+async function readStorage(token: string, body: JsonObject): Promise<{ status: number; body: JsonObject }> {
+  const response = await call("POST", STORAGE_ROUTES.usage, { token, body, protocol: TEAM_PROTOCOL_V9 });
+  return { status: response.status, body: record(response.body, "storage") };
+}
+
+function rows(body: JsonObject, list: "files" | "agents" | "conversations"): JsonObject[] {
+  const value = body[list];
+  assert.ok(Array.isArray(value), `The storage answer has no ${list}.`);
+  return value.map((row) => record(row, list));
+}
+
+function refusal(body: unknown): string {
+  return JSON.stringify(body);
+}
+
+async function openEvents(token: string): Promise<WebSocket> {
+  const socket = new WebSocket(`ws://127.0.0.1:${current().port}${TEAM_API_ROUTES.events}`, [
+    TEAM_PROTOCOL_V1_WEBSOCKET,
+    `openbot-token.${token}`,
+  ]);
+  sockets.push(socket);
+  await new Promise<void>((resolveOpen, reject) => {
+    socket.addEventListener("open", () => resolveOpen(), { once: true });
+    socket.addEventListener("error", () => reject(new Error("The event socket did not open.")), { once: true });
+  });
+  const snapshot = nextMessage(socket, (value) =>
+    isRecord(value) && value.type === "runtime-snapshot" ? value : null,
+  );
+  socket.send(
+    JSON.stringify({
+      type: "agent-event-scope",
+      includeConversations: false,
+      capabilities: ["agent-runtime-snapshots", AGENT_ACCESS_CAPABILITY],
+    }),
+  );
+  await snapshot;
+  return socket;
+}
+
+function nextMessage<T>(socket: WebSocket, pick: (value: unknown) => T | null): Promise<T> {
+  return new Promise((resolveMessage, reject) => {
+    const onMessage = (event: MessageEvent) => {
+      const picked = pick(JSON.parse(String(event.data)));
+      if (picked === null) return;
+      socket.removeEventListener("message", onMessage);
+      resolveMessage(picked);
+    };
+    socket.addEventListener("message", onMessage);
+    socket.addEventListener("close", (event) => reject(new Error(`The event socket closed: ${event.code}.`)), {
+      once: true,
+    });
+  });
+}
+
+function nextAgentsChanged(socket: WebSocket): Promise<string[]> {
+  return nextMessage(socket, (value) => {
+    if (!isRecord(value) || value.type !== "bots-changed" || !Array.isArray(value.bots)) return null;
+    return value.bots.map((agent) => text(record(agent, "agent").id, "agent id")).sort();
+  });
+}
+
+try {
+  host = await startHost();
+  const ownerToken = await login(OWNER);
+
+  const setup = await step(
+    "setup: an owner, a member, and four agents; with no roles the member gets every agent",
+    async () => {
+      const { agents, team } = current();
+      const create = async (name: string) =>
+        (
+          await runCauseEffect(
+            agents.createAgentProfile({ name, description: name, avatarSeed: name.toLowerCase(), avatarHue: null }),
+          )
+        ).id;
+      const legal = await create("Legal");
+      const finance = await create("Finance");
+      const ops = await create("Ops");
+      const general = await create("General");
+      const invite = await runCauseEffect(team.createInvite("member"));
+      const joined = await call("POST", TEAM_API_ROUTES.join.server, {
+        body: { inviteToken: invite.token, ...MEMBER },
+      });
+      assert.equal(joined.status, 201, `Join returned ${joined.status}.`);
+      const memberId = team.listMembers().find((member) => member.username === MEMBER.username)?.id;
+      assert.ok(memberId, "The member is not in the team.");
+      const memberToken = await login(MEMBER);
+      const owner = await readAccess(ownerToken);
+      assert.deepEqual(owner, { revision: 0, mine: owner.mine, everyone: {}, roles: [] });
+      const mine = await readAccess(memberToken);
+      assert.equal(mine.everyone, undefined, "A member reads the Everyone levels.");
+      assert.equal(mine.roles, undefined, "A member reads the roles.");
+      assert.deepEqual(
+        Object.values(mine.mine),
+        ["manage", "manage", "manage", "manage"],
+        "With no roles a member must manage every agent.",
+      );
+      return { ids: { legal, finance, ops, general }, memberId, memberToken };
+    },
+    ({ ids, memberId }) => ({ ids, memberId }),
+  );
+  const { legal, finance, ops, general } = setup.ids;
+  let socket = await openEvents(setup.memberToken);
+
+  await step("member: cannot change the roles", async () => {
+    const refused = await setAccess(setup.memberToken, { revision: 0, everyone: { [legal]: "none" }, roles: [] });
+    assert.equal(refused.status, 403);
+    assert.equal(current().access.get(current().team.getIdentity()?.serverId ?? "").revision, 0);
+    return { status: refused.status };
+  });
+
+  const legalRole = { id: "legal", name: "Legal", agents: { [legal]: "chat" as const }, memberIds: [setup.memberId] };
+  const restricted: AgentAccessChange = {
+    revision: 0,
+    everyone: { [legal]: "none", [finance]: "none", [ops]: "view" },
+    roles: [legalRole],
+  };
+
+  await step("owner: a role change reaches the member's socket without the closed agent", async () => {
+    const changed = nextMessage(socket, (value) => agentAccessEvent(value));
+    const agentsChanged = nextAgentsChanged(socket);
+    const saved = await setAccess(ownerToken, restricted);
+    assert.equal(saved.status, 200, `Saving the roles returned ${saved.status}.`);
+    assert.equal((await changed).revision, 1);
+    const ids = await agentsChanged;
+    assert.deepEqual(ids, [legal, ops, general].sort(), "The member's socket still lists the closed agent.");
+    return { revision: 1, agents: ids.length };
+  });
+
+  await step("audit: the owner reads the roles change with its actor, newest first", async () => {
+    const { status, log } = await readAudit(ownerToken);
+    assert.equal(status, 200, `Reading the audit log returned ${status}.`);
+    assert.ok(log);
+    const ownerId = current()
+      .team.listMembers()
+      .find((member) => member.role === "owner")?.id;
+    assert.ok(ownerId, "The host has no owner.");
+    const ownerName = { id: ownerId, name: auditName(ownerId) };
+    const memberName = auditName(setup.memberId);
+    assert.deepEqual(auditLines(log), [
+      "agent-level Legal Legal none->chat",
+      "agent-level Everyone Ops manage->view",
+      "agent-level Everyone Finance manage->none",
+      "agent-level Everyone Legal manage->none",
+      `role-member Legal ${memberName} added`,
+      "role-created Legal",
+    ]);
+    for (const entry of log.entries) assert.deepEqual(entry.actor, ownerName, "An entry does not name the owner.");
+    return { entries: log.entries.length, actor: ownerName.name };
+  });
+
+  await step("audit: a member is refused with 403, and a client with no server-audit-v1 gets 400", async () => {
+    const member = await readAudit(setup.memberToken);
+    assert.equal(member.status, 403, `A member read the audit log: ${member.status}.`);
+    const older = teamCapabilitiesForProtocol(TEAM_PROTOCOL_V9).filter((value) => value !== SERVER_AUDIT_CAPABILITY);
+    const unsupported = await readAudit(ownerToken, older);
+    assert.equal(unsupported.status, 400, `A client with no server-audit-v1 got ${unsupported.status}.`);
+    return { member: member.status, noCapability: unsupported.status };
+  });
+
+  await step("member: reads the levels that apply to them, and the list leaves out the closed agent", async () => {
+    const mine = await readAccess(setup.memberToken);
+    assert.deepEqual(mine, { revision: 1, mine: { [legal]: "chat", [ops]: "view", [general]: "manage" } });
+    assert.deepEqual(await listedIds(setup.memberToken), [legal, ops, general].sort());
+    return mine;
+  });
+
+  await step("none: the closed agent's conversation answers 404", async () => {
+    const response = await call("GET", TEAM_API_ROUTES.agent.conversation(finance), { token: setup.memberToken });
+    assert.equal(response.status, 404);
+    return { status: response.status };
+  });
+
+  await step("none: the Library of the member has no file of the closed agent", async () => {
+    const closedFile = await sendFile(finance, "finance-report.txt");
+    const openFile = await sendFile(general, "general-notes.txt");
+    const names = (body: JsonObject) =>
+      rows(body, "files")
+        .map((file) => text(file.name, "file name"))
+        .sort();
+    const owner = await readStorage(ownerToken, { scope: "host", force: true });
+    assert.equal(owner.status, 200, `The owner's storage read returned ${owner.status}.`);
+    assert.deepEqual(names(owner.body), ["finance-report.txt", "general-notes.txt"]);
+    const member = await readStorage(setup.memberToken, { scope: "host", force: true });
+    assert.equal(member.status, 200, `The member's storage read returned ${member.status}.`);
+    assert.deepEqual(names(member.body), ["general-notes.txt"], "The member reads a file of the closed agent.");
+    for (const list of ["agents", "conversations"] as const)
+      assert.ok(
+        rows(member.body, list).every((row) => row.agentId !== finance),
+        `The member reads the closed agent in the storage ${list}.`,
+      );
+    const closedScope = await readStorage(setup.memberToken, { scope: "agent", agentId: finance, force: true });
+    assert.equal(closedScope.status, 404, `The storage of the closed agent returned ${closedScope.status}.`);
+    const openScope = await readStorage(setup.memberToken, { scope: "agent", agentId: general, force: true });
+    assert.deepEqual(names(openScope.body), ["general-notes.txt"]);
+    return {
+      owner: names(owner.body),
+      member: names(member.body),
+      closedScope: closedScope.status,
+      files: { closedFile, openFile },
+    };
+  });
+
+  await step("view: a write is refused with 403, and reading the conversation works", async () => {
+    const sent = await call("POST", TEAM_API_ROUTES.agent.messages(ops), {
+      token: setup.memberToken,
+      body: { text: "Hello" },
+    });
+    assert.equal(sent.status, 403, `A message to a view agent returned ${sent.status}.`);
+    assert.ok(refusal(sent.body).includes(sourceText("error.team.agentViewOnly")), refusal(sent.body));
+    assert.equal(current().agents.listQueue(ops).deliveries.length, 0, "A refused message was queued.");
+    const read = await call("GET", TEAM_API_ROUTES.agent.conversation(ops), { token: setup.memberToken });
+    assert.equal(read.status, 200, `Reading a view agent returned ${read.status}.`);
+    return { send: sent.status, read: read.status };
+  });
+
+  await step("chat: a chat write passes the check, and a settings change is refused", async () => {
+    const cancel = (agentId: string) =>
+      call("POST", TEAM_API_ROUTES.agent.queueCancel(agentId), {
+        token: setup.memberToken,
+        body: { deliveryId: "delivery-e2e" },
+      });
+    const refused = await cancel(ops);
+    assert.equal(refused.status, 403, `A cancel on a view agent returned ${refused.status}.`);
+    const passed = await cancel(legal);
+    assert.notEqual(passed.status, 403, `A cancel on a chat agent was refused: ${refusal(passed.body)}.`);
+    assert.notEqual(passed.status, 404, `A cancel on a chat agent answered 404: ${refusal(passed.body)}.`);
+    const patched = await call("PATCH", TEAM_API_ROUTES.agent.one(legal), {
+      token: setup.memberToken,
+      body: { name: "Legal 2" },
+    });
+    assert.equal(patched.status, 403, `PATCH on a chat agent returned ${patched.status}.`);
+    assert.ok(refusal(patched.body).includes(sourceText("error.team.agentManageDenied")), refusal(patched.body));
+    const included = await call("POST", AGENT_MEMORY_INCLUSION_ROUTE, {
+      token: setup.memberToken,
+      body: { agentId: legal, changes: [{ memoryId: "memory-e2e", inclusion: "essential", expectedRevision: 0 }] },
+    });
+    assert.equal(included.status, 403, `A memory inclusion change on a chat agent returned ${included.status}.`);
+    const chatColor = await call("POST", CHAT_COLORS_ROUTES.set, {
+      token: setup.memberToken,
+      body: { agentId: legal, color: "#a1b2c3" },
+      protocol: TEAM_PROTOCOL_V9,
+    });
+    assert.equal(chatColor.status, 403, `A chat colour change on a chat agent returned ${chatColor.status}.`);
+    assert.ok(refusal(chatColor.body).includes(sourceText("error.team.agentManageDenied")), refusal(chatColor.body));
+    const legalAgent = current()
+      .agents.listAgents()
+      .find((agent) => agent.id === legal);
+    assert.equal(legalAgent?.name, "Legal");
+    assert.equal(legalAgent?.chatColor, undefined, "A refused chat colour was saved.");
+    return {
+      viewCancel: refused.status,
+      chatCancel: passed.status,
+      patch: patched.status,
+      inclusion: included.status,
+      chatColor: chatColor.status,
+    };
+  });
+
+  await step("manage: the member changes an agent that Everyone does not list", async () => {
+    const patched = await call("PATCH", TEAM_API_ROUTES.agent.one(general), {
+      token: setup.memberToken,
+      body: { name: "General 2" },
+    });
+    assert.equal(patched.status, 200, `PATCH on a manage agent returned ${patched.status}.`);
+    const chatColor = await call("POST", CHAT_COLORS_ROUTES.set, {
+      token: setup.memberToken,
+      body: { agentId: general, color: "#a1b2c3" },
+      protocol: TEAM_PROTOCOL_V9,
+    });
+    assert.equal(chatColor.status, 200, `A chat colour change on a manage agent returned ${chatColor.status}.`);
+    const generalAgent = current()
+      .agents.listAgents()
+      .find((agent) => agent.id === general);
+    assert.equal(generalAgent?.name, "General 2");
+    assert.equal(generalAgent?.chatColor, "#a1b2c3", "The agent store did not keep the chat colour.");
+    return { patch: patched.status, chatColor: chatColor.status };
+  });
+
+  await step("owner: sees and changes every agent, and reads every role", async () => {
+    assert.deepEqual(await listedIds(ownerToken), [legal, finance, ops, general].sort());
+    const patched = await call("PATCH", TEAM_API_ROUTES.agent.one(finance), {
+      token: ownerToken,
+      body: { name: "Finance 2" },
+    });
+    assert.equal(patched.status, 200);
+    const owner = await readAccess(ownerToken);
+    assert.equal(owner.revision, 1);
+    assert.deepEqual(owner.everyone, restricted.everyone);
+    assert.deepEqual(owner.roles, restricted.roles);
+    return { agents: 4, revision: owner.revision };
+  });
+
+  await step("stale: a save with an old revision answers 409 and changes nothing", async () => {
+    const stale = await setAccess(ownerToken, { revision: 0, everyone: {}, roles: [] });
+    assert.equal(stale.status, 409, `A stale save returned ${stale.status}.`);
+    assert.ok(refusal(stale.body).includes(sourceText("error.team.agentAccessStale")), refusal(stale.body));
+    assert.equal((await readAccess(ownerToken)).revision, 1);
+    return { status: stale.status };
+  });
+
+  await step("admin: a member made admin gets every agent, and back to member closes them again", async () => {
+    const { team, server } = current();
+    let agentsChanged = nextAgentsChanged(socket);
+    await runCauseEffect(team.updateMember(setup.memberId, { role: "admin" }));
+    server.agentAccessChanged();
+    assert.deepEqual(await agentsChanged, [legal, finance, ops, general].sort());
+    assert.deepEqual(await listedIds(setup.memberToken), [legal, finance, ops, general].sort());
+    agentsChanged = nextAgentsChanged(socket);
+    await runCauseEffect(team.updateMember(setup.memberId, { role: "member" }));
+    server.agentAccessChanged();
+    assert.deepEqual(await agentsChanged, [legal, ops, general].sort());
+    return { admin: 4, member: 3 };
+  });
+
+  await step("restart: the roles and the audit log persist", async () => {
+    socket.close();
+    await stopHost();
+    host = await startHost();
+    const mine = await readAccess(setup.memberToken);
+    assert.deepEqual(mine, { revision: 1, mine: { [legal]: "chat", [ops]: "view", [general]: "manage" } });
+    const { log } = await readAudit(ownerToken);
+    assert.ok(log, "The owner cannot read the audit log after a restart.");
+    assert.equal(log.entries.length, 6, "The audit log did not persist.");
+    socket = await openEvents(setup.memberToken);
+    return { ...mine, auditEntries: log.entries.length };
+  });
+
+  await step("owner: taking the member out of the role closes the agent with no reload", async () => {
+    const agentsChanged = nextAgentsChanged(socket);
+    const saved = await setAccess(ownerToken, {
+      ...restricted,
+      revision: 1,
+      roles: [{ ...legalRole, memberIds: [] }],
+    });
+    assert.equal(saved.status, 200);
+    assert.deepEqual(await agentsChanged, [ops, general].sort());
+    const response = await call("GET", TEAM_API_ROUTES.agent.conversation(legal), { token: setup.memberToken });
+    assert.equal(response.status, 404);
+    const { log } = await readAudit(ownerToken);
+    const memberName = auditName(setup.memberId);
+    assert.ok(log, "The owner cannot read the audit log.");
+    assert.equal(log.entries.length, 7);
+    assert.equal(auditLines(log)[0], `role-member Legal ${memberName} removed`);
+    return { agents: 2, legal: response.status, audit: auditLines(log)[0] };
+  });
+
+  await step("delete: the next save drops the levels of a deleted agent, and logs nothing", async () => {
+    const { agents, access, team } = current();
+    await runCauseEffect(agents.deleteAgent(finance));
+    const saved = await setAccess(ownerToken, { ...restricted, revision: 2, roles: [{ ...legalRole, memberIds: [] }] });
+    assert.equal(saved.status, 200, `Saving the roles returned ${saved.status}.`);
+    const stored = access.get(team.getIdentity()?.serverId ?? "");
+    assert.equal(stored.revision, 3);
+    assert.deepEqual(stored.everyone, { [legal]: "none", [ops]: "view" }, "The deleted agent kept its level.");
+    const { log } = await readAudit(ownerToken);
+    assert.ok(log, "The owner cannot read the audit log.");
+    assert.equal(log.entries.length, 7, `The save of a deleted agent's levels was logged: ${auditLines(log)[0]}.`);
+    return { everyone: stored.everyone, auditEntries: log.entries.length };
+  });
+
+  await step("duplicate: the copy of a closed agent gets the levels of its source", async () => {
+    const { access, team } = current();
+    const response = await call("POST", `/v1/agents/${encodeURIComponent(legal)}/duplicate`, {
+      token: ownerToken,
+      body: { operationId: crypto.randomUUID() },
+    });
+    assert.equal(response.status, 201, `Duplicate returned ${response.status}: ${refusal(response.body)}`);
+    const copy = text(record(record(response.body, "duplicate").bot, "bot").id, "copy id");
+    const stored = access.get(team.getIdentity()?.serverId ?? "");
+    assert.equal(stored.everyone[copy], "none", "Everyone can use the copy of a closed agent.");
+    assert.equal(stored.roles[0]?.agents[copy], "chat", "The role did not get the copy.");
+    assert.ok(!(await listedIds(setup.memberToken)).includes(copy), "The member sees the copy.");
+    return { copy: stored.everyone[copy], role: stored.roles[0]?.agents[copy] };
+  });
+
+  report.passed = true;
+} finally {
+  for (const socket of sockets) socket.close();
+  await stopHost();
+  await rm(root, { recursive: true, force: true });
+  mkdirSync(OUT, { recursive: true });
+  writeFileSync(join(OUT, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
+  process.stdout.write(`Report: ${join(OUT, "report.json")}\n`);
+}

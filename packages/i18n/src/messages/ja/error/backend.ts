@@ -1,0 +1,472 @@
+import type { PartialTranslation } from "../../../message";
+import type { messages as source } from "../../en/error/backend";
+
+export const messages = {
+  "error.backend.eventsUnavailable": "このホストではイベントを利用できません。",
+  "error.backend.databaseIntegrity": "OpenBot のデータベースが整合性チェックに失敗しました。",
+  "error.backend.webhookRouteLimit": "1 つのホストの Webhook ルーティンは最大 {limit} 個です。",
+  "error.backend.webhookSettingsInvalid": "Webhook の設定を確認して、もう一度お試しください。",
+  "error.backend.webhookSenderSecretInvalid":
+    "送信元の署名シークレットをすべて貼り付けてください。16〜1024 文字で、空白は含みません。",
+  "error.backend.webhookRouteUnavailable":
+    "公開 Webhook ルートの準備ができていません。ホストの接続を確認して、もう一度お試しください。",
+  "error.backend.browserViewRemoteOnly": "ライブブラウザービューはリモートホスト専用です。",
+  "error.backend.browserViewUnsupported": "このリモートホストはライブブラウザービューに対応していません。",
+  "error.backend.browserViewLimit": "このホストで開いているブラウザービューが多すぎます。",
+  "error.backend.browserViewEnded": "このページのライブビューは終了しました。",
+  "error.backend.browserViewFailed": "このページのライブビューは失敗しました。",
+  "error.backend.windowTemporarilyUnavailable": "OpenBot ウィンドウは一時的に使用できません。",
+  "error.backend.windowUnavailable": "OpenBot ウィンドウを使用できません。",
+  "error.backend.sunshineApiHttp": "Sunshine API が HTTP {status} で失敗しました。",
+  "error.backend.sunshinePortsUnavailable":
+    "リモートデスクトップ用に空いている Sunshine のポート群を確保できませんでした。",
+  "error.backend.moonlightPortsUnavailable":
+    "リモートデスクトップ用に空いている Moonlight WebRTC のポート範囲を確保できませんでした。",
+  "error.backend.iceServerNoPort": "リモートデスクトップの ICE サーバーにポートが割り当てられませんでした。",
+  "error.backend.remoteDesktopStoppedWhileStarting": "リモートデスクトップのランタイムは起動中に停止されました。",
+  "error.backend.sunshineNotStarted": "Sunshine は確保したポート群で起動しませんでした。",
+  "error.backend.moonlightNoHost": "Moonlight にペアリング済みのローカルホストがありません。",
+  "error.backend.sunshineNoDesktop": "Sunshine が Desktop アプリケーションを公開しませんでした。",
+  "error.backend.sunshineAmbiguousPairing": "Sunshine があいまいなローカルペアリング要求を返しました。",
+  "error.backend.sunshineNoPairingRequest": "Sunshine は予期したローカルペアリング要求を受信しませんでした。",
+  "error.backend.moonlightPairingHttp": "Moonlight のペアリングが HTTP {status} で失敗しました。",
+  "error.backend.moonlightRejectedPairing": "Moonlight が Sunshine とのペアリングを拒否しました。",
+  "error.backend.moonlightNoPin": "Moonlight がペアリング PIN を返しませんでした。",
+  "error.backend.moonlightPairingIncomplete": "Moonlight のペアリングが完了しませんでした。",
+  "error.backend.moonlightWebNotEmbedded": "Moonlight Web は OpenBot 組み込みビルドではありません。",
+  "error.backend.moonlightEmptyResponse": "Moonlight が空の応答を返しました。",
+  "error.backend.remoteDesktopTimeout": "リモートデスクトップの要求がタイムアウトしました。",
+  "error.backend.moonlightApiHttp": "Moonlight API が HTTP {status} で失敗しました。",
+  "error.backend.sunshineExited": "Sunshine は、ポート {port} の HTTPS API の準備ができる前に終了しました。",
+  "error.backend.sunshineNoAnswer": "Sunshine が応答しませんでした。",
+  "error.backend.sunshineTlsUnexpected": "Sunshine が予期しない TLS 証明書を返しました。",
+  "error.backend.moonlightWebExited": "Moonlight Web は {url} の準備ができる前に終了しました。",
+  "error.backend.moonlightWebNotReady": "Moonlight Web の準備ができませんでした。",
+  "error.backend.channelDeleteUnsupported": "このサーバーはチャンネルの削除に対応していません。",
+  "error.backend.browserNavigateUnsupported":
+    "このリモートホストは、既存のタブでのアドレスバーによる移動に対応していません。",
+  "error.backend.browserUserControlBusy":
+    "このブラウザーのタブはシークレットを待っています。先にシークレットの要求に応答してください。",
+  "error.backend.browserTeachBusy":
+    "別のユーザーがこのブラウザーのタブを操作しています。操作が終わってからもう一度お試しください。",
+  "error.backend.browserTeachUnavailable": "このブラウザーのタブには、タスクを学習できるエージェントがありません。",
+  "error.backend.browserTeachUnsupported": "このリモートホストは、タスクの記録に対応していません。",
+  "error.backend.browserUserControlUnsupported":
+    "このリモートホストは、ブラウザーのタブの操作の引き継ぎに対応していません。",
+  "error.backend.browserSignInUnsupported": "このリモートホストはこのコンピューターからのサインインを受け取れません。",
+  "error.backend.browserSignInOpenFailed": "OpenBot はサインインウィンドウを開けませんでした。",
+  "error.backend.browserSignInReadFailed": "OpenBot はウィンドウからサインインを読み取れませんでした。",
+  "error.backend.browserStopUnsupported": "このリモートホストはページの読み込みを停止できません。",
+  "error.backend.sharedDataLocalOnly": "共有データは、これらのエージェントを実行しているコンピューターで管理されます。",
+  "error.backend.browserUrlProtocol": "HTTP(S) のブラウザー URL のみ使用できます。",
+  "error.backend.sunshineNotReady": "Sunshine の準備ができませんでした。",
+  "error.backend.sunshineNotReadyReason": "Sunshine の準備ができませんでした。{reason}",
+  "error.backend.channelLeadModelUnavailable": "チャンネルリードのモデルを使用できません。",
+  "error.backend.contextCompactionIneffective":
+    "圧縮してもこのチャットは小さくなりません。2回圧縮しても、モデルのコンテキストウィンドウの{percent}%を使っているため、OpenBotは自動圧縮を止めます。ウィンドウの大部分はツールと指示が使っています。このエージェントに不要なMCPサーバーやコンピューター操作をオフにするか、より大きなウィンドウのモデルを選んでください。その後、新しいチャットを開始してください。",
+  "error.backend.contextCompactionStopped":
+    "このチャットの圧縮が2回続けて失敗したため、OpenBot は自動圧縮を停止します。試行のたびにチャット全体がモデルに送信され、プランの上限を消費します。もう一度試すには「今すぐ圧縮」を選択するか、新しいチャットを開始してください。",
+  "error.backend.providerModelAtCapacity":
+    "モデルが混雑しています。プロバイダーは数分後に再試行します。今すぐ続けるには、ターンを停止して別のモデルを選んでください。",
+  "error.backend.providerRetrying":
+    "プロバイダーでこのリクエストが{attempts}回失敗し、再試行しています。エージェントが続かない場合は、ターンを停止してください。",
+  "error.backend.providerRetryingLargeContext":
+    "プロバイダーでこのリクエストが{attempts}回失敗し、再試行しています。このチャットはモデルのコンテキストウィンドウの{percent}%を使っています。エージェントが続かない場合は、ターンを停止してください。OpenBotは次のメッセージの前にチャットを圧縮します。",
+  "error.backend.sharedDataUnavailable": "共有データを使用できません。",
+  "error.backend.shuttingDown": "OpenBot を終了しています。",
+  "error.backend.channelUnconfirmedStart":
+    "チャンネルに開始が未確認の割り当てがあります。削除する前に結果を確認してください。",
+  "error.backend.channelNotFound": "チャンネルが見つかりません。",
+  "error.backend.channelMemberUnavailable": "チャンネルのメンバーを使用できません。",
+  "error.backend.channelInstructionsTooLong":
+    "指示を2,000文字以内に短くしてください。これより長い指示は保存されません。",
+  "error.backend.channelWaitBeforeNewConversation":
+    "このチャンネルの作業が終わるまで待ってから、新しい会話を始めてください。",
+  "error.backend.channelWaitBeforeCompact": "このチャンネルの作業が終わるまで待ってから、圧縮してください。",
+  "error.backend.channelWaitBeforeDeleteHistory":
+    "このチャンネルの作業が終わるまで待ってから、履歴を削除してください。",
+  "error.backend.channelCompactUnavailable":
+    "今はこのチャンネルのどのメンバーもコンテキストを圧縮できません。メンバーがまずチャンネルで回答し、そのプロバイダーが圧縮に対応している必要があります。",
+  "error.backend.channelCompactNoSession":
+    "このチャンネルのメンバーには、まだ圧縮する会話がありません。メンバーがチャンネルで回答した後に圧縮してください。",
+  "error.backend.channelCompactNotSupported":
+    "このチャンネルのどのメンバーも、要求に応じて圧縮できません。対応しているメンバーは、コンテキストがほぼいっぱいになると自動で圧縮します。",
+  "error.backend.channelArchived":
+    "メッセージを送信したりタスクを変更したりする前に、このチャンネルを復元してください。",
+  "error.backend.channelArchiveRunning": "このチャンネルで実行中の作業を停止してから削除してください。",
+  "error.backend.channelReferenceUnavailable": "参照先のチャンネルメッセージを使用できません。",
+  "error.backend.channelTaskNotFound": "チャンネルのタスクが見つかりません。",
+  "error.backend.channelTaskComplete": "このタスクはすでに完了しています。",
+  "error.backend.channelTaskNotStopped": "キャンセルできるのは、停止したタスクか失敗したタスクだけです。",
+  "error.backend.channelSelectAgent": "エージェントを選択してください。",
+  "error.backend.channelLeadRequired":
+    "使用できるチャンネルリードを選択するか、このタスクをメンバーに割り当ててください。",
+  "error.backend.channelRoutingTooLong":
+    "この依頼はルーティングのコンテキスト上限を超えています。メンバーを選択するか、短い依頼を送信してください。",
+  "error.backend.channelTaskMemberRequired": "このタスクのメンバーを選択してください。",
+  "error.backend.channelTaskStopped": "停止しました。このタスクを続行するか、再割り当てしてください。",
+  "error.backend.channelRoutingUnreadable":
+    "リーダーがこのメッセージを振り分けられませんでした。メンバーに再割り当てしてください。",
+  "error.backend.channelRoutingFailed": "ルーティングに失敗しました。メンバーを選択するか、もう一度お試しください。",
+  "error.backend.channelLeadTimedOut":
+    "チャンネルリードが時間内に応答しませんでした。メンバーを選択するか、もう一度お試しください。",
+  "error.backend.channelLeadFailed":
+    "チャンネルリードがこのメッセージをルーティングできませんでした。メンバーを選択するか、もう一度お試しください。",
+  "error.backend.channelRequestMemberRequired": "この依頼のメンバーを選択してください。",
+  "error.backend.channelDeliveryNotCreated": "チャンネルへの配信を作成できませんでした。",
+  "error.backend.channelAssignmentStopped": "このチャンネルの割り当ては停止されたか、置き換えられました。",
+  "error.backend.channelAssigneeUnavailable": "割り当てられたエージェントを使用できません。",
+  "error.backend.channelAssigneeRemoved": "割り当てられたメンバーが削除されました。",
+  "error.backend.channelAssigneeReassign":
+    "割り当てられたメンバーを使用できません。このタスクを再割り当てしてください。",
+  "error.backend.channelAssignmentChanged": "このチャンネルの割り当ては変更されました。",
+  "error.backend.channelMemberRequired": "このチャンネルの使用可能なメンバーを選択してください。",
+  "error.backend.memoryEssentialBudget":
+    "必須メモリーがプロンプトの上限を超えています。エントリーを「必要なときに検索」に設定してから、もう一度お試しください。",
+  "error.backend.memorySelectionConflict": "メモリーが変更されました。再読み込みして、もう一度お試しください。",
+  "error.backend.memorySelectionUserControlled":
+    "このメモリーの選択はユーザーが管理しています。ユーザーの選択を維持してください。",
+  "error.backend.memorySearchQuery": "検索語を 1 つ以上、256 文字以内で入力してください。",
+  "error.backend.memoryOperationFailed": "メモリーの操作に失敗しました。もう一度お試しください。",
+  "error.backend.memoryGone": "このメモリーはもう存在しません。",
+  "error.backend.routineGone": "このルーティンはもう存在しません。",
+  "error.backend.routineRunGone": "このルーティンの実行はもう存在しません。",
+  "error.backend.routineRunFailedNoReason":
+    "実行はエラーで停止しましたが、理由は届いていません。実行を開いて、エージェントが何をしたかを確認してください。",
+  "error.backend.turnNotStarted": "プロバイダーはこのターンを開始しませんでした。",
+  "error.backend.routineResultConnectionOff":
+    "このメッセージ接続はオフか削除されています。別の送信先を選んでください。",
+  "error.backend.routineResultNoDelivery": "この実行には再送信できる回答がありません。",
+  "error.backend.channelMemoryLimit": "1 つのチャンネルに置けるメモリーは {limit} 個までです。",
+  "error.backend.channelRoutineLimit": "1 つのチャンネルに置けるルーティンは {limit} 個までです。",
+  "error.backend.agentRoutineLimit": "1 つのエージェントに置けるルーティンは {limit} 個までです。",
+  "error.backend.agentMemoryLimit": "1 つのエージェントに置けるメモリーは {limit} 個までです。",
+  "error.backend.agentMemoryLimitReached":
+    "メモリーは {limit} 個中 {saved} 個です。空きを作るには、関連する 2 つのメモリーをまとめた文で一方を memoryId で更新してからもう一方を削除するか、もう正しくないメモリーを削除してください。そのあと、もう一度試してください。",
+  "error.backend.agentMemoryLimitExceeded":
+    "メモリーは {saved} 個あり、上限は {limit} 個です。ユーザーが保存済みの数より低い上限を設定しました。空きを作るためにメモリーを削除しないでください。このメモリーは保存されなかったとユーザーに伝えてください。",
+  "error.backend.channelHistoryArriving": "共有メッセージをまだ受信中です。完了してから再開してください。",
+  "error.backend.channelHistoryLeadRequired": "共有履歴を準備するには、チャンネルリードを選択してください。",
+  "error.backend.channelHistoryInvalid": "履歴の要約が無効です。再開してもう一度お試しください。",
+  "error.backend.channelContextTooLong":
+    "この割り当ては共有コンテキストの上限を超えています。短い依頼を送信するか、割り当て直してください。",
+  "error.backend.draftAttachmentLimit": "下書きの添付ファイルは {limit} 個までにしてください。",
+  "error.backend.recipientRequired": "受信者が 1 人以上必要です。",
+  "error.backend.recipientLimit": "1 つのメッセージの受信者は {limit} 人までです。",
+  "error.backend.attachmentDraftGone": "添付ファイルの下書きはもう存在しません: {id}",
+  "error.backend.attachmentInQueueEdit": "添付ファイルがキューの編集に属しています。",
+  "error.backend.messageEmpty": "メッセージを空にすることはできません。",
+  "error.backend.attachLimit": "添付できるファイルは {limit} 個までです。",
+  "error.backend.queuedMessageNotFound": "キュー内のメッセージが見つかりませんでした。",
+  "error.backend.cancelQueuedOnly": "キャンセルできるのはキュー内のメッセージだけです。",
+  "error.backend.messageBeingEdited": "このメッセージは編集中です。先に編集を保存するかキャンセルしてください。",
+  "error.backend.queuedMessageUnavailable": "このキュー内のメッセージはもう使用できません。",
+  "error.backend.editedOnOtherDevice": "このメッセージは別のデバイスで編集中です。",
+  "error.backend.editUnavailable": "この編集はもう使用できません。",
+  "error.backend.attachmentInOtherEdit": "添付ファイルが別の編集に属しています。",
+  "error.backend.messageBeingSaved": "このメッセージは保存中です。完了してからもう一度お試しください。",
+  "error.backend.editQueuedOnly": "編集できるのはキュー内のメッセージだけです。",
+  "error.backend.attachmentNotInMessage": "添付ファイルがキュー内のメッセージに属していません。",
+  "error.backend.queueOrderStale": "キューの順序が古くなっています。キューを更新して、もう一度お試しください。",
+  "error.backend.fileGone": "ファイルが存在しないか、すでに削除されています。",
+  "error.backend.managedAttachmentChanged": "管理対象の添付ファイルが見つからないか、変更されています: {name}",
+  "error.backend.mailboxStateCorrupt":
+    "メールボックスの状態が破損しているか、新しいバージョンの OpenBot のものです。上書きしません。",
+  "error.backend.recipientDeleting": "受信者を削除中です。削除が終わってから再試行してください。",
+  "error.backend.recipientHidden": "このエージェントは非表示です。メッセージを送るには元に戻してください。",
+  "error.backend.agentIdUnknown":
+    "ID {id} のエージェントはありません。openbot.list_agents で ID を取得してから、もう一度お試しください。",
+  "error.backend.agentIdNear":
+    "ID {id} のエージェントはありません。エージェント {name} の ID {nearId} がほぼ同じです。このエージェントのことなら、その ID でもう一度お試しください。",
+  "error.backend.attachBetween": "1 〜 {limit} 個のファイルを添付してください。",
+  "error.backend.attachmentNotFile": "添付ファイルがファイルではありません: {path}",
+  "error.backend.generatedImageTooLarge": "生成された画像が 100 MB の上限を超えています。",
+  "error.backend.generatedVideoTooLarge": "生成された動画が 100 MB の上限を超えています。",
+  "error.backend.videoGenerationFailed": "動画の生成に失敗しました。",
+  "error.backend.videoGenerationNoVideo": "動画の生成で動画が返されませんでした。",
+  "error.backend.videoGenerationInterrupted": "動画の生成が中断されました。",
+  "error.backend.attachmentNotRegularFile": "添付できるのは通常のファイルだけです: {name}",
+  "error.backend.attachmentCopyFailed": "OpenBot は {name} をコピーできませんでした。",
+  "error.backend.routineNameRequired": "ルーティン名が必要です。",
+  "error.backend.routineNameTooLong": "ルーティン名が長すぎます。",
+  "error.backend.routineInstructionRequired": "ルーティンの指示が必要です。",
+  "error.backend.routineInstructionTooLong": "ルーティンの指示が長すぎます。",
+  "error.backend.routineScheduleInvalid": "ルーティンのスケジュールが無効です。",
+  "error.backend.routineIntervalTooShort":
+    "ルーティンの間隔は {minutes} 分以上にする必要があります。{minutes} 分以上にするか、毎日・毎週・cron のスケジュールを使用してください。",
+  "error.backend.routineIntervalTooShortFixed":
+    "ルーティンの間隔は {minutes} 分以上にする必要があります。{minutes} 分以上にするか、固定の時刻を使用してください。",
+  "error.backend.routineCronTooOften": "カスタムスケジュールの実行間隔は {minutes} 分以上にしてください。",
+  "error.backend.routineAnchorInvalid": "ルーティンの間隔の起点が無効です。",
+  "error.backend.routineNoOccurrence": "このスケジュールは今後 5 年以内に実行されません。",
+  "error.backend.routineOncePassed":
+    "この 1 回限りのルーティンの日時は過ぎています。後の日付または時刻を選んでください。",
+  "error.backend.routineTimezoneInvalid": "ルーティンのタイムゾーンが無効です。",
+  "error.backend.routineCronFields": "カスタムスケジュールには 5 つの cron フィールドを使用してください。",
+  "error.backend.routineCronValueInvalid": "cron の {field} の値が無効です。",
+  "error.backend.routineCronFieldEmpty": "cron の {field} フィールドが空です。",
+  "error.backend.routineDeletionBusy": "このエージェントでは別のルーティンの削除がすでに実行中です。",
+  "error.backend.routineWaitForAgent": "ルーティンを実行する前に、エージェントの操作が終わるまでお待ちください。",
+  "error.backend.routineRunStarting":
+    "このルーティンの実行はまだ開始中です。ターンが始まってからもう一度お試しください。",
+  "error.backend.routineRunNoSession":
+    "プロバイダーのセッションを使用できないため、OpenBot は実行中のルーティンを中断できません。",
+  "error.backend.interruptSelf": "エージェントは自分自身を中断できません。",
+  "error.backend.interruptOtherWork":
+    "このエージェントは、あなたのメッセージで開始されていないタスクを実行中です。そのタスクを停止できるのは、ユーザーまたはそのタスクの送信者だけです。",
+  "error.backend.interruptSharedWork":
+    "このエージェントのターンは、あなたのメッセージに加えて、ユーザーまたは別のエージェントからのメッセージも処理しています。停止できるのはユーザーだけで、そのエージェントのチャットの「エージェントを停止」を使います。",
+  "error.backend.interruptStarting":
+    "このエージェントはまだターンを開始中です。ターンが始まってからもう一度お試しください。",
+  "error.backend.interruptNoSession":
+    "プロバイダーのセッションを使用できないため、OpenBot はこのエージェントを中断できません。",
+  "error.backend.memoryTextRequired": "メモリーのテキストが必要です。",
+  "error.backend.memoryTextTooLong": "メモリーのテキストが長すぎます。",
+  "error.backend.mcpServerGone": "この MCP サーバーはもう存在しません。",
+  "error.backend.routineFlowLinkGone": "この接続はもう存在しません。",
+  "error.backend.routineFlowSameAgent": "エージェントは自分自身に作業を渡せません。",
+  "error.backend.routineFlowIntoOwner":
+    "このルーティンは自身のエージェントから始まるため、そのエージェントは別のエージェントから作業を受け取れません。",
+  "error.backend.routineFlowNotOnPath":
+    "このエージェントはまだルーティンに含まれていません。先にルーティンに接続してください。",
+  "error.backend.routineFlowDuplicate": "これらのエージェントはこのルーティンですでに接続されています。",
+  "error.backend.routineFlowCycle": "この接続はループになります。",
+  "error.backend.routineFlowLinkLimit": "1 つのルーティンの接続は最大 {limit} 個です。",
+  "error.backend.agentWaitLimit":
+    "このエージェントにはすでに開いている待機が {count} 件あります。別の待機を開く前に、openbot.close_wait で待機を閉じてください。",
+  "error.backend.agentWaitGone": "この待機は開いていません。エージェントが閉じたか、誰かがキャンセルしました。",
+  "error.backend.agentWaitNoRequest": "待機を続行するにはメッセージが必要です。このターンにはメッセージがありません。",
+  "error.backend.agentWaitOwnChatOnly":
+    "待機は自分のチャットでのみ開いてください。チャンネルやメッセージングのタスクは待機できません。",
+  "error.backend.agentWaitNoteRequired": "待機の目的を示す短いメモを入力してください。",
+  "error.backend.agentWaitRoutineGone": "このエージェントにはこの ID のルーティンがありません。",
+  "error.backend.agentWaitNoRoutine":
+    "待機を再開できるのは自分のルーティンの実行だけですが、ルーティンがありません。openbot.create_routine でルーティンを作成してから、待機を開いてください。",
+  "error.backend.markUnreadRemoteUnsupported":
+    "メッセージを未読にする操作は、このコンピューター上のエージェントでのみ使用できます。",
+  "error.backend.messageDeleteUnsupported": "このサーバーはメッセージの削除に対応していません。",
+  "error.backend.messageDeleteNotFound": "このメッセージはチャットにありません。",
+  "error.backend.messageDeleteBusy": "このメッセージは実行中のターンの一部です。ターンが終わってから削除してください。",
+  "error.backend.messageDeleteForbidden": "削除できるのは自分が送信したメッセージだけです。",
+  "error.backend.messagePinNotFound": "このメッセージはチャットにありません。",
+  "error.backend.messagePinLimit":
+    "このチャットにはピン留めしたメッセージが50件あります。別のメッセージをピン留めする前に、1件解除してください。",
+  "error.backend.routineFlowHandoffFailed": "ルーティンはこのエージェントに作業を渡せませんでした。",
+  "error.backend.mcpServerLimit": "OpenBot に保存できる MCP サーバーは {limit} 個までです。",
+  "error.backend.mcpServerNameTaken": "{name} という名前の MCP サーバーはすでに存在します。",
+  "error.backend.mcpServerInvalid": "OpenBot はこの MCP サーバーの設定を保存できません。",
+  "error.backend.mcpServerNoAnswer": "サーバーは {seconds} 秒以内に応答しませんでした。",
+  "error.backend.mcpSignInNotAccepted": "サーバーはそのサインインを受け付けませんでした。",
+  "error.backend.mcpSignInAccountRefused":
+    "サーバーは、サインインに使ったアカウントを拒否しました。このアカウントがサービスを使えるか確認してください。別のアカウントを使うには、サインアウトしてからもう一度サインインしてください。",
+  "error.backend.mcpSignInClientRefused":
+    "サインインの完了時に、サインインサーバーが OpenBot を受け付けませんでした。もう一度サインインしてください。OpenBot はサーバーに再登録します。",
+  "error.backend.mcpSignInAppRefused":
+    "サインインサーバーがこのサーバーのサインインアプリを受け付けませんでした。サインインアプリのクライアント ID とクライアントシークレットを確認してから、もう一度サインインしてください。",
+  "error.backend.mcpCommandNotFound": "コマンドが見つかりません: {command}",
+  "error.backend.mcpProviderLimit":
+    "このエージェントが使える MCP サーバーの数には上限があります。このサーバーを使うには、エージェントに不要な MCP サーバーをオフにしてください。",
+  "error.backend.mcpRegistrationRefused":
+    "サインインサーバーはまだ OpenBot をアプリとして受け付けていません。原因はお使いのアカウントではありません。ローカル MCP サーバーなど、別の方法で接続してください。",
+  "error.backend.mcpRegistrationUnavailable":
+    "サインインサーバーは OpenBot をアプリとして登録できません。原因はお使いのアカウントではありません。接続するには、マーケットプレイス、アプリでこのサーバーを保存してから、サインインアプリを追加してください。",
+  "error.backend.mcpSignInAbandonedGeneric": "サインインは中止されました。",
+  "error.backend.mcpSignInForgotten": "MCP のサインインは実行中に破棄されました。",
+  "error.backend.mcpSignInAbandoned": "MCP のサインインは中止されました。",
+  "error.backend.mcpSignInNoBrowser": "この MCP のサインインではブラウザーを開けません。",
+  "error.backend.mcpSignInNotWebPage": "サインインのアドレスは Web ページではありません。",
+  "error.backend.mcpSignInRequired":
+    "このサーバーはサインインを求めています。「サインイン」を選んでブラウザーで続けてください。",
+  "error.backend.mcpSignInOnHost":
+    "このサーバーはサインインを求めています。ホストコンピューターの OpenBot でサインインしてください。",
+  "error.backend.mcpSignInNeedsHttps":
+    "このサーバーはサインインを求めていますが、OpenBot は https でのみサインインします。URL を {url} に変更してください。",
+  "error.backend.mcpSignInCancelled": "サインインはキャンセルされました。",
+  "error.backend.mcpSignInTimedOut": "ブラウザーでサインインが完了しませんでした。",
+  "error.backend.mcpSignInRefused": "サインインページでアクセスが拒否されました。もう一度サインインしてください。",
+  "error.backend.mcpSignInResponseTimedOut": "サインインの応答が時間内に届きませんでした。",
+  "error.backend.mcpSignInMetadataUnreadable":
+    "OpenBot はこのサーバーのサインイン情報を読み取れませんでした。サーバーアドレスを確認して再試行してください。",
+  "error.backend.mcpSignInAnswerUnreadable":
+    "サインインサーバーから OpenBot が読み取れない応答が返されました。サービスから API キーまたはトークンが提供されている場合は、このサーバーの設定に追加してから、もう一度接続をテストしてください。",
+  "error.backend.mcpServerExited":
+    "サーバーは応答する前に停止しました。ターミナルでコマンドを実行してエラーを確認してください。",
+  "error.backend.mcpServerExitedWithOutput": "サーバーは応答する前に停止しました。出力: {detail}",
+  "error.backend.mcpServerFailedToStart": "サーバーが起動しませんでした: {reason}",
+  "error.backend.mcpServerStartAbandoned":
+    "サーバーが起動する前に {provider} が待つのをやめたため、{provider} のエージェントはこのサーバーのツールを使えません。",
+  "error.backend.mcpServerStoppedDuringCall": "MCP サーバーがこの呼び出しに応答する前に停止しました。",
+  "error.backend.mcpToolSchemaRefused":
+    "このサーバーのツール {tool} の入力形式を、このプロバイダーは読み取れません。ほかのプロバイダーのエージェントは引き続きこのサーバーを使えます。",
+  "error.backend.mcpServerSignInForProvider":
+    "{provider} は MCP サーバー {name} を使用できませんでした。サーバーがサインインを求めています。マーケットプレイス、アプリで {name} を開いて「サインイン」を選択してください。",
+  "error.backend.mcpServerFailedForProvider":
+    "{provider} は MCP サーバー {name} を起動できませんでした。マーケットプレイス、アプリで {name} を開いて「接続をテスト」を選択すると、原因を確認できます。",
+  "error.backend.mcpServerFailedInProvider":
+    "{provider} は MCP サーバー {name} を起動できませんでした。{provider} はこのサーバーのツールを使えません。{provider} はサーバーを自分で起動するため、OpenBot の接続テストは成功することがあります。新しいチャットを開始して、もう一度お試しください。",
+  "error.backend.mcpServerTimedOutInProvider":
+    "サーバーが時間内に応答しなかったため、{provider} は MCP サーバー {name} を起動できませんでした。新しいチャットを開始して、もう一度お試しください。",
+  "error.backend.mcpOAuthProxyUnavailable":
+    "OpenBot はこのサーバーのローカルサインイン接続を開始できませんでした。OpenBot を再起動してから、もう一度お試しください。",
+  "error.backend.mcpOAuthSignInNeeded":
+    "この MCP サーバーへのサインインは終了しました。ユーザーは OpenBot でもう一度サインインする必要があります。",
+  "error.backend.mcpOAuthRenewalFailed":
+    "OpenBot は今この MCP サーバーのサインインを更新できませんでした。サインインは保持され、次のリクエストで再試行します。このエラーが続く場合、ユーザーは OpenBot でこのサーバーからサインアウトし、もう一度サインインできます。",
+  "error.backend.mcpServerUnreachable":
+    "OpenBot はサーバーに接続できませんでした。URL とネットワークを確認してください。",
+  "error.backend.mcpLocalServerOff":
+    "このコンピューターの {address} で応答するサーバーがありません。サーバーを起動するか、サーバーを実行するアプリでオンにしてから、もう一度お試しください。",
+  "error.backend.mcpServerBlocked":
+    "このコンピューターがサーバーへの接続をブロックしました。ファイアウォールまたはセキュリティソフトを確認してから、もう一度お試しください。",
+  "error.backend.mcpServerIncompatible":
+    "このアドレスで応答がありましたが、Streamable HTTP の MCP サーバーではありません。URL を確認し、サーバーを実行するアプリを更新してください。",
+  "error.backend.mcpRemoteBridge":
+    "{reason} このコマンドは mcp-remote ブリッジを実行します。代わりに URL {url} で Streamable HTTP を選ぶと、OpenBot がサインインします。",
+  "error.backend.oauthNotHttps": "OAuth エンドポイント {origin} は https ではないため、認証情報を送信しませんでした。",
+  "error.backend.oauthTooManyRedirects": "OAuth エンドポイントのリダイレクトが多すぎます。",
+  "error.backend.oauthRedirectOrigin":
+    "OAuth エンドポイントが {origin} にリダイレクトしたため、認証情報を転送しませんでした。",
+  "error.backend.oauthTimedOut": "OAuth エンドポイント {origin} が時間内に応答しませんでした。",
+  "error.backend.oauthResponseTooLarge": "OAuth エンドポイント {origin} の応答が大きすぎます。",
+  "error.backend.oauthResponseUnreadable": "OAuth エンドポイント {origin} の応答を読み取れませんでした。",
+  "error.backend.mcpOAuthPrivateEndpoint":
+    "OAuth エンドポイント {origin} はプライベートネットワーク上にありますが、MCP サーバーは公開されているため、認証情報を送信しませんでした。",
+  "error.backend.sidebarSectionLimit": "1 つのサーバーに置けるサイドバーのセクションは {limit} 個までです。",
+  "error.backend.sectionNameRequired": "セクション名が必要です。",
+  "error.backend.sectionNameTooLong": "セクション名が長すぎます。",
+  "error.backend.sidebarFolderTooDeep": "フォルダーは3階層までです。",
+  "error.backend.sidebarFolderMoveInvalid": "このフォルダーはそこへ移動できません。",
+  "error.backend.libraryFolderName": "フォルダー名は 1〜{limit} 文字にしてください。",
+  "error.backend.libraryFolderLimit": "1 つのサーバーに置けるライブラリのフォルダーは {limit} 個までです。",
+  "error.backend.libraryFolderFileLimit": "ライブラリのフォルダーにあるファイルが多すぎます。",
+  "error.backend.libraryFolderTooDeep": "ライブラリのフォルダーは {limit} 階層までです。",
+  "error.backend.libraryFolderGone": "フォルダーが存在しないか、すでに削除されています。",
+  "error.backend.libraryFolderOtherAgent": "ファイルは、そのエージェントのフォルダーにのみ入れられます。",
+  "error.backend.libraryFolderMoveInvalid": "このフォルダーはそこへ移動できません。",
+  "error.backend.sectionNameDuplicate": "セクション名は重複しないようにしてください。",
+  "error.backend.directMessageRequired": "先にメッセージを入力してください。",
+  "error.backend.directMessageTooLong": "ダイレクトメッセージは {limit} 文字までです。",
+  "error.backend.directMessageSelf": "自分自身にダイレクトメッセージを送信することはできません。",
+  "error.backend.readBoundaryUnavailable": "既読の位置はもう使用できません。",
+  "error.backend.sharedFileOutside": "共有ファイルは共有ディレクトリ内にある必要があります。",
+  "error.backend.sharedPathIsFolder": "共有パスはファイルではなくフォルダーです。",
+  "error.backend.sharedPathNotFile": "共有パスがファイルではありません。",
+  "error.backend.workspaceFileOutside":
+    "ワークスペースのファイルはエージェントのワークスペース内にある必要があります。",
+  "error.backend.workspacePathNotFile": "ワークスペースのパスがファイルではありません。",
+  "error.backend.workspacePathNotDirectory": "ワークスペースのパスがフォルダーではありません。",
+  "error.backend.workspacePathMissing": "エージェントのワークスペース {root} に {path} はありません。",
+  "error.backend.workspacePathMissingForMember": "エージェントのワークスペースに {path} はありません。",
+  "error.backend.useChannelTaskControls": "この割り当てにはチャンネルのタスク操作を使用してください。",
+  "error.backend.editFinished": "この編集はすでに終了しています。",
+  "error.backend.editCancelled": "この編集はキャンセルされたため、メッセージは元のテキストのままです。",
+  "error.backend.editSaved": "この編集はすでに保存されています。",
+  "error.backend.editSavedDifferent": "この編集は別の内容ですでに保存されています。変更は保存されませんでした。",
+  "error.backend.useChannelTaskControlsWork": "チャンネルの作業にはチャンネルのタスク操作を使用してください。",
+  "error.backend.steerTurnChanged": "このメッセージで方向を変える前に、実行中のターンが変わりました。",
+  "error.backend.steerUnsupported":
+    "このプロバイダーは実行中のターンの方向を修正できません。メッセージはキューに残ります。",
+  "error.backend.steerRoutineRun": "ルーティンを実行中です。メッセージはキューに残り、ルーティンの後に開始します。",
+  "error.backend.steerQueuedOnly": "ターンの方向を変えられるのはキュー内のメッセージだけです。",
+  "error.backend.promptInactive": "この質問はもう有効ではありません。",
+  "error.backend.promptAnswerMismatch": "回答が有効な質問と一致しません。",
+  "error.backend.approvalInactive": "この承認はもう有効ではありません。",
+  "error.backend.feedbackNeedsPhone":
+    "このレポートを送信できるのは OpenBot のスマートフォンアプリだけです。スマートフォンのバージョンとサポートログを追加するためです。スマートフォンでこのチャットを開いてください。そこでもこのメッセージが表示される場合は、スマートフォンアプリを更新してください。",
+  "error.backend.takeoverInactive": "このブラウザーの操作引き継ぎはもう有効ではありません。",
+  "error.backend.authSubmitting": "認証の送信はすでに実行中です。",
+  "error.backend.apiKeySaveFailed": "API キーを保存できませんでした。もう一度お試しください。",
+  "error.backend.apiKeySaving": "API キーはすでに保存中です。",
+  "error.backend.apiKeyAnswerUnreadable":
+    "OpenBot は API キーを読み取れませんでした。8,000 文字以内のキーを入力し、使用できる対象を選択してください。",
+  "error.backend.authRequestInactive": "この安全な認証要求はもう有効ではありません。",
+  "error.backend.secureAuthUnavailable": "安全な認証を使用できません。",
+  "error.backend.browserUrlRequired": "ブラウザーの URL が必要です。",
+  "error.backend.browserUrlTooLong": "ブラウザーの URL が長すぎます。",
+  "error.backend.browserTabLimit": "ブラウザーで開けるタブは {limit} 個までです。",
+  "error.backend.browserProfileMissing":
+    "このエージェントのブラウザープロファイルはもうありません。エージェントの設定で別のプロファイルを選んでください。",
+  "error.backend.browserProfileNotFound": "このブラウザープロファイルはもうありません。",
+  "error.backend.browserProfileNameTaken": "この名前のブラウザープロファイルはすでにあります。",
+  "error.backend.browserSessionInUse": "このブラウザーセッションはまだタブで使われています。もう一度お試しください。",
+  "error.backend.browserProfileLimit": "ブラウザープロファイルは {limit} 個まで作成できます。",
+  "error.backend.browserProxyNotFound": "このプロキシはもう存在しません。",
+  "error.backend.browserProxyAddressInvalid":
+    "socks5://host:1080 や http://user:password@host:3128 のようなプロキシアドレスを入力してください。",
+  "error.backend.browserProxyLimit": "プロキシは {limit} 個まで作成できます。",
+  "error.backend.browserProxyTaken": "このアドレスのプロキシはすでに存在します。",
+  "error.backend.browserProxyChanged":
+    "このプロキシは開いた後に変更されました。もう一度確認してから、やり直してください。",
+  "error.backend.browserProxyUnreachable": "プロキシ {name} が応答しないため、ページを開けませんでした。",
+  "error.backend.browserProxySignInRefused": "プロキシ {name} がサインインを拒否したため、ページを開けませんでした。",
+  "error.backend.browserSystemProxyFailed":
+    "OpenBot を実行しているコンピューターの設定にあるプロキシが応答しないか接続を拒否したため、ページを開けませんでした。そのコンピューターのプロキシ設定を確認してください。",
+  "error.backend.browserProxyComputerUnreachable":
+    "このプロファイルが使うコンピューターが応答しないため、ページを開けませんでした。",
+  "error.backend.browserProxyComputerLocalAddress":
+    "このプロファイルが使うコンピューターは公開サイトだけを開きます。ローカルネットワーク上のアドレスは開かないため、ページを開けませんでした。",
+  "error.backend.browserCertificateUntrusted":
+    "このサイトのセキュリティ証明書が信頼されていないため、ページを開けませんでした。",
+  "error.backend.browserLowMemory":
+    "このサーバーはメモリーが不足しているため、ブラウザーで新しいタブを開けません。タブを閉じるか、ほかのエージェントの作業が終わるまでお待ちください。",
+  "error.backend.browserOpenFailed": "{url} を開けません: {reason}",
+  "error.backend.popupSecureInput":
+    "セキュア入力中はポップアップがブロックされます。セキュア入力を完了またはキャンセルしてから、ページからもう一度お試しください。",
+  "error.backend.popupUnsupportedType":
+    "この種類のポップアップには対応していません。ページ上の通常のリンクまたはサインインボタンを使用してください。",
+  "error.backend.popupUnsupportedAddress":
+    "このポップアップは対応していないアドレスを使用しています。ページ上の HTTP または HTTPS のサインイン方法を使用してください。",
+  "error.backend.popupTabLimit":
+    "ブラウザーのタブ数が上限に達しました。タブを閉じてから、ページからもう一度お試しください。",
+  "error.backend.popupLoadFailed": "ポップアップを読み込めませんでした。元のページからもう一度サインインしてください。",
+  "error.backend.browserTabNotFound": "ブラウザーのタブが見つかりません。",
+  "error.backend.authActive": "認証はすでに有効です。",
+  "error.backend.authWebPageRequired": "安全な認証には HTTP/HTTPS が必要です。",
+  "error.backend.authDigitsRange": "認証コードは 4〜12 桁である必要があります。",
+  "error.backend.authExpired": "認証要求の有効期限が切れました。",
+  "error.backend.authDigitsRequired": "指定された桁数の数字を入力してください。",
+  "error.backend.browserViewProtected": "認証中はブラウザービューが保護されています。",
+  "error.backend.browserPreviewPageChanged": "プレビュー中にブラウザーのページが変わりました。もう一度お試しください。",
+  "error.backend.browserInputProtected": "認証中はブラウザーへの入力が保護されています。",
+  "error.backend.mcpServerHttpCredentials":
+    "サーバーは {status} を返しました。API キーまたはその他の認証情報を確認してください。",
+  "error.backend.mcpServerHttpUrl":
+    "サーバーは {status} を返しました。URL を確認してください。リンクが間違っているか、期限切れか、削除されている可能性があります。",
+  "error.backend.mcpServerBearerKey":
+    "このサーバーはサインインではなく API キーを使います。ヘッダーで、キーに Authorization、値に Bearer とスペースのあとに API キーを入力してください。",
+  "error.backend.mcpSignInAppUrl": "サインインアプリには有効なサーバー URL が必要です。",
+  "error.backend.mcpSignInAppClientId": "サインインアプリのクライアント ID を入力してください。",
+  "error.backend.mcpSignInAppIssuerChanged":
+    "この MCP サーバーのサインインサーバーが変わったため、OpenBot はサインインアプリを送信しませんでした。この変更が正しい場合は、サインインアプリを削除してからもう一度追加してください。",
+  "error.backend.mcpSignInAppNoServer":
+    "サインインアプリを追加する前に、この MCP サーバーを URL サーバーとして保存してください。",
+  "error.backend.mcpSignInAppUnavailable": "このコンピューターではサインインアプリを保存できません。",
+  "error.backend.taskMoveRefused": "タスクとして実行できるのは、このエージェントだけに送信したメッセージのみです。",
+  "error.backend.taskNotFound": "このタスクは利用できません。",
+  "error.backend.taskClosed": "このタスクは閉じています。メッセージを送信するには、もう一度開いてください。",
+  "error.backend.taskStillRunning": "このタスクはまだ実行中です。停止するまで待ってから閉じてください。",
+  "error.backend.threadNotFound": "このスレッドは利用できません。",
+  "error.backend.threadStillRunning": "このスレッドはまだ実行中です。停止してから、もう一度お試しください。",
+  "error.backend.threadArchived": "このスレッドはアーカイブされています。メッセージを送信するには、復元してください。",
+  "error.backend.threadTitleRequired": "スレッドに短いタイトルを付けてください。",
+  "error.backend.threadOpenLimitReached":
+    "このエージェントには {count} 件の開いているスレッドがあります。スレッドをアーカイブしてから、別のスレッドを開始するか復元してください。",
+  "error.backend.threadRemoteUnsupported": "スレッドは、このコンピューター上のエージェントでのみ利用できます。",
+  "error.backend.branchSourceBusy": "このチャットを分岐する前に、現在のターンを停止してください。",
+  "error.backend.branchMessageNotFound": "分岐できるのは、エージェントの完了した回答からのみです。",
+  "error.backend.branchRemoteUnsupported": "分岐は、このコンピューター上のエージェントでのみ利用できます。",
+  "error.backend.feedbackWithdrawRemoteUnsupported":
+    "このレポートを削除するには、エージェントに削除を依頼してください。",
+  "error.backend.threadMoveRefused":
+    "新しいスレッドで実行できるのは、このエージェントだけに送信したメッセージのみです。",
+  "error.backend.taskTitleRequired": "タスクに短いタイトルを付けてください。",
+  "error.backend.taskToolInvalid": "タスクには 120 文字以内のタイトルと、何をするかを説明する指示を付けてください。",
+  "error.backend.taskOwnChatOnly":
+    "タスクは自分のチャットからのみ開始してください。チャンネル、メッセージングの会話、別のタスクからは開始できません。",
+  "error.backend.taskUnfinishedLimit":
+    "このエージェントにはすでに未完了のタスクが {count} 件あります。いずれかが終わってから、別のタスクを開始してください。",
+  "error.backend.taskOpenLimitReached":
+    "このエージェントには {count} 件の開いているタスクがあります。タスクを閉じてから、別のタスクを開始するか開いてください。",
+  "error.backend.taskRemoteUnsupported": "タスクは、このコンピューター上のエージェントでのみ利用できます。",
+  "error.backend.taskStartFailed": "OpenBot はタスクを開始できませんでした。代わりにこのターンで作業してください。",
+} as const satisfies PartialTranslation<typeof source>;

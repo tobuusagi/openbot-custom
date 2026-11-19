@@ -1,0 +1,174 @@
+.language-wheel-shell {
+  width: min(100%, 360px);
+  min-height: 100%;
+  margin-inline: auto;
+  padding: var(--openbot-space-8) var(--openbot-space-4);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--openbot-space-3);
+  -webkit-app-region: no-drag;
+}
+
+.language-wheel-shell .account-login-brand-lockup {
+  margin-bottom: var(--openbot-space-4);
+}
+
+.language-wheel-title {
+  margin: 0;
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-md);
+  font-weight: var(--openbot-weight-medium);
+}
+
+.language-wheel-frame {
+  position: relative;
+  width: 100%;
+}
+
+.language-wheel-arrows {
+  position: absolute;
+  top: 50%;
+  inset-inline-start: calc(100% + var(--openbot-space-2));
+  translate: 0 -50%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--openbot-space-1);
+}
+
+.language-wheel-arrows svg {
+  width: var(--openbot-icon-lg);
+  height: var(--openbot-icon-lg);
+  stroke-width: var(--openbot-icon-stroke-lg);
+}
+
+.language-wheel {
+  --row: 44px;
+  position: relative;
+  width: 100%;
+  height: calc(var(--row) * 5);
+  overflow: clip;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  mask-image: linear-gradient(
+    transparent,
+    var(--openbot-text-primary) 30%,
+    var(--openbot-text-primary) 70%,
+    transparent
+  );
+}
+
+.language-wheel[data-dragging] {
+  cursor: grabbing;
+}
+
+.language-wheel::before {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  top: calc(var(--row) * 2);
+  height: var(--row);
+  border-radius: var(--openbot-radius-lg);
+  background: var(--openbot-bg-grouped);
+}
+
+.language-wheel:has(:focus-visible)::before {
+  box-shadow:
+    inset 0 0 0 1px var(--openbot-border-focus),
+    var(--openbot-focus-ring);
+}
+
+.language-wheel-track {
+  position: relative;
+  height: 100%;
+}
+
+.language-wheel-item {
+  position: absolute;
+  inset-inline: 0;
+  top: calc(var(--row) * 2);
+  height: var(--row);
+  translate: 0 calc(var(--offset) * var(--row));
+  opacity: max(0, 1 - var(--distance) * 0.35);
+  transition:
+    translate var(--openbot-duration-overlay) var(--openbot-ease-out),
+    opacity var(--openbot-duration-overlay) var(--openbot-ease-out);
+}
+
+.language-wheel-label {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--openbot-text-primary);
+  font-size: var(--openbot-text-3xl);
+  font-weight: var(--openbot-weight-semibold);
+  letter-spacing: -0.03em;
+  line-height: 1;
+  cursor: inherit;
+}
+
+.language-wheel-name {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  scale: max(0.6, 1 - var(--distance) * 0.2);
+  transition: scale var(--openbot-duration-overlay) var(--openbot-ease-out);
+}
+
+.language-wheel[data-dragging] :is(.language-wheel-item, .language-wheel-name) {
+  transition: none;
+}
+
+.language-wheel-flag {
+  scale: 0.9;
+  letter-spacing: 0;
+}
+
+.language-wheel-continue {
+  width: min(100%, 288px);
+  min-height: 44px;
+  margin-top: var(--openbot-space-2);
+  border-radius: var(--openbot-radius-pill);
+}
+
+.language-wheel-continue svg {
+  width: var(--openbot-icon-lg);
+  height: var(--openbot-icon-lg);
+  transition: translate var(--openbot-duration-normal) var(--openbot-ease-out);
+  stroke-width: var(--openbot-icon-stroke-lg);
+}
+
+.language-wheel-continue:hover:not(:disabled) {
+  background: var(--openbot-surface-light);
+}
+
+.language-wheel-continue:is(:hover, :focus-visible):not(:disabled) svg {
+  translate: var(--openbot-space-1) 0;
+}
+
+.language-wheel-continue:active:not(:disabled) svg {
+  translate: var(--openbot-space-2) 0;
+}
+
+.language-wheel-continue svg:dir(rtl) {
+  transform: scaleX(-1);
+}
+
+.language-wheel-continue:is(:hover, :focus-visible):not(:disabled) svg:dir(rtl) {
+  translate: calc(var(--openbot-space-1) * -1) 0;
+}
+
+.language-wheel-continue:active:not(:disabled) svg:dir(rtl) {
+  translate: calc(var(--openbot-space-2) * -1) 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .language-wheel-item,
+  .language-wheel-name,
+  .language-wheel-continue svg {
+    transition: none;
+  }
+}

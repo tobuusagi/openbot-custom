@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch for an OpenBot update request
+
+[Path]
+PathExists=/run/openbot/update-stage
+PathExists=/run/openbot/update-install
+
+[Install]
+WantedBy=paths.target

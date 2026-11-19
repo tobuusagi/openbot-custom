@@ -1,0 +1,338 @@
+import { router, useLocalSearchParams } from "expo-router";
+import { Button, Spinner, Typography } from "heroui-native";
+import Plus from "lucide-react-native/icons/plus";
+import { type ReactNode, useRef, useState } from "react";
+import { Pressable, ScrollView, View, type ViewInstance } from "react-native";
+import Animated from "react-native-reanimated";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { SettingsNote, SettingsRow, SettingsSection } from "@/features/settings/components/settings-content";
+import { RowIcon } from "@/features/settings/components/settings-row-icon";
+import { useMobileWorkspaceSelector } from "@/features/workspace/context/mobile-workspace-context";
+import { AndroidBlurTarget } from "@/shared/components/android-header-blur";
+import { GLASS_CAPSULE_HEIGHT } from "@/shared/components/glass-capsule";
+import { LargeTitle, LargeTitleBar, useLargeTitleScroll } from "@/shared/components/large-title";
+import { haptics } from "@/shared/lib/haptics";
+import { useText } from "@/shared/lib/text";
+import { typeScale } from "@/shared/lib/type-scale";
+import { AgentCard, AppTile, FeaturedAgent, ListingRow } from "../components/marketplace-parts";
+import { MarketplaceSearchBar } from "../components/marketplace-search-bar";
+import {
+  byPopularity,
+  installsOf,
+  isMarketplaceFiltered,
+  type MarketplaceFilter,
+  type MarketplaceKind,
+  type MarketplaceListing,
+  marketplaceFilterTokens,
+  matchesFilter,
+  NO_MARKETPLACE_FILTER,
+} from "../model/marketplace-listings";
+import {
+  type MarketplaceCatalog,
+  type MarketplaceInstalled,
+  useMarketplaceCatalog,
+  useMarketplaceInstalled,
+} from "../model/use-marketplace";
+
+const OVERVIEW_ROWS = 8;
+const OVERVIEW_APPS = 8;
+
+export function MarketplaceScreen() {
+  const { t } = useText();
+  const { serverId } = useLocalSearchParams<{ serverId: string }>();
+  const server = useMobileWorkspaceSelector((workspace) => workspace.servers.find((item) => item.id === serverId));
+  const canManageMcp = useMobileWorkspaceSelector((workspace) => workspace.canManageMcpServers(serverId));
+  const scroll = useLargeTitleScroll();
+  const blurTarget = useRef<ViewInstance>(null);
+  const insets = useSafeAreaInsets();
+  const [filter, setFilter] = useState<MarketplaceFilter>(NO_MARKETPLACE_FILTER);
+  const [query, setQuery] = useState("");
+  const [focused, setFocused] = useState(false);
+  const catalog = useMarketplaceCatalog({ serverId, query, filter });
+  const installed = useMarketplaceInstalled(serverId);
+  const title = t("mobile.app.route.marketplace");
+  const listing = (item: MarketplaceListing) => {
+    if (item.kind === "app" && item.source === "connector") {
+      router.push({ pathname: "/server-settings/connector", params: { serverId, id: item.connector } });
+      return;
+    }
+    if (item.kind === "app" && item.source === "custom") {
+      router.push({ pathname: "/server-settings/mcp-server", params: { serverId, mcpServerId: item.server.id } });
+      return;
+    }
+    router.push({
+      pathname: "/marketplace-listing",
+      params: { serverId, kind: item.kind, id: item.id, name: item.name },
+    });
+  };
+  const showAll = (kind: MarketplaceKind) => {
+    void haptics.selection();
+    setFilter({ ...NO_MARKETPLACE_FILTER, kind });
+  };
+  const listMode = isMarketplaceFiltered(filter) || catalog.search.length > 0;
+
+  const loadFailed =
+    server && catalog.failed ? (
+      <View className="items-center gap-3 px-6 py-4">
+        <Typography.Paragraph align="center" className="text-grouped-secondary">
+          {t("mobile.marketplace.loadFailed")}
+        </Typography.Paragraph>
+        <Button variant="secondary" onPress={() => void catalog.refetch()}>
+          <Button.Label>{t("common.tryAgain")}</Button.Label>
+        </Button>
+      </View>
+    ) : null;
+  let content: ReactNode;
+  if (!server) content = <SettingsNote>{t("mobile.server.unavailable")}</SettingsNote>;
+  else if (listMode)
+    content = (
+      <FilteredList
+        listings={catalog.listings.filter((item) => matchesFilter(item, filter, installed.installed))}
+        filter={filter}
+        pending={catalog.pending}
+        more={catalog}
+        installed={installed}
+        onOpen={listing}
+        onAddCustom={
+          canManageMcp
+            ? () => {
+                void haptics.selection();
+                router.push({ pathname: "/server-settings/mcp-server", params: { serverId } });
+              }
+            : undefined
+        }
+        onClear={() => {
+          void haptics.selection();
+          setFilter(NO_MARKETPLACE_FILTER);
+          setQuery("");
+        }}
+      />
+    );
+  else
+    content = (
+      <Overview
+        listings={catalog.listings}
+        pending={catalog.pending}
+        installed={installed}
+        onOpen={listing}
+        onShowAll={showAll}
+      />
+    );
+
+  return (
+    <View className="flex-1 bg-sheet">
+      <AndroidBlurTarget target={blurTarget} surface="sheet">
+        <Animated.ScrollView
+          className="flex-1"
+          style={{ marginLeft: insets.left, marginRight: insets.right }}
+          contentInsetAdjustmentBehavior={scroll.ownsInset ? "never" : "always"}
+          contentContainerStyle={{
+            paddingTop: scroll.ownsInset ? scroll.headerHeight : 0,
+            paddingBottom: insets.bottom + GLASS_CAPSULE_HEIGHT + 32,
+          }}
+          keyboardDismissMode="on-drag"
+          keyboardShouldPersistTaps="handled"
+          scrollEventThrottle={16}
+          showsVerticalScrollIndicator={false}
+          onScroll={scroll.onScroll}
+        >
+          <LargeTitle scroll={scroll} title={title} caption={server?.name} />
+          <View className="gap-7 pt-3">
+            {loadFailed}
+            {content}
+          </View>
+        </Animated.ScrollView>
+      </AndroidBlurTarget>
+      <LargeTitleBar scroll={scroll} title={title} surface="sheet" blurTarget={blurTarget} />
+      {server ? (
+        <MarketplaceSearchBar
+          query={query}
+          onQueryChange={setQuery}
+          filter={filter}
+          onFilterChange={setFilter}
+          focused={focused}
+          onFocusedChange={setFocused}
+        />
+      ) : null}
+    </View>
+  );
+}
+
+function SectionHeader({ title, onShowAll }: { title: string; onShowAll?: () => void }) {
+  const { t } = useText();
+  return (
+    <View className="flex-row items-baseline justify-between px-5">
+      <Typography.Heading type="h4">{title}</Typography.Heading>
+      {onShowAll ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={t("mobile.marketplace.overview.seeAllOf", { name: title })}
+          hitSlop={8}
+          style={({ pressed }) => ({ opacity: pressed ? 0.55 : 1 })}
+          onPress={onShowAll}
+        >
+          <Typography.Paragraph className="text-accent-text" style={typeScale.preview}>
+            {t("mobile.marketplace.overview.seeAll")}
+          </Typography.Paragraph>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
+function Overview({
+  listings,
+  pending,
+  installed,
+  onOpen,
+  onShowAll,
+}: {
+  listings: MarketplaceListing[];
+  pending: boolean;
+  installed: MarketplaceInstalled;
+  onOpen: (listing: MarketplaceListing) => void;
+  onShowAll: (kind: MarketplaceKind) => void;
+}) {
+  const { t } = useText();
+  const agents = listings.filter((item) => item.kind === "agent").sort(byPopularity);
+  const apps = listings.filter((item) => item.kind === "app").sort(byPopularity);
+  const skills = listings.filter((item) => item.kind === "skill").sort(byPopularity);
+  const featured = agents.reduce<MarketplaceListing | undefined>(
+    (top, item) => (top === undefined || installsOf(item) > installsOf(top) ? item : top),
+    undefined,
+  );
+  const shelf = agents.filter((item) => item !== featured);
+  return (
+    <>
+      {featured ? (
+        <View className="px-4">
+          <FeaturedAgent
+            listing={featured}
+            installed={installed.installed(featured)}
+            onPress={() => onOpen(featured)}
+          />
+        </View>
+      ) : null}
+      {shelf.length > 0 ? (
+        <View className="gap-3">
+          <SectionHeader title={t("mobile.marketplace.overview.agents")} onShowAll={() => onShowAll("agent")} />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerClassName="gap-3 px-4">
+            {shelf.slice(0, OVERVIEW_ROWS).map((item) => (
+              <AgentCard
+                key={item.id}
+                listing={item}
+                installed={installed.installed(item)}
+                onPress={() => onOpen(item)}
+              />
+            ))}
+          </ScrollView>
+        </View>
+      ) : null}
+      <View className="gap-1">
+        <SectionHeader title={t("mobile.marketplace.overview.apps")} onShowAll={() => onShowAll("app")} />
+        <View className="flex-row flex-wrap px-2">
+          {apps.slice(0, OVERVIEW_APPS).map((item) => (
+            <AppTile key={item.id} listing={item} installed={installed.installed(item)} onPress={() => onOpen(item)} />
+          ))}
+        </View>
+      </View>
+      {skills.length > 0 ? (
+        <View className="gap-3">
+          <SectionHeader title={t("mobile.marketplace.overview.skills")} onShowAll={() => onShowAll("skill")} />
+          <View className="px-4">
+            <SettingsSection>
+              {skills.slice(0, OVERVIEW_ROWS).map((item) => (
+                <ListingRow
+                  key={item.id}
+                  listing={item}
+                  installed={installed.installed(item)}
+                  showKind={false}
+                  onPress={() => onOpen(item)}
+                />
+              ))}
+            </SettingsSection>
+          </View>
+        </View>
+      ) : null}
+      {pending && agents.length === 0 && skills.length === 0 ? <Spinner className="self-center" /> : null}
+    </>
+  );
+}
+
+function FilteredList({
+  listings,
+  filter,
+  pending,
+  more,
+  installed,
+  onOpen,
+  onAddCustom,
+  onClear,
+}: {
+  listings: MarketplaceListing[];
+  filter: MarketplaceFilter;
+  pending: boolean;
+  more: Pick<MarketplaceCatalog, "hasMore" | "loadingMore" | "loadMoreFailed" | "loadMore">;
+  installed: MarketplaceInstalled;
+  onOpen: (listing: MarketplaceListing) => void;
+  onAddCustom?: () => void;
+  onClear: () => void;
+}) {
+  const { t } = useText();
+  const parts = marketplaceFilterTokens(filter, t).map((token) => token.label);
+  return (
+    <View className="gap-3 px-4">
+      {parts.length > 0 ? (
+        <View className="flex-row items-baseline justify-between px-1">
+          <Typography.Paragraph
+            numberOfLines={1}
+            className="min-w-0 flex-1 text-grouped-secondary"
+            style={typeScale.preview}
+          >
+            {parts.join(" · ")}
+          </Typography.Paragraph>
+          <Pressable accessibilityRole="button" hitSlop={8} onPress={onClear}>
+            <Typography.Paragraph className="text-accent-text" style={typeScale.preview}>
+              {t("mobile.marketplace.filter.clear")}
+            </Typography.Paragraph>
+          </Pressable>
+        </View>
+      ) : null}
+      {filter.kind === "app" && onAddCustom ? (
+        <SettingsSection>
+          <SettingsRow disclosure={false} leading={<RowIcon icon={Plus} tone="accent" />} onPress={onAddCustom}>
+            <Typography.Paragraph className="text-accent">{t("mobile.marketplace.app.addCustom")}</Typography.Paragraph>
+          </SettingsRow>
+        </SettingsSection>
+      ) : null}
+      {listings.length > 0 ? (
+        <SettingsSection>
+          {listings.map((item) => (
+            <ListingRow
+              key={`${item.kind}:${item.id}`}
+              listing={item}
+              installed={installed.installed(item)}
+              showKind={filter.kind === null}
+              onPress={() => onOpen(item)}
+            />
+          ))}
+        </SettingsSection>
+      ) : pending ? (
+        <Spinner className="self-center" />
+      ) : (
+        <SettingsNote>{t("mobile.marketplace.empty")}</SettingsNote>
+      )}
+      {more.loadMoreFailed ? <SettingsNote>{t("mobile.marketplace.loadFailed")}</SettingsNote> : null}
+      {more.hasMore ? (
+        <Button
+          variant="secondary"
+          className="self-center"
+          isDisabled={more.loadingMore}
+          onPress={() => void more.loadMore()}
+        >
+          <Button.Label>{t("mobile.marketplace.loadMore")}</Button.Label>
+        </Button>
+      ) : null}
+    </View>
+  );
+}

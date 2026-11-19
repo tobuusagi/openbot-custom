@@ -1,0 +1,182 @@
+.chat-scroll-rail {
+  --chat-scroll-rail-pitch: var(--openbot-space-2);
+  --chat-scroll-rail-hit: clamp(12px, var(--chat-scroll-rail-inset, 20px), 20px);
+  --chat-scroll-rail-ease: var(--openbot-ease-out);
+  --chat-scroll-rail-quick: var(--openbot-duration-overlay);
+
+  position: sticky;
+  z-index: 3;
+  top: 0;
+  pointer-events: none;
+}
+
+.chat-scroll-rail-nav {
+  position: absolute;
+  top: 50%;
+  inset-inline-end: calc(-1 * var(--chat-scroll-rail-inset, 0px));
+  width: calc(var(--chat-scroll-rail-hit) + var(--openbot-space-2));
+  height: min(64%, 600px);
+  display: flex;
+  flex-direction: column;
+  transform: translateY(-50%);
+}
+
+.chat-scroll-rail-track {
+  position: relative;
+  transition: opacity var(--chat-scroll-rail-quick) ease;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.chat-scroll-rail-list {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chat-scroll-rail-item {
+  flex: none;
+  height: var(--chat-scroll-rail-pitch);
+  display: flex;
+}
+
+.chat-scroll-rail .chat-scroll-rail-link {
+  position: relative;
+  flex: none;
+  width: var(--chat-scroll-rail-hit);
+  height: auto;
+  margin-inline-start: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  pointer-events: auto;
+}
+
+@media (hover: hover) {
+  .chat-scroll-rail:not([data-near]) .chat-scroll-rail-nav:not(:has(:focus-visible)) .chat-scroll-rail-track {
+    opacity: 0;
+  }
+}
+
+.chat-scroll-rail-tick {
+  position: absolute;
+  top: 50%;
+  inset-inline-end: var(--openbot-space-1);
+  width: var(--openbot-space-1);
+  height: 2px;
+  border-radius: var(--openbot-radius-pill);
+  background: color-mix(in srgb, var(--openbot-text-primary) 18%, transparent);
+  transform: translateY(-50%);
+  transition:
+    width var(--chat-scroll-rail-quick) var(--chat-scroll-rail-ease),
+    background-color var(--chat-scroll-rail-quick) ease;
+}
+
+.chat-scroll-rail-item[data-state="read"] .chat-scroll-rail-tick {
+  background: color-mix(in srgb, var(--openbot-text-primary) 36%, transparent);
+}
+
+.chat-scroll-rail-item[data-state="active"] .chat-scroll-rail-tick {
+  width: var(--openbot-space-2);
+  background: var(--openbot-text-secondary);
+}
+
+.chat-scroll-rail-nav:is(:hover, :has(:focus-visible)) .chat-scroll-rail-tick {
+  width: var(--openbot-space-2);
+}
+
+.chat-scroll-rail-nav:is(:hover, :has(:focus-visible))
+  :is(.chat-scroll-rail-item[data-open] + * + *, .chat-scroll-rail-item:has(+ * + [data-open]))
+  .chat-scroll-rail-tick {
+  width: 10px;
+}
+
+.chat-scroll-rail-nav:is(:hover, :has(:focus-visible))
+  :is(
+    .chat-scroll-rail-item[data-state="active"],
+    .chat-scroll-rail-item[data-open] + *,
+    .chat-scroll-rail-item:has(+ [data-open])
+  )
+  .chat-scroll-rail-tick {
+  width: var(--openbot-space-3);
+}
+
+.chat-scroll-rail-nav:is(:hover, :has(:focus-visible)) .chat-scroll-rail-item[data-open] .chat-scroll-rail-tick {
+  width: var(--openbot-space-4);
+  background: var(--openbot-text-primary);
+}
+
+.chat-scroll-rail-card {
+  --chat-scroll-rail-quick: var(--openbot-duration-overlay);
+  --chat-scroll-rail-ease: var(--openbot-ease-out);
+
+  position: fixed;
+  z-index: var(--openbot-layer-tooltip);
+  top: var(--chat-scroll-rail-card-top);
+  right: calc(100vw - var(--chat-scroll-rail-card-left) + var(--openbot-space-2));
+  width: max-content;
+  max-width: min(300px, 60vw);
+  display: flex;
+  flex-direction: column;
+  gap: var(--openbot-space-1);
+  padding: var(--openbot-space-3);
+  border: 1px solid color-mix(in srgb, var(--openbot-text-primary) 8%, transparent);
+  border-radius: var(--openbot-radius-lg);
+  background: var(--openbot-bg-glass);
+  backdrop-filter: blur(var(--openbot-space-4));
+  font-size: var(--openbot-text-md);
+  line-height: 18px;
+  pointer-events: none;
+  opacity: 0;
+  filter: blur(var(--openbot-space-1));
+  transform: translateY(-50%) translateX(var(--openbot-space-1));
+  transition:
+    opacity var(--chat-scroll-rail-quick) ease,
+    filter var(--chat-scroll-rail-quick) ease,
+    transform var(--chat-scroll-rail-quick) var(--chat-scroll-rail-ease);
+}
+
+:dir(rtl) .chat-scroll-rail-card {
+  right: auto;
+  left: calc(var(--chat-scroll-rail-card-right) + var(--openbot-space-2));
+  transform: translateY(-50%) translateX(calc(-1 * var(--openbot-space-1)));
+}
+
+.chat-scroll-rail-card[data-open] {
+  opacity: 1;
+  filter: blur(0);
+  transform: translateY(-50%);
+}
+
+.chat-scroll-rail-card-title {
+  overflow: hidden;
+  color: var(--openbot-text-primary);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-scroll-rail-card-reply {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--openbot-text-muted);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-scroll-rail .chat-scroll-rail-track,
+  .chat-scroll-rail .chat-scroll-rail-tick,
+  .chat-scroll-rail-card.chat-scroll-rail-card {
+    transition: none;
+  }
+}

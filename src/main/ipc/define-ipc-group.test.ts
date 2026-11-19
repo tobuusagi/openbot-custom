@@ -1,0 +1,141 @@
+// @vitest-environment node
+
+import {
+  DEFAULT_SPEECH_SETTINGS,
+  type DraftAttachment,
+  type SpeechModelStatus,
+  type VoiceModelStatus,
+  type VoiceSettings,
+  type VoiceTranscriptionInput,
+  type VoiceTranscriptionResult,
+} from "@openbot/contracts/ipc";
+import type { IpcMainInvokeEvent } from "electron";
+import { describe, expect, it, vi } from "vitest";
+import { agentRequest } from "./agent-inputs";
+import { eventPayloadHandler, handler, payloadHandler, registerIpcGroup } from "./define-ipc-group";
+import {
+  parseSpeechApiKey,
+  parseSpeechInput,
+  parseSpeechSettings,
+  parseVoiceApiKey,
+  parseVoiceLiveStart,
+  parseVoiceLiveStop,
+  parseVoiceModelRequest,
+  parseVoiceServerConnection,
+  parseVoiceServerSave,
+  parseVoiceSettings,
+  parseVoiceStream,
+  parseVoiceStreamAudio,
+} from "./voice-inputs";
+
+const { registrations } = vi.hoisted(() => ({
+  registrations: new Map<string, (event: unknown, ...arguments_: unknown[]) => unknown>(),
+}));
+
+vi.mock("electron", () => ({
+  ipcMain: {
+    handle(channel: string, listener: (event: unknown, ...arguments_: unknown[]) => unknown) {
+      registrations.set(channel, listener);
+    },
+  },
+}));
+
+const TRUSTED_EVENT = { senderFrame: { url: "openbot-app://app/index.html" } };
+const UNTRUSTED_EVENT = { senderFrame: { url: "https://evil.example/index.html" } };
+
+const READY: VoiceModelStatus = { modelId: "parakeet-tdt-0.6b-v3", phase: "ready", progress: null, message: null };
+
+const SPEECH_READY: SpeechModelStatus = { modelId: "supertonic-3", phase: "ready", progress: null, message: null };
+
+const RECORDING: DraftAttachment = {
+  id: "recording-1",
+  name: "voice.webm",
+  size: 44,
+  kind: "file",
+  mimeType: "audio/webm",
+  previewKind: "none",
+  previewUrl: null,
+};
+
+const SETTINGS: VoiceSettings = { modelId: "parakeet-tdt-0.6b-v3", language: "automatic" };
+
+function decodeNote(value: unknown): VoiceTranscriptionInput {
+  return { audio: new TextEncoder().encode(String(value)) };
+}
+
+function registerVoice(
+  transcribe: (input: VoiceTranscriptionInput, event?: IpcMainInvokeEvent) => VoiceTranscriptionResult,
+  withEvent = false,
+): void {
+  registerIpcGroup("voice", {
+    getModelStatus: handler(() => READY),
+    getModelStatuses: handler(() => [READY]),
+    prepareModel: handler(() => READY),
+    downloadModel: payloadHandler(parseVoiceModelRequest, () => READY),
+    cancelModelDownload: payloadHandler(parseVoiceModelRequest, () => READY),
+    removeModel: payloadHandler(parseVoiceModelRequest, () => READY),
+    getSettings: handler(() => SETTINGS),
+    setSettings: payloadHandler(parseVoiceSettings, (settings) => settings),
+    transcribe: withEvent
+      ? eventPayloadHandler(decodeNote, (event, input) => transcribe(input, event))
+      : payloadHandler(decodeNote, (input) => transcribe(input)),
+    setApiKey: payloadHandler(parseVoiceApiKey, () => READY),
+    startStream: handler(() => ({ streamId: "stream-1" })),
+    appendStream: payloadHandler(parseVoiceStreamAudio, () => undefined),
+    finishStream: payloadHandler(parseVoiceStream, () => ({ text: "" })),
+    cancelStream: payloadHandler(parseVoiceStream, () => undefined),
+    getSpeechSettings: handler(() => DEFAULT_SPEECH_SETTINGS),
+    setSpeechSettings: payloadHandler(parseSpeechSettings, (settings) => settings),
+    getSpeechModelStatus: handler(() => SPEECH_READY),
+    setSpeechApiKey: payloadHandler(parseSpeechApiKey, () => SPEECH_READY),
+    downloadSpeechModel: handler(() => SPEECH_READY),
+    cancelSpeechModelDownload: handler(() => SPEECH_READY),
+    removeSpeechModel: handler(() => SPEECH_READY),
+    speak: payloadHandler(parseSpeechInput, () => ({ pcm: new Uint8Array(2), sampleRate: 44_100 })),
+    warmSpeech: handler(() => undefined),
+    keepRecording: payloadHandler(decodeNote, () => RECORDING),
+    getServer: handler(() => null),
+    probeServer: payloadHandler(parseVoiceServerConnection, () => ({ ok: false, field: "address", message: "" })),
+    setServer: payloadHandler(parseVoiceServerSave, () => null),
+    startLive: payloadHandler(agentRequest(parseVoiceLiveStart), () => ({ sessionId: "live-1", sdp: "answer" })),
+    stopLive: payloadHandler(parseVoiceLiveStop, () => undefined),
+  });
+}
+
+describe("IPC group registration", () => {
+  it("registers each request endpoint on the channel it declares, and no event", () => {
+    registerVoice((input) => ({ text: `heard ${new TextDecoder().decode(input.audio)}` }));
+
+    expect(registrations.get("voice:get-model-status")?.(TRUSTED_EVENT)).toBe(READY);
+    expect(registrations.get("voice:transcribe")?.(TRUSTED_EVENT, "a note")).toEqual({ text: "heard a note" });
+    expect(registrations.has("voice:model-status")).toBe(false);
+  });
+
+  it("keeps a bound handler behind the sender check", () => {
+    let handled = 0;
+    registerVoice(() => {
+      handled += 1;
+      return { text: "" };
+    });
+
+    expect(() => registrations.get("voice:transcribe")?.(UNTRUSTED_EVENT, "a note")).toThrow(
+      "Rejected IPC request from an untrusted renderer.",
+    );
+    expect(handled).toBe(0);
+  });
+
+  it("keeps an event-and-payload handler behind the sender check, and gives it the sender's event", () => {
+    const events: unknown[] = [];
+    registerVoice((_input, event) => {
+      events.push(event);
+      return { text: "" };
+    }, true);
+
+    expect(() => registrations.get("voice:transcribe")?.(UNTRUSTED_EVENT, "a note")).toThrow(
+      "Rejected IPC request from an untrusted renderer.",
+    );
+    expect(events).toEqual([]);
+    registrations.get("voice:transcribe")?.(TRUSTED_EVENT, "a note");
+    expect(events).toEqual([TRUSTED_EVENT]);
+  });
+});

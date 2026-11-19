@@ -1,0 +1,36 @@
+import type { PartialTranslation } from "../../message";
+import type { messages as source } from "../en/queue";
+
+export const messages = {
+  "queue.label": "メッセージキュー",
+  "queue.moved": "キューのメッセージを {total} 件中 {position} 番目に移動しました。",
+  "queue.attachment": "添付ファイル",
+  "queue.hold.named": "待機中 - {name} は {channel} で作業しています",
+  "queue.hold.unnamed": "待機中 - このエージェントは {channel} で作業しています",
+  "queue.hold.providerRestart": "待機中 - {provider} は実行中のタスクが終わると再起動します",
+  "queue.item.label": "キューのメッセージ {position}: {preview}",
+  "queue.item.labelEditing": "キューのメッセージ {position}、編集中: {preview}",
+  "queue.item.editing": "編集中",
+  "queue.item.steerLabel": "キューのメッセージ {position} で方向を修正",
+  "queue.item.steerTooltip": "メッセージで方向を修正",
+  "queue.item.steering": "修正中",
+  "queue.item.steer": "方向を修正",
+  "queue.item.sendNowLabel": "エージェントを停止して、キューのメッセージ {position} を今すぐ送信",
+  "queue.item.sendNowTooltip": "エージェントを停止して、このメッセージを今すぐ送信",
+  "queue.item.sendNow": "今すぐ送信",
+  "queue.item.notSteered": "未修正",
+  "queue.item.steerFallback.providerUnsupported":
+    "このプロバイダーは実行中のターンの方向を修正できないため、メッセージはキューで待ちます。",
+  "queue.item.steerFallback.steerFailed": "方向の修正に失敗したため、メッセージはキューで待ちます。",
+  "queue.item.steerFallback.routineRun": "ルーティンを実行中のため、メッセージはキューで待ちます。",
+  "queue.item.runAsTask": "新しいスレッドで実行",
+  "queue.item.runAsTaskLabel": "キューのメッセージ {position} を新しいスレッドで実行",
+  "queue.item.deleteLabel": "キューのメッセージ {position} を削除",
+  "queue.item.deleteTooltip": "メッセージを削除",
+  "queue.item.editLabel": "キューのメッセージ {position} を編集",
+  "queue.item.editTooltip": "メッセージを編集",
+  "queue.deleteHeld.title": "キューのメッセージを削除しますか？",
+  "queue.deleteHeld.body":
+    "別のデバイスがこのメッセージを編集しています。エージェントはこのメッセージを受け取りません。",
+  "queue.deleteHeld.keep": "残す",
+} as const satisfies PartialTranslation<typeof source>;

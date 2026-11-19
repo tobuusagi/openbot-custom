@@ -1,0 +1,8 @@
+extends: ./electron-builder.yml
+forceCodeSigning: true
+win:
+  azureSignOptions:
+    publisherName: SYNTHETIFY LABS SPÓŁKA Z OGRANICZONĄ ODPOWIEDZIALNOŚCIĄ
+    endpoint: https://eus.codesigning.azure.net/
+    codeSigningAccountName: synthetifyartifactsign
+    certificateProfileName: SYNTHETIFY

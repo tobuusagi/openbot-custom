@@ -1,0 +1,35 @@
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import { Typography } from "heroui-native";
+import { View } from "react-native";
+
+import { useText } from "@/shared/lib/text";
+
+const COUNTER_FROM = 0.9;
+
+export function instructionsTooLong(text: string, limit: number = INPUT_LIMITS.agentDescription): boolean {
+  return text.length > limit;
+}
+
+export function InstructionsLimit({
+  text,
+  limit: maximum = INPUT_LIMITS.agentDescription,
+}: {
+  text: string;
+  limit?: number;
+}) {
+  const { t, format } = useText();
+  if (text.length < maximum * COUNTER_FROM) return null;
+  const limit = format.number(maximum);
+  return (
+    <View className="gap-1 px-1">
+      <Typography.Paragraph type="body-xs" className="text-text-secondary">
+        {t("mobile.agent.instructions.length", { length: format.number(text.length), limit })}
+      </Typography.Paragraph>
+      {instructionsTooLong(text, maximum) ? (
+        <Typography.Paragraph accessibilityRole="alert" type="body-xs" className="text-danger-text">
+          {t("mobile.agent.instructions.tooLong", { limit })}
+        </Typography.Paragraph>
+      ) : null}
+    </View>
+  );
+}

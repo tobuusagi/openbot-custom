@@ -1,0 +1,53 @@
+import type { PartialTranslation } from "../../message";
+import type { messages as source } from "../en/memory";
+
+export const messages = {
+  "memory.title": "Souvenirs",
+  "memory.single": "Souvenir",
+  "memory.backToSettings": "Retour aux réglages",
+  "memory.backToList": "Retour aux souvenirs",
+  "memory.closePane": "Fermer les détails",
+  "memory.add": "Ajouter un souvenir",
+  "memory.new": "Nouveau souvenir",
+  "memory.newPlaceholder": "Ajoutez un fait ou une préférence durable",
+  "memory.save": "Enregistrer le souvenir",
+  "memory.group.always": "Toujours utilisés",
+  "memory.group.relevant": "Utilisés au besoin",
+  "memory.everyChat": "Utiliser dans chaque discussion",
+  "memory.inclusion.automatic": "Laisser l’agent décider",
+  "memory.limitAgent":
+    "Cet agent a atteint la limite de {limit} souvenirs. Modifiez, fusionnez ou supprimez un souvenir avant d’en ajouter un autre.",
+  "memory.limitChannel":
+    "Ce canal a atteint la limite de {limit} souvenirs. Modifiez, fusionnez ou supprimez un souvenir avant d’en ajouter un autre.",
+  "memory.loading": "Chargement des souvenirs…",
+  "memory.search": "Rechercher des souvenirs",
+  "memory.noMatches": "Aucun souvenir ne correspond à cette recherche.",
+  "memory.emptyLead": "Dites-le une fois.",
+  "memory.emptyTitle": "Il s’en {remember}.",
+  "memory.emptyRemember": "souviendra",
+  "memory.emptyLearnsAgent": "{name} enregistre ce qu’il apprend dans vos discussions.",
+  "memory.emptyLearnsChannel": "Les agents de {name} enregistrent ce qu’ils apprennent ici.",
+  "memory.emptyAddOwn": "Vous pouvez aussi ajouter un souvenir vous-même.",
+  "memory.sample.updates": "L’utilisateur préfère des points d’avancement courts, avec le résultat d’abord.",
+  "memory.sample.scripts": "Utiliser Bun pour les scripts de paquets.",
+  "memory.sample.brief": "Envoyer le brief du matin à 7 h 00 en semaine.",
+  "memory.sample.confirm": "Demander avant de supprimer des fichiers hors de l’espace de travail.",
+  "memory.edit": "Modifier le souvenir",
+  "memory.editAction": "Modifier",
+  "memory.deleteAction": "Supprimer",
+  "memory.learned": "Appris automatiquement",
+  "memory.manual": "Ajouté manuellement",
+  "memory.unknownDate": "Date inconnue",
+  "memory.clearAll": "Effacer tous les souvenirs",
+  "memory.clearTitle": "Effacer tous les souvenirs ?",
+  "memory.clearDescription":
+    "OpenBot va supprimer définitivement les {total} souvenirs enregistrés pour {name}. Les messages d’origine resteront dans l’historique de la conversation.",
+
+  "memory.loadFailed": "Impossible de charger les souvenirs.",
+  "memory.saveFailed": "Impossible d’enregistrer le souvenir.",
+  "memory.updateFailed": "Impossible de mettre à jour le souvenir.",
+  "memory.deleteFailed": "Impossible de supprimer le souvenir.",
+  "memory.deleteUndo.title": "Souvenir supprimé",
+  "memory.deleteUndo.action": "Annuler",
+  "memory.clearFailed": "Impossible d’effacer les souvenirs.",
+} as const satisfies PartialTranslation<typeof source>;

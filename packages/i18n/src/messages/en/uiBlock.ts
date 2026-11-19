@@ -1,0 +1,28 @@
+import { defineMessages } from "../../message";
+
+export const messages = defineMessages("uiBlock", {
+  "uiBlock.status.answered": "Answered",
+  "uiBlock.status.waiting": "Waiting for you",
+  "uiBlock.outcome.expired": "No answer was given in time",
+  "uiBlock.outcome.closed": "Closed without an answer",
+  "uiBlock.outcome.autoAnswered": "{outcome} (nobody answered in time)",
+  "uiBlock.confirm.holdHint": "Hold the button to confirm, or press it to confirm in a second step",
+  "uiBlock.confirm.prompt": "Confirm: {action}?",
+  "uiBlock.confirm.accept": "Confirm",
+  "uiBlock.confirm.autoActionLabel": "{action} · {seconds} s",
+  "uiBlock.confirm.autoActionClock": "{action} · {time}",
+  "uiBlock.confirm.previewLabel": "Preview",
+  "uiBlock.confirm.showFullPreview": "Show all",
+  "uiBlock.confirm.hideFullPreview": "Show less",
+  "uiBlock.choice.submit": "Send",
+  "uiBlock.choice.shortcutHint": "Press {first} to {last} to choose",
+  "uiBlock.quick.label": "Quick replies",
+  "uiBlock.form.submit": "Submit",
+  "uiBlock.form.required": "This field is required",
+  "uiBlock.form.choose": "Choose an option",
+  "uiBlock.form.notSet": "Not set",
+  "uiBlock.form.invalid": "Some answers are not correct. Check them and try again.",
+  "uiBlock.form.hiddenValue": "Hidden",
+  "uiBlock.skip": "Skip",
+  "uiBlock.error.answerFailed": "Could not send your answer. Try again.",
+});

@@ -1,0 +1,206 @@
+import type { PartialTranslation } from "../../../message";
+import type { messages as source } from "../../en/error/agent";
+
+export const messages = {
+  "error.agent.historyUnavailable":
+    "El historial no está disponible para esta solicitud. Vuelve a leer el historial reciente o usa channel_history para el trabajo en canales.",
+  "error.agent.historyArgumentsInvalid":
+    "Argumentos de historial incorrectos: {detail} Corrige los argumentos y vuelve a intentarlo. openbot.tool_describe da el esquema.",
+  "error.agent.toolRequestInvalid":
+    "Los argumentos de descubrimiento de herramientas no son válidos. Usa el esquema declarado y un nombre de herramienta cualificado original.",
+  "error.agent.toolCallArgumentsNotObject":
+    "La herramienta no se ejecutó. En tool_call, arguments debe ser un objeto JSON, no texto. Envía la llamada de nuevo con arguments como objeto.",
+  "error.agent.toolCallDiscoveryTool":
+    "La herramienta no se ejecutó. tool_call no puede ejecutar openbot.tool_search ni openbot.tool_describe. Llámalas directamente con los mismos argumentos.",
+  "error.agent.toolCallEnvelopeKeys":
+    "La herramienta no se ejecutó. tool_call solo acepta name y arguments. Pon los argumentos de la herramienta en arguments, como objeto, y vuelve a enviar la llamada.",
+  "error.agent.toolCallMissingName":
+    "La herramienta no se ejecutó. El tool_call no tiene name. Pon en name el nombre calificado que da tool_search, como openbot.history_read, y envía la llamada otra vez.",
+  "error.agent.toolCallUnknownTool":
+    "La herramienta no se ejecutó. tool_call no encontró ninguna herramienta con este nombre. Usa el nombre calificado exacto que da tool_search, como openbot_browser.snapshot.",
+  "error.agent.toolCallUnknownToolSuggest":
+    "La herramienta no se ejecutó. tool_call no encontró ninguna herramienta con este nombre. Es posible que el nombre calificado sea {name}. Si lo es, vuelve a enviar la llamada con ese nombre.",
+  "error.agent.toolDescribeUnknownNames":
+    "tool_describe no encontró ninguna herramienta de OpenBot llamada {names}. Solo describe las herramientas de OpenBot y del navegador que lista openbot.tool_search, no las herramientas MCP.",
+  "error.agent.toolDescribeDiscoveryNames":
+    "Llama a {names} directamente. tool_describe no describe las herramientas de búsqueda.",
+  "error.agent.routineScheduleArgumentsInvalid":
+    "La programación de la rutina no es válida: {detail} Corrige la programación y vuelve a intentarlo. openbot.tool_describe da el esquema.",
+  "error.agent.approvalWhileDeleting": "No se puede conceder la aprobación mientras se elimina el agente.",
+  "error.agent.accessLocalOnly": "El acceso del agente solo se puede cambiar en el equipo que lo ejecuta.",
+  "error.agent.duplicateCleanupFailed": "No se pudo duplicar el agente ni eliminar la copia incompleta.",
+  "error.agent.commitEffectsFailed": "La transacción se confirmó, pero fallaron sus efectos guardados.",
+  "error.agent.settingsLocalOnly": "Los ajustes del agente solo se pueden cambiar en el equipo que lo ejecuta.",
+  "error.agent.skillsLocalOnly": "Las habilidades solo se pueden cambiar en el equipo que ejecuta el agente.",
+  "error.agent.addLocalOnly": "Los agentes solo se pueden añadir en el equipo que los ejecuta.",
+  "error.agent.joinedServerUpdate": "No se puede actualizar desde aquí un agente de un servidor al que te has unido.",
+  "error.agent.searchQueryRequired": "Se requiere una consulta de búsqueda.",
+  "error.agent.messageTooLong": "El mensaje es demasiado largo.",
+  "error.agent.messageOrAttachmentRequired": "Se requiere un mensaje o un archivo adjunto.",
+  "error.agent.promptAnswersTooLong": "Las respuestas a las preguntas son demasiado largas.",
+  "error.agent.gone": "Este agente ya no existe.",
+  "error.agent.instructionsTooLarge":
+    "El archivo de instrucciones es demasiado grande para abrirlo aquí. Acórtalo en un editor de texto.",
+  "error.agent.instructionsOutside":
+    "El archivo de instrucciones enlaza a un lugar fuera del espacio de trabajo del agente, así que OpenBot no lo abre.",
+  "error.agent.instructionsReadFailed": "No se pudo leer el archivo de instrucciones.",
+  "error.agent.instructionsSaveFailed": "No se pudo guardar el archivo de instrucciones.",
+  "error.agent.profileGenerationBusy": "La generación de perfiles está ocupada. Inténtalo de nuevo en breve.",
+  "error.agent.instructionsChanged":
+    "El agente cambió el archivo de instrucciones. Tu último cambio no se guardó. Vuelve a hacerlo.",
+  "error.agent.initialMessageRequired": "Se requiere un mensaje inicial.",
+  "error.agent.initialMessageTooLong": "El mensaje inicial es demasiado largo.",
+  "error.agent.setupCleanupFailed": "No se pudo configurar el agente ni eliminar el agente incompleto.",
+  "error.agent.modelUnavailable": "El modelo de agente seleccionado no está disponible.",
+  "error.agent.modelProviderNotConnected":
+    "El modelo de agente seleccionado «{model}» no está disponible: {provider} no está conectado.",
+  "error.agent.modelListEmpty":
+    "El modelo de agente seleccionado «{model}» no está disponible: {provider} no mostró ningún modelo. Último error: {detail}",
+  "error.agent.modelListEmptyNoError":
+    "El modelo de agente seleccionado «{model}» no está disponible: {provider} no mostró ningún modelo.",
+  "error.agent.modelNotInProviderList":
+    "El modelo de agente seleccionado «{model}» no está disponible: {provider} no lo incluye en su lista.",
+  "error.agent.modelVariantNotListed":
+    "El modelo de agente seleccionado «{model}» no está disponible: {provider} no lo incluye en su lista. Usa uno de estos valores que {provider} incluye para este modelo: {models}.",
+  "error.agent.modelProviderMismatch": "El modelo seleccionado no pertenece a ese proveedor.",
+  "error.agent.modelNotListed": "El modelo «{model}» no está disponible. Modelos disponibles: {models}.",
+  "error.agent.providerNotListed":
+    "No hay ningún modelo de {provider} disponible ahora. Llama a list_models para ver los modelos disponibles.",
+  "error.agent.creatorModelNotListed":
+    "Tu modelo «{model}» no está ahora en la lista de modelos, así que el nuevo agente no puede empezar con él. Inténtalo de nuevo en unos segundos, o indica en provider y model un modelo que muestre list_models.",
+  "error.agent.reasoningEffortUnsupported":
+    "El modelo «{model}» no admite el nivel de razonamiento «{effort}». Niveles admitidos: {efforts}.",
+  "error.agent.reasoningEffortNotConfigurable":
+    "El modelo «{model}» no tiene ajuste de nivel de razonamiento, así que no puedes cambiarlo.",
+  "error.agent.noStartingModelInSettings":
+    "{provider} no tiene ningún modelo disponible, y ningún otro proveedor conectado tiene uno. Inicia sesión en un proveedor o cambia el proveedor predeterminado en Ajustes del servidor → Proveedores.",
+  "error.agent.noStartingModel":
+    "{provider} no tiene ningún modelo disponible, ni tampoco los demás proveedores con sesión iniciada. Inicia sesión en un proveedor o cambia el proveedor predeterminado en Proveedores y permisos.",
+  "error.agent.waitBeforeProviderChange":
+    "Espera a que terminen el turno activo y la cola antes de cambiar de proveedor.",
+  "error.agent.waitForTasksBeforeProviderChange":
+    "Hay tareas de este agente en ejecución. Espera a que terminen o detenlas antes de cambiar de proveedor.",
+  "error.agent.waitBeforeClearContext":
+    "Espera a que terminen el turno activo y la cola antes de iniciar un nuevo chat.",
+  "error.agent.waitBeforeCompactContext":
+    "Espera a que terminen el turno activo y la cola antes de compactar el contexto.",
+  "error.agent.waitBeforeDeleteHistory":
+    "Espera a que terminen el turno activo y la cola antes de eliminar el historial.",
+  "error.agent.compactContextUnavailable": "Este agente no puede compactar su contexto ahora.",
+  "error.agent.unknown": "Agente desconocido: {id}",
+  "error.agent.onlyUserWidensSettings":
+    "Solo el usuario puede dar acceso completo a un agente o activar el uso del equipo. Pide al usuario que lo cambie en los ajustes del agente.",
+  "error.agent.queuedMessageCreateFailed": "No se pudo crear el mensaje en cola.",
+  "error.agent.messageUnavailable": "El mensaje ya no está disponible.",
+  "error.agent.hostLimit": "Un host puede tener hasta {limit} agentes.",
+  "error.agent.changedWhileDuplicating": "El agente cambió mientras se duplicaba. Inténtalo de nuevo.",
+  "error.agent.duplicatedAgentGone": "El agente duplicado ya no existe.",
+  "error.agent.stateCorrupt":
+    "El estado del agente está dañado o pertenece a una versión más reciente de OpenBot; no se sobrescribirá.",
+  "error.agent.oldRoleField":
+    "Los perfiles de agente guardados usan el antiguo campo role; actualiza los datos antes de iniciar OpenBot.",
+  "error.agent.duplicateIds":
+    "El estado del agente contiene identificadores de agente duplicados; no se sobrescribirá.",
+  "error.agent.copyNameFailed": "OpenBot no pudo crear un nombre único para la copia del agente.",
+  "error.agent.endpointRemoved": "Se eliminó el endpoint que usaba este agente. Elige otro modelo para él.",
+  "error.agent.turnStalled":
+    "{provider} dejó de responder, así que OpenBot terminó este turno. Envía el mensaje de nuevo o elige otro modelo.",
+  "error.agent.promptCancelled": "{provider} canceló este mensaje antes de que empezara. Envía el mensaje de nuevo.",
+  "error.agent.toolLoopStopped":
+    "{provider} repitió muchas veces un paso fallido, así que OpenBot detuvo este turno. Envía el mensaje de nuevo o elige otro modelo.",
+  "error.agent.answerCutOff":
+    "El agente se detuvo antes de terminar su respuesta, así que la respuesta no está completa. Envía el mensaje de nuevo.",
+  "error.agent.compactionConnectionLost":
+    "La conexión se detuvo mientras el agente compactaba su contexto, así que la tarea se detuvo. Comprueba tu conexión a internet y envía un mensaje para continuar.",
+  "error.agent.compactionConnectionLostAddress":
+    "La conexión se detuvo mientras el agente compactaba su contexto, así que la tarea se detuvo. Comprueba tu conexión a internet y que {variable}, en Variables de los ajustes de {provider}, sea la dirección API de tu servicio de modelos (suele terminar en /v1). Luego envía un mensaje.",
+  "error.agent.compactionLoopStopped":
+    "{provider} compactó el contexto una y otra vez, y cada vez quedó demasiado lleno para continuar, así que OpenBot detuvo este turno. Desactiva los servidores MCP o el uso del ordenador que este agente no necesita y luego envía un mensaje. Si tú o el agente cambiasteis cuándo compacta {provider}, deshaz ese cambio.",
+  "error.agent.selectedGone": "El agente seleccionado ya no existe.",
+  "error.agent.profileEndpointsChanged":
+    "Los endpoints personalizados cambiaron durante la generación. Inténtalo de nuevo.",
+  "error.agent.profileInvalid": "El proveedor devolvió un perfil no válido. Prueba a modificar tus instrucciones.",
+  "error.agent.profileSectionUnavailable":
+    "La sección generada no está disponible. Inténtalo de nuevo o elige una sección manualmente.",
+  "error.agent.profileTimedOut": "Se agotó el tiempo de generación del perfil. Inténtalo de nuevo.",
+  "error.agent.profileDisconnected": "El proveedor se desconectó durante la generación del perfil.",
+  "error.agent.profileToolUse": "El proveedor intentó usar una herramienta. Prueba a modificar tus instrucciones.",
+  "error.agent.profileFailed": "El proveedor no pudo generar un perfil. Inténtalo de nuevo.",
+  "error.agent.profileTooLarge": "El perfil generado es demasiado grande. Prueba con instrucciones más cortas.",
+  "error.agent.profileNotStarted": "El proveedor no pudo iniciar la generación del perfil.",
+  "error.agent.deletionBusy": "La eliminación del agente ya está en curso.",
+  "error.agent.stopBeforeDelete": "Detén el agente y cancela sus mensajes en cola antes de eliminarlo.",
+  "error.agent.deleteIncomplete": "No se pudieron eliminar todos los datos del agente. Intenta eliminarlo de nuevo.",
+  "error.agent.deleteFolderInUse":
+    "El trabajo de otro agente todavía usa la carpeta de este agente. Vuelve a eliminarlo cuando ese trabajo termine o después de reiniciar OpenBot.",
+  "error.agent.deleteWhenFolderFree":
+    "El trabajo de otro agente todavía usa la carpeta de este agente. OpenBot elimina este agente cuando ese trabajo termine.",
+  "error.agent.duplicationBusy": "Este agente ya se está duplicando.",
+  "error.agent.waitBeforeDuplicate": "Espera a que el agente termine y vacía su cola antes de duplicarlo.",
+  "error.agent.saveOtherAgent": "Este guardado pertenece a otro agente.",
+  "error.agent.savedGone": "El agente guardado ya no existe.",
+  "error.agent.storedProfileUnreadable":
+    "Un perfil de agente guardado tiene un valor «{field}» ilegible; actualiza los datos antes de iniciar OpenBot.",
+  "error.agent.storedProfileUnreadableId":
+    "El perfil de agente guardado {id} tiene un valor «{field}» ilegible; actualiza los datos antes de iniciar OpenBot.",
+  "error.agent.queueEditRejected": "Edición de la cola rechazada: {reason}",
+  "error.agent.computerUseLocalOnly": "El uso del equipo solo se puede cambiar en el equipo que ejecuta el agente.",
+  "error.agent.automationLocalOnly": "Los scripts locales solo se pueden permitir en el equipo que ejecuta el agente.",
+  "error.agent.newChatLocalOnly": "Solo el equipo que ejecuta el agente puede permitirle iniciar chats nuevos.",
+  "error.agent.quickAcknowledgementLocalOnly": "Solo el equipo que ejecuta el agente puede cambiar este ajuste.",
+  "error.agent.sideQuestionBusy": "Hay demasiadas preguntas aparte en curso. Inténtalo de nuevo en breve.",
+  "error.agent.sideQuestionFailed": "El agente no pudo responder la pregunta aparte. Inténtalo de nuevo.",
+  "error.agent.webSearchSignIn": "La búsqueda web necesita iniciar sesión en Codex con una cuenta de ChatGPT.",
+  "error.agent.webSearchBusy":
+    "Hay demasiadas búsquedas y preguntas secundarias en curso. Inténtalo de nuevo en breve.",
+  "error.agent.webSearchFailed": "La búsqueda web no terminó. Inténtalo de nuevo.",
+  "error.agent.busyMessageModeLocalOnly":
+    "El comportamiento de los mensajes mientras trabaja el agente solo se puede configurar en el equipo que lo ejecuta.",
+  "error.agent.backupModelsLocalOnly":
+    "Los modelos de respaldo solo se pueden configurar en el equipo que ejecuta el agente.",
+  "error.agent.taskLimitLocalOnly": "El límite de tareas solo se puede configurar en el equipo que ejecuta el agente.",
+  "error.agent.localScriptsOff": "Este agente no permite scripts locales.",
+  "error.agent.localScriptsRateLimited":
+    "Los scripts locales enviaron {limit} solicitudes de mensajes o rutinas a este agente en la última hora. Inténtalo más tarde.",
+  "error.agent.automationOff": "Este agente no permite que los scripts locales ejecuten sus rutinas.",
+  "error.agent.automationPayloadTooLong": "El contenido supera los {limit} caracteres.",
+  "error.agent.automationRateLimited":
+    "Los scripts locales ejecutaron las rutinas de este agente {limit} veces en la última hora. Inténtalo más tarde.",
+  "error.agent.workspaceOnlyMacOnly":
+    "Con este proveedor, «Solo espacio de trabajo» únicamente está disponible en macOS. Elige Acceso completo en los ajustes del agente.",
+  "error.agent.lowMemory":
+    "Este servidor tiene poca memoria disponible. Tu mensaje espera en la cola y se iniciará cuando se libere memoria. Un plan superior proporciona más memoria al servidor.",
+  "error.agent.lowMemoryServer":
+    "Este servidor tiene poca memoria disponible. Tu mensaje espera en la cola y se iniciará cuando se libere memoria.",
+  "error.agent.workspaceOnlyToolMissing":
+    "Solo espacio de trabajo requiere {tool}, que OpenBot no encontró. Instálalo o elige Acceso completo en los ajustes del agente.",
+  "error.agent.codexSandboxUnavailable":
+    "«Solo espacio de trabajo» necesita el sandbox de Codex, que Codex no puede iniciar en este ordenador, así que los comandos del agente fallan. Elige Preguntar antes o Acceso completo en los ajustes del agente.",
+  "error.agent.claudeSandboxUnavailable":
+    "«Solo espacio de trabajo» necesita el sandbox de Claude, que Claude no puede iniciar en este ordenador: {reason}. Elige Acceso completo u otro proveedor en los ajustes del agente.",
+  "error.agent.claudeNoSandbox":
+    "Claude no puede usar un sandbox en este ordenador, así que «Solo espacio de trabajo» no funciona con él. Elige Acceso completo u otro proveedor en los ajustes del agente.",
+  "error.agent.claudeSandboxBlocked":
+    "«Solo espacio de trabajo» necesita el sandbox de Claude, que Claude no puede iniciar en este ordenador, así que los comandos del agente fallan. Elige Acceso completo u otro proveedor en los ajustes del agente.",
+  "error.agent.screenCaptureOff":
+    "La captura de pantalla está desactivada para este agente. El usuario puede activar el uso del equipo en los ajustes del agente.",
+  "error.agent.screenCaptureUnavailable": "La captura de pantalla no está disponible en este equipo.",
+  "error.agent.screenCaptureShared":
+    "La captura de pantalla no funciona en una conversación de Slack, Discord o Telegram, porque otras personas reciben sus archivos.",
+  "error.agent.screenCaptureDeclined": "El usuario no permitió esta captura de pantalla. No se capturó nada.",
+  "error.agent.mcpToolDeclined":
+    "El usuario no permitió esta llamada a la herramienta MCP. La herramienta no se ejecutó.",
+  "error.agent.screenCaptureWindowMissing":
+    "Esa ventana no está abierta ahora. Llama a list_capture_sources para obtener los ID de ventana actuales.",
+  "error.agent.screenCaptureDisplayMissing":
+    "Esa pantalla no está conectada ahora. Llama a list_capture_sources para obtener los ID de pantalla actuales.",
+  "error.agent.screenCaptureRegionOutside":
+    "La región no está dentro de una sola pantalla. Usa puntos del escritorio dentro de los límites de una pantalla de list_capture_sources.",
+  "error.agent.screenCapturePermissionMissing":
+    "OpenBot no tiene el permiso de grabación de pantalla. Pide al usuario que abra Ajustes del Sistema > Privacidad y seguridad > Grabación de pantalla y audio del sistema, active OpenBot y después cierre OpenBot y vuelva a abrirlo.",
+  "error.agent.screenCaptureListPermission":
+    "OpenBot todavía no tiene el permiso de grabación de pantalla, así que no puede listar las ventanas. Para capturar una pantalla, llama a capture_screen con target screen. El usuario aprueba primero la captura y después macOS puede pedirle el permiso.",
+  "error.agent.screenCaptureEmptyWindows":
+    "Windows devolvió una imagen vacía. Pide al usuario que desbloquee el equipo y cierre el contenido protegido. Una directiva de la organización también puede impedir la captura de pantalla.",
+  "error.agent.screenCaptureFailed": "La captura de pantalla falló. Inténtalo de nuevo.",
+} as const satisfies PartialTranslation<typeof source>;

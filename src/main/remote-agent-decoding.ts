@@ -1,0 +1,307 @@
+import type {
+  AccountUsage,
+  AgentExclusionChange,
+  AgentFastModeSettings,
+  AgentFolderChange,
+  AgentMemory,
+  AgentNewChatSettings,
+  AgentProviderId,
+  AgentStatus,
+  AgentSummary,
+  AgentTaskReadState,
+  ClientAgentModelOption,
+  ClientAgentSummary,
+  DraftAttachment,
+  DuplicateAgentResult,
+  InstalledSkill,
+  ProviderUsageResetOutcome,
+  ProviderUsageResets,
+  QueuedMessageReceipt,
+  QueueSnapshot,
+  SidebarLayoutSnapshot,
+  UsageCredits,
+} from "@openbot/contracts/ipc";
+import {
+  type AgentSessionSettings,
+  decodeAgentAnalytics,
+  decodeGithubSkillSource,
+  decodeHostAnalytics,
+  decodeHostProviderAccounts,
+  decodeInstalledSkills,
+  decodeProviderUsageResetOutcome,
+  decodeProviderUsageResets,
+  decodeUsageCredits,
+  type GithubSkillSource,
+  type HostDefaultProvider,
+  type HostProviderAccounts,
+  isAccountUsage,
+  isAgentColors,
+  isAgentExclusionChange,
+  isAgentFolderBrowse,
+  isAgentFolderChange,
+  isAgentFolderList,
+  isAgentHostSettings,
+  isAgentInstructionsFile,
+  isAgentMemory,
+  isAgentModel,
+  isAgentNotificationLevelsSnapshot,
+  isAgentProvider,
+  isAgentSessionSettings,
+  isAgentStatus,
+  isAgentTask,
+  isAgentTaskPage,
+  isAgentTaskReadState,
+  isAgentTasksSnapshot,
+  isAgentTaskWindow,
+  isAttachmentSummary,
+  isChatColors,
+  isClientAgentModelOption,
+  isClientAgentSummary,
+  isConversationSnapshot,
+  isHiddenAgentsSnapshot,
+  isQueuedMessageReceipt,
+  isQueueSnapshot,
+  isRoutine,
+  isRoutineFlowCanvas,
+  isRoutineFlowLink,
+  isRoutineRun,
+  isSidebarLayoutSnapshot,
+  isSidebarPinsSnapshot,
+} from "@openbot/contracts/ipc";
+import { decodeRecord, guardedDecoder, guardedListDecoder } from "@openbot/contracts/ipc-decoding";
+import { isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
+import { isAgentThreadBranchLinks } from "@openbot/contracts/team-protocol/agent-thread-branches-v1";
+import { isAgentThreadQueues } from "@openbot/contracts/team-protocol/agent-thread-queue-v1";
+import { isAgentThreadRequests } from "@openbot/contracts/team-protocol/agent-thread-requests-v1";
+import { isAgentUsageLimits } from "@openbot/contracts/team-protocol/agent-usage-limit-v1";
+import { decodeProviderUseResponse } from "@openbot/contracts/team-protocol/provider-use-v1";
+
+export const decodeAgentHostSettingsFromHost = guardedDecoder(isAgentHostSettings, "agent host settings response");
+export const decodeRemoteAgentColors = guardedDecoder(isAgentColors, "agent colors response");
+export const decodeRemoteChatColors = guardedDecoder(isChatColors, "chat colors response");
+export const decodeHiddenAgentsFromHost = guardedDecoder(isHiddenAgentsSnapshot, "hidden agents response");
+export const decodeSidebarPinsFromHost = guardedDecoder(isSidebarPinsSnapshot, "pinned chats response");
+export const decodeAgentNotificationLevelsFromHost = guardedDecoder(
+  isAgentNotificationLevelsSnapshot,
+  "agent notification levels response",
+);
+export const decodeRemoteAgentTasks = guardedDecoder(isAgentTasksSnapshot, "remote agent tasks");
+export const decodeRemoteAgentTask = guardedDecoder(isAgentTask, "remote agent task");
+export const decodeRemoteAgentThreadBranches = guardedDecoder(isAgentThreadBranchLinks, "remote thread branches");
+export const decodeRemoteAgentThreadQueues = guardedDecoder(isAgentThreadQueues, "remote thread queues");
+export const decodeRemoteAgentThreadRequests = guardedDecoder(isAgentThreadRequests, "remote thread requests");
+export const decodeRemoteAgentUsageLimits = guardedDecoder(isAgentUsageLimits, "remote usage limits");
+export const decodeRemoteTaskConversation = guardedDecoder(isConversationSnapshot, "remote task conversation");
+export const decodeRemoteTaskPage = guardedDecoder(isAgentTaskPage, "remote thread page");
+export const decodeRemoteTaskWindow = guardedDecoder(isAgentTaskWindow, "remote thread part");
+export const decodeRemoteTaskReadState = guardedDecoder(isAgentTaskReadState, "remote thread read state");
+const decodeTaskReadStates = guardedListDecoder(isAgentTaskReadState, "remote thread read states");
+export function decodeRemoteTaskReadStates(value: unknown): AgentTaskReadState[] {
+  return decodeTaskReadStates(decodeRecord(value, "remote thread reads").reads);
+}
+
+export function decodeDraftAttachment(value: unknown): DraftAttachment {
+  if (!isAttachmentSummary(value)) throw new Error("Invalid attachment.");
+  return {
+    id: value.id,
+    name: value.name,
+    size: value.size,
+    kind: value.kind,
+    mimeType: value.mimeType,
+    previewKind: value.previewKind,
+    previewUrl: value.previewUrl,
+  };
+}
+
+export function decodeAgentSummary(value: unknown): ClientAgentSummary {
+  const { backupModels: _backupModels, usageLimitReturn: _usageLimitReturn, ...record } = decodeRecord(value, "agent");
+  const candidate = record.avatarUrl === undefined ? { ...record, avatarUrl: null } : record;
+  if (!isClientAgentSummary(candidate)) throw new Error("Invalid agent.");
+  const marketplaceSource = decodeMarketplaceSource(candidate.marketplaceSource);
+  return {
+    id: candidate.id,
+    provider: candidate.provider,
+    name: candidate.name,
+    title: candidate.title,
+    description: candidate.description,
+    notifications: candidate.notifications,
+    model: candidate.model,
+    reasoningEffort: candidate.reasoningEffort,
+    threadId: candidate.threadId,
+    workspacePath: candidate.workspacePath,
+    preview: candidate.preview,
+    updatedAt: candidate.updatedAt,
+    avatarSeed: candidate.avatarSeed,
+    avatarHue: candidate.avatarHue,
+    avatarUrl: candidate.avatarUrl,
+    ...(marketplaceSource === undefined ? {} : { marketplaceSource }),
+    ...(candidate.pendingRuntime === undefined ? {} : { pendingRuntime: candidate.pendingRuntime }),
+  };
+}
+
+function decodeMarketplaceSource(value: unknown): AgentSummary["marketplaceSource"] {
+  if (value === undefined) return undefined;
+  const record = decodeRecord(value, "agent marketplace source");
+  const skillIds = record.skillIds;
+  const routineIds = record.routineIds;
+  if (
+    !isString(record.listingId) ||
+    !isString(record.versionId) ||
+    !isNumber(record.version) ||
+    !Number.isInteger(record.version) ||
+    !Array.isArray(skillIds) ||
+    !skillIds.every(isString) ||
+    !Array.isArray(routineIds) ||
+    !routineIds.every(isString)
+  ) {
+    throw new Error("Invalid agent marketplace source.");
+  }
+  return {
+    listingId: record.listingId,
+    versionId: record.versionId,
+    version: record.version,
+    skillIds: [...skillIds],
+    routineIds: [...routineIds],
+  };
+}
+
+export const decodeRemoteAgentFolderList = guardedDecoder(isAgentFolderList, "remote agent folders");
+export const decodeRemoteAgentFolderBrowse = guardedDecoder(isAgentFolderBrowse, "remote agent folder browse");
+export const decodeRemoteAgentInstructionsFile = guardedDecoder(isAgentInstructionsFile, "remote agent instructions");
+
+export function decodeRemoteAgentFolderChange(value: unknown): AgentFolderChange {
+  if (!isDynamicRecord(value) || !isAgentFolderChange(value)) throw new Error("Invalid remote agent folder change.");
+  return value;
+}
+
+export function decodeRemoteAgentExclusionChange(value: unknown): AgentExclusionChange {
+  if (!isDynamicRecord(value) || !isAgentExclusionChange(value)) throw new Error("Invalid remote agent folder change.");
+  return value;
+}
+
+export function decodeRemoteAgentNewChatSettings(value: unknown): AgentNewChatSettings {
+  if (!isDynamicRecord(value) || !isBoolean(value.allowNewChat)) throw new Error("Invalid remote new chat setting.");
+  return { allowNewChat: value.allowNewChat };
+}
+
+export function decodeRemoteAgentFastModeSettings(value: unknown): AgentFastModeSettings {
+  if (!isDynamicRecord(value) || (value.fastMode !== null && !isBoolean(value.fastMode)))
+    throw new Error("Invalid remote fast mode setting.");
+  return { fastMode: value.fastMode };
+}
+
+export function decodeAgentStatusFromHost(value: unknown): AgentStatus {
+  if (!isAgentStatus(value)) {
+    throw new Error("Invalid remote agent status.");
+  }
+  return value;
+}
+
+export function decodeHostProviderAccountsFromHost(value: unknown): HostProviderAccounts {
+  return decodeHostProviderAccounts(value);
+}
+
+export function decodeProviderUseFromHost(value: unknown): AgentProviderId[] {
+  return decodeProviderUseResponse(value);
+}
+
+export function decodeHostDefaultProviderFromHost(value: unknown): HostDefaultProvider {
+  const { provider, model } = decodeRecord(value, "default provider");
+  if (provider !== null && !isString(provider)) throw new Error("Invalid default provider.");
+  if (!isAgentProvider(provider)) return { preferredProvider: null, preferredModel: null };
+  if (model !== null && !isAgentModel(model)) throw new Error("Invalid default model.");
+  return { preferredProvider: provider, preferredModel: model };
+}
+
+export function decodeProviderUsageResetsFromHost(value: unknown): ProviderUsageResets[] {
+  if (!isDynamicRecord(value)) throw new Error("Invalid provider usage resets.");
+  return decodeProviderUsageResets(value.accounts);
+}
+
+export function decodeProviderUsageResetOutcomeFromHost(value: unknown): ProviderUsageResetOutcome {
+  if (!isDynamicRecord(value)) throw new Error("Invalid provider usage reset.");
+  return decodeProviderUsageResetOutcome(value.outcome);
+}
+
+export function decodeAccountUsageFromHost(value: unknown): AccountUsage {
+  if (!isAccountUsage(value)) {
+    throw new Error("Invalid remote account usage.");
+  }
+  return value;
+}
+
+export function decodeUsageCreditsList(value: unknown): UsageCredits[] {
+  if (!isDynamicRecord(value)) throw new Error("Invalid usage credits.");
+  return decodeUsageCredits(value.accounts);
+}
+
+export function decodeAgentModelOptions(value: unknown): ClientAgentModelOption[] {
+  if (!Array.isArray(value) || !value.every(isClientAgentModelOption)) {
+    throw new Error("Invalid remote agent models.");
+  }
+  return value;
+}
+
+export function decodeAgentSummaries(value: unknown): ClientAgentSummary[] {
+  if (!Array.isArray(value)) throw new Error("Invalid remote agent list.");
+  return value.map(decodeAgentSummary);
+}
+
+export function decodeInstalledSkillsFromHost(value: unknown): InstalledSkill[] {
+  return decodeInstalledSkills(value);
+}
+
+export function decodeGithubSkillSourceFromHost(value: unknown): GithubSkillSource {
+  return decodeGithubSkillSource(value);
+}
+
+export function decodeAgentMemory(value: unknown): AgentMemory {
+  if (!isAgentMemory(value)) throw new Error("Invalid remote agent memory.");
+  return value;
+}
+
+export const decodeRoutine = guardedDecoder(isRoutine, "remote routine");
+export const decodeRoutines = guardedListDecoder(isRoutine, "remote routine list");
+export const decodeRoutineRun = guardedDecoder(isRoutineRun, "remote routine run");
+export const decodeRoutineRuns = guardedListDecoder(isRoutineRun, "remote routine history");
+export const decodeRemoteRoutineFlowCanvas = guardedDecoder(isRoutineFlowCanvas, "remote routine flow canvas");
+export const decodeRemoteRoutineFlowLink = guardedDecoder(isRoutineFlowLink, "remote routine flow link");
+export function decodeSidebarLayoutSnapshot(value: unknown): SidebarLayoutSnapshot {
+  if (!isSidebarLayoutSnapshot(value)) throw new Error("Invalid sidebar layout response.");
+  return value;
+}
+
+export function decodeDuplicateAgentResultFromHost(value: unknown): DuplicateAgentResult {
+  const record = decodeRecord(value, "agent duplication");
+  return {
+    agent: decodeAgentSummary(record.agent),
+    layout: decodeSidebarLayoutSnapshot(record.layout),
+  };
+}
+
+export function decodeQueueSnapshot(value: unknown): QueueSnapshot {
+  if (!isQueueSnapshot(value)) {
+    throw new Error("Invalid remote queue.");
+  }
+  return value;
+}
+
+export function decodeQueuedMessageReceipt(value: unknown): QueuedMessageReceipt {
+  if (!isQueuedMessageReceipt(value)) {
+    throw new Error("Invalid remote message receipt.");
+  }
+  return value;
+}
+
+export function decodeAgentAnalyticsFromHost(value: unknown) {
+  return decodeAgentAnalytics(value);
+}
+
+export function decodeHostAnalyticsFromHost(value: unknown) {
+  return decodeHostAnalytics(isDynamicRecord(value) ? { ...value, skills: undefined } : value);
+}
+
+export function decodeAgentSessionSettingsFromHost(value: unknown): AgentSessionSettings {
+  if (!isAgentSessionSettings(value)) throw new Error("Invalid session settings response.");
+  return value;
+}

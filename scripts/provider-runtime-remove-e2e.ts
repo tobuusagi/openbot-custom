@@ -1,0 +1,373 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
+import type { AgentProviderId, ManagedProviderId } from "@openbot/contracts/agent-providers";
+import { chooseInstalledFirst, resolveCodexCli } from "../src/backend/cli";
+import { runCauseEffect } from "../src/backend/effect-boundary";
+import { INSTALL_RECORD } from "../src/main/provider-runtime-descriptors";
+import { ProviderRuntimeManager } from "../src/main/provider-runtime-manager";
+
+const OUT = resolve(import.meta.dirname, "../.openbot-build/provider-runtime-remove-e2e");
+const DAY_MS = 24 * 60 * 60 * 1000;
+const OFF: ManagedProviderId = "cursor";
+const ON: ManagedProviderId = "opencode";
+const SIBLING: ManagedProviderId = "cline";
+const TURNED_OFF: ManagedProviderId = "grok";
+const SHARED: ManagedProviderId = "antigravity";
+const CONFIGURED: ManagedProviderId = "claude";
+const CONFIGURED_ENV = `OPENBOT_${CONFIGURED.toUpperCase()}_PATH`;
+const PI: ManagedProviderId = "pi";
+const HELD: ManagedProviderId = "muse";
+const READY: ManagedProviderId = "codex";
+const READY_VERSION = "999.0.0";
+
+interface Report {
+  passed: boolean;
+  offStampedAtStart?: boolean;
+  bytesBefore?: Partial<Record<ManagedProviderId, number>>;
+  versionsBefore?: number;
+  removed?: { versions: string[]; partials: string[]; records: string[]; phase: string; version: string | null };
+  bytesAfter?: number;
+  onRefused?: string;
+  configuredRefused?: string;
+  configuredKept?: boolean;
+  piRefused?: string;
+  piKept?: boolean;
+  heldRefused?: string;
+  heldWhole?: boolean;
+  siblingKept?: boolean;
+  turnedOffRemoved?: boolean;
+  sharedKept?: boolean;
+  readyPhase?: string;
+  readyBackupCollected?: boolean;
+  readyRecentKept?: boolean;
+  readyRecentStampedAgain?: boolean;
+  readyMeasured?: number;
+  storageBefore?: { bytes: number; providers: ManagedProviderId[] };
+  storageHeldFailure?: string;
+  storageOffRemoved?: boolean;
+  storageAfter?: { bytes: number; providers: ManagedProviderId[] };
+  storageKept?: { on: boolean; ready: boolean; sibling: boolean; configured: boolean; pi: boolean };
+  installedMeasured?: number;
+  installedListed?: ManagedProviderId[];
+  installedGoneMeasured?: number;
+  installedRemoved?: { phase: string; gone: boolean };
+  chosenCopyOffer?: string | null;
+  choice?: Record<string, { source: string; version: string; passedOver: string | null }>;
+}
+
+const root = await mkdtemp(join(tmpdir(), "openbot-provider-runtime-remove-e2e-"));
+const store = join(root, "provider-runtimes");
+const downloads = join(root, "downloads");
+const report: Report = { passed: false };
+const off = new Set<AgentProviderId>([OFF, SIBLING, CONFIGURED, PI, HELD]);
+const previousConfigured = process.env[CONFIGURED_ENV];
+
+const manager = new ProviderRuntimeManager({
+  root: store,
+  downloadRoot: downloads,
+  isProviderOn: (provider) => !off.has(provider),
+  availableDiskBytes: async () => Number.MAX_SAFE_INTEGER,
+  fetchImpl: async () => {
+    throw new TypeError("fetch failed");
+  },
+});
+
+function targetRoot(provider: ManagedProviderId): string {
+  const pinned = manager.executablePath(provider);
+  assert.ok(pinned, "this platform has managed runtimes");
+  return dirname(dirname(dirname(pinned)));
+}
+
+async function install(provider: ManagedProviderId, version: string, stampedAt: Date): Promise<string> {
+  const pinned = manager.executablePath(provider);
+  assert.ok(pinned);
+  const path = join(targetRoot(provider), version);
+  await mkdir(join(path, "bin"), { recursive: true });
+  await writeFile(join(path, "bin", basename(pinned)), "#!/bin/sh\n".padEnd(4096, "#"), { mode: 0o755 });
+  await writeFile(join(dirname(path), `.${version}.verified.json`), "{}\n");
+  await utimes(path, stampedAt, stampedAt);
+  return path;
+}
+
+async function installVerified(provider: ManagedProviderId, version: string): Promise<string> {
+  const pinned = manager.executablePath(provider);
+  assert.ok(pinned);
+  const path = join(targetRoot(provider), version);
+  const executable = join(path, "bin", basename(pinned));
+  await mkdir(dirname(executable), { recursive: true });
+  await writeFile(executable, `#!/bin/sh\necho "codex-cli ${version}"\n`, { mode: 0o755 });
+  const digest = createHash("sha256")
+    .update(await readFile(executable))
+    .digest("hex");
+  const record = {
+    layoutVersion: 1,
+    runtime: provider,
+    version,
+    target: basename(targetRoot(provider)),
+    files: { [`bin/${basename(pinned)}`]: digest },
+  };
+  await writeFile(join(path, INSTALL_RECORD), `${JSON.stringify(record)}\n`);
+  return path;
+}
+
+async function exists(path: string): Promise<boolean> {
+  return stat(path).then(
+    () => true,
+    () => false,
+  );
+}
+
+async function gone(path: string): Promise<boolean> {
+  const deadline = Date.now() + 10_000;
+  while (await exists(path)) {
+    if (Date.now() > deadline) return false;
+    await new Promise((done) => setTimeout(done, 20));
+  }
+  return true;
+}
+
+async function refusal(provider: ManagedProviderId): Promise<string> {
+  const error = await runCauseEffect(manager.removeDownload(provider)).then(
+    () => null,
+    (failure: unknown) => failure,
+  );
+  assert.ok(error instanceof Error, `${provider} is refused`);
+  return error.message;
+}
+
+try {
+  process.env[CONFIGURED_ENV] = join(root, "user-cli", CONFIGURED);
+  const old = new Date(Date.now() - 30 * DAY_MS);
+  const offVersions = [await install(OFF, "0.0.1", old), await install(OFF, "0.0.2", old)];
+  const target = basename(targetRoot(OFF));
+  const partials = [
+    join(downloads, `${OFF}-${target}-0.0.3.partial`),
+    join(downloads, `${OFF}-${target}-0.0.3.partial.json`),
+  ];
+  await mkdir(downloads, { recursive: true });
+  for (const partial of partials) await writeFile(partial, "partial");
+  const onVersion = await install(ON, "0.0.1", old);
+  const siblingVersion = await install(SIBLING, "0.0.1", new Date());
+  const turnedOffVersion = await install(TURNED_OFF, "0.0.1", old);
+  const sharedVersion = await install(SHARED, "0.0.1", old);
+  const configuredVersion = await install(CONFIGURED, "0.0.1", old);
+  const piVersion = await install(PI, "0.0.1", old);
+  const heldVersion = await install(HELD, "0.0.1", old);
+  const readyBackup = await install(READY, "0.0.1", old);
+  const readyPath = await installVerified(READY, READY_VERSION);
+
+  await runCauseEffect(manager.initialize());
+  assert.ok((await stat(onVersion)).mtimeMs > old.getTime(), "a provider that is on is stamped at start");
+  report.offStampedAtStart = (await stat(offVersions[1] ?? "")).mtimeMs > old.getTime();
+  assert.equal(report.offStampedAtStart, false, "a provider that is off is not stamped");
+  report.readyPhase = manager.getStatus().providers[READY].phase;
+  assert.equal(report.readyPhase, "ready", "the verified version is what the provider runs");
+  report.readyBackupCollected = await gone(readyBackup);
+  assert.ok(report.readyBackupCollected, "a verified version keeps no older one to fall back on");
+
+  const recent = new Date(Date.now() - DAY_MS / 2);
+  const readyRecent = await install(READY, "0.0.2", recent);
+  await runCauseEffect(manager.removeOldVersions());
+  report.readyRecentKept = await exists(readyRecent);
+  assert.ok(report.readyRecentKept, "a version stamped within the window stays");
+  report.readyRecentStampedAgain = (await stat(readyRecent)).mtimeMs !== recent.getTime();
+  assert.equal(report.readyRecentStampedAgain, false, "the replaced version is not stamped again");
+
+  const measure = async (provider: ManagedProviderId) =>
+    (await runCauseEffect(manager.measureDownload(provider))).bytes;
+  report.bytesBefore = {
+    [OFF]: await measure(OFF),
+    [ON]: await measure(ON),
+    [SIBLING]: await measure(SIBLING),
+    [CONFIGURED]: await measure(CONFIGURED),
+    [PI]: await measure(PI),
+  };
+  assert.ok((report.bytesBefore[OFF] ?? 0) >= 2 * 4096, "both versions of the off provider count");
+  report.versionsBefore = (await runCauseEffect(manager.measureDownload(OFF))).versions;
+  assert.equal(report.versionsBefore, 2, "the page names how many versions it removes");
+  assert.equal(report.bytesBefore[ON], 0, "a provider that is on offers nothing to remove");
+  assert.equal(report.bytesBefore[SIBLING], 0, "a version a sibling stamped is not counted");
+  assert.equal(report.bytesBefore[CONFIGURED], 0, "a provider with a CLI path offers nothing to remove");
+  assert.equal(report.bytesBefore[PI], 0, "Pi offers nothing to remove while DeepSeek runs on it");
+
+  const snapshot = await runCauseEffect(manager.removeDownload(OFF));
+  const removed = {
+    versions: (await Promise.all(offVersions.map(exists))).every((found) => !found)
+      ? offVersions.map((p) => basename(p))
+      : [],
+    partials: (await Promise.all(partials.map(exists))).every((found) => !found)
+      ? partials.map((p) => basename(p))
+      : [],
+    records: (await exists(join(targetRoot(OFF), ".0.0.1.verified.json"))) ? [] : [".0.0.1.verified.json"],
+    phase: snapshot.providers[OFF].phase,
+    version: snapshot.providers[OFF].version,
+  };
+  report.removed = removed;
+  assert.equal(removed.versions.length, 2, "every version is removed");
+  assert.equal(removed.partials.length, 2, "the partial download is removed");
+  assert.equal(removed.records.length, 1, "the verification records are removed");
+  assert.equal(removed.phase, "not-downloaded", "the provider reads as not downloaded");
+  assert.equal(removed.version, null, "no older copy is left to name");
+  report.bytesAfter = await measure(OFF);
+  assert.equal(report.bytesAfter, 0, "nothing is left to remove");
+
+  report.onRefused = await refusal(ON);
+  assert.ok(await exists(onVersion), "the download of a provider that is on stays");
+  report.configuredRefused = await refusal(CONFIGURED);
+  report.configuredKept = await exists(configuredVersion);
+  assert.ok(report.configuredKept, "the store copy of a provider with a CLI path stays");
+  report.piRefused = await refusal(PI);
+  report.piKept = await exists(piVersion);
+  assert.ok(report.piKept, "the Pi CLI that DeepSeek runs on stays");
+
+  await chmod(targetRoot(HELD), 0o555);
+  try {
+    report.heldRefused = await refusal(HELD);
+  } finally {
+    await chmod(targetRoot(HELD), 0o755);
+  }
+  const heldExecutable = manager.executablePath(HELD);
+  report.heldWhole =
+    Boolean(heldExecutable) && (await exists(join(heldVersion, "bin", basename(heldExecutable ?? ""))));
+  assert.ok(report.heldWhole, "a version that cannot be moved keeps its executable");
+
+  await runCauseEffect(manager.removeDownload(SIBLING));
+  report.siblingKept = await exists(siblingVersion);
+  assert.ok(report.siblingKept, "a version a sibling stamped recently stays");
+
+  off.add(TURNED_OFF);
+  off.add(SHARED);
+  const sharedStamp = new Date((await stat(sharedVersion)).mtimeMs + 5000);
+  await utimes(sharedVersion, sharedStamp, sharedStamp);
+  await runCauseEffect(manager.removeDownload(TURNED_OFF));
+  report.turnedOffRemoved = !(await exists(turnedOffVersion));
+  assert.ok(report.turnedOffRemoved, "this instance's own stamp does not keep a version");
+  await runCauseEffect(manager.removeDownload(SHARED));
+  report.sharedKept = await exists(sharedVersion);
+  assert.ok(report.sharedKept, "a sibling's stamp after this instance's keeps a version");
+
+  report.readyMeasured = await measure(READY);
+  assert.equal(report.readyMeasured, 0, "a verified provider that is on offers nothing to remove");
+
+  const offLater = await install(OFF, "0.0.3", old);
+  report.storageBefore = await runCauseEffect(manager.removableRuntimes());
+  assert.deepEqual(
+    [...report.storageBefore.providers].sort(),
+    [OFF, HELD].sort(),
+    "it names only providers that are off",
+  );
+  assert.ok(report.storageBefore.bytes >= 2 * 4096, "both downloads count");
+  await chmod(targetRoot(HELD), 0o555);
+  try {
+    const failure = await runCauseEffect(manager.removeRemovableRuntimes()).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    assert.ok(failure instanceof Error, "a download that a program holds fails the removal");
+    report.storageHeldFailure = failure.message;
+  } finally {
+    await chmod(targetRoot(HELD), 0o755);
+  }
+  assert.equal(report.storageHeldFailure, "Could not remove the CLI downloads of Muse.", "the failure names it");
+  report.storageOffRemoved = !(await exists(offLater));
+  assert.ok(report.storageOffRemoved, "one failure does not stop the others");
+  report.storageAfter = await runCauseEffect(manager.removeRemovableRuntimes());
+  assert.deepEqual(report.storageAfter, { bytes: 0, providers: [] }, "nothing is left to remove");
+  assert.ok(!(await exists(heldVersion)), "the held version goes once the program lets it go");
+  report.storageKept = {
+    on: await exists(onVersion),
+    ready: (await exists(readyPath)) && (await exists(readyRecent)),
+    sibling: await exists(siblingVersion),
+    configured: await exists(configuredVersion),
+    pi: await exists(piVersion),
+  };
+  assert.deepEqual(
+    report.storageKept,
+    { on: true, ready: true, sibling: true, configured: true, pi: true },
+    "the page keeps every provider that is on, and what the provider page refuses",
+  );
+
+  manager.setSystemVersion(ON, "9.9.9");
+  report.installedMeasured = await measure(ON);
+  assert.ok(report.installedMeasured >= 4096, "the copy of a provider that runs the user's CLI counts");
+  report.installedListed = (await runCauseEffect(manager.removableRuntimes())).providers;
+  assert.deepEqual(report.installedListed, [ON], "the Storage page names it");
+  assert.equal(manager.setSystemVersion(ON, null), true, "main is told that the copy runs again");
+  report.installedGoneMeasured = await measure(ON);
+  assert.equal(report.installedGoneMeasured, 0, "the copy stays once the user's CLI is gone");
+  manager.setSystemVersion(ON, "9.9.9");
+  const installedSnapshot = await runCauseEffect(manager.removeDownload(ON));
+  report.installedRemoved = { phase: installedSnapshot.providers[ON].phase, gone: !(await exists(onVersion)) };
+  assert.deepEqual(report.installedRemoved, { phase: "not-downloaded", gone: true }, "the copy is removed");
+
+  manager.setSystemVersion(READY, "0.0.1");
+  report.chosenCopyOffer = manager.getStatus().providers[READY].availableVersion ?? null;
+  assert.equal(report.chosenCopyOffer, null, "the copy is newer than the release, so nothing is offered");
+  manager.setSystemVersion(READY, null);
+
+  const fakeCodex = async (name: string, version: string) => {
+    const path = join(root, "choice", name, "codex");
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, `#!/bin/sh\necho "codex-cli ${version}"\n`, { mode: 0o755 });
+    return path;
+  };
+  const choose = async (
+    installed: string | null,
+    copy: string,
+    preferInstalled = true,
+    installedChosen = false,
+  ): Promise<{ source: string; version: string; passedOver: string | null }> => {
+    const system = installed ? await fakeCodex(`system-${installed}`, installed) : join(root, "choice", "none");
+    const managed = await fakeCodex(`managed-${copy}`, copy);
+    const { cli, passedOver } = await runCauseEffect(
+      chooseInstalledFirst(
+        (input) => resolveCodexCli({ ...input, systemCandidates: [system] }),
+        managed,
+        preferInstalled,
+        installedChosen,
+      ),
+    );
+    return {
+      source: cli.source,
+      version: cli.version,
+      passedOver: passedOver ? `${passedOver.source} ${passedOver.version}` : null,
+    };
+  };
+  report.choice = {
+    same: await choose("0.200.0", "0.200.0"),
+    installedNewer: await choose("0.201.0", "0.200.0"),
+    copyNewer: await choose("0.200.0", "0.201.0"),
+    update: await choose("0.201.0", "0.200.0", false),
+    noInstalled: await choose(null, "0.200.0"),
+    chosenCopyNewer: await choose("0.200.0", "0.201.0", true, true),
+    chosenUpdate: await choose("0.200.0", "0.201.0", false, true),
+    chosenNoInstalled: await choose(null, "0.201.0", true, true),
+  };
+  assert.deepEqual(
+    report.choice,
+    {
+      same: { source: "system", version: "0.200.0", passedOver: null },
+      installedNewer: { source: "system", version: "0.201.0", passedOver: null },
+      copyNewer: { source: "managed", version: "0.201.0", passedOver: "system 0.200.0" },
+      update: { source: "managed", version: "0.200.0", passedOver: "system 0.201.0" },
+      noInstalled: { source: "managed", version: "0.200.0", passedOver: null },
+      chosenCopyNewer: { source: "system", version: "0.200.0", passedOver: "managed 0.201.0" },
+      chosenUpdate: { source: "managed", version: "0.201.0", passedOver: "system 0.200.0" },
+      chosenNoInstalled: { source: "managed", version: "0.201.0", passedOver: null },
+    },
+    "the user's CLI wins when it is as new or chosen, an update starts OpenBot's copy, and the other CLI is named",
+  );
+
+  report.passed = true;
+} finally {
+  if (previousConfigured === undefined) delete process.env[CONFIGURED_ENV];
+  else process.env[CONFIGURED_ENV] = previousConfigured;
+  await runCauseEffect(manager.stop()).catch(() => undefined);
+  await mkdir(OUT, { recursive: true });
+  await writeFile(join(OUT, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
+  await rm(root, { recursive: true, force: true });
+}
+process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);

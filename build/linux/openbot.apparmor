@@ -1,0 +1,7 @@
+abi <abi/4.0>,
+include <tunables/global>
+
+profile openbot "/{home/*/{Applications,Desktop,Downloads,.local/bin},opt/OpenBot}/OpenBot*.AppImage" flags=(unconfined) {
+  userns,
+  include if exists <local/openbot>
+}

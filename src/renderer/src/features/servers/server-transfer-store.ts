@@ -1,0 +1,266 @@
+import type {
+  InstanceTransferPreview,
+  InstanceTransferResult,
+  InstanceTransferSummary,
+  OpenBotDesktopApi,
+} from "@openbot/contracts/ipc";
+import { toast } from "@openbot/ui";
+import type {
+  InstanceExportOptions,
+  InstanceExportPhase,
+  InstanceImportPhase,
+  InstanceTransferScreen,
+  TransferUploadState,
+} from "@openbot/ui/features/transfer/InstanceTransferView";
+import { currentText } from "@openbot/ui/text";
+import { createEffect, createStore, onCleanup } from "solid-js";
+import { desktopAnalytics } from "../../analytics";
+
+export type ServerTransferCalls = Omit<
+  OpenBotDesktopApi["instanceTransfer"],
+  "showExport" | "copy" | "onUploadProgress"
+> &
+  Partial<Pick<OpenBotDesktopApi["instanceTransfer"], "showExport" | "onUploadProgress">>;
+
+interface ServerTransferState {
+  screen: InstanceTransferScreen;
+  summary: InstanceTransferSummary | null;
+  exportPhase: InstanceExportPhase;
+  exportFileName: string | null;
+  exportWarnings: string[];
+  exportError: string | null;
+  importPhase: InstanceImportPhase;
+  importProgress: TransferUploadState | null;
+  preview: InstanceTransferPreview | null;
+  result: InstanceTransferResult | null;
+  importError: string | null;
+}
+
+const INITIAL: ServerTransferState = {
+  screen: "home",
+  summary: null,
+  exportPhase: "options",
+  exportFileName: null,
+  exportWarnings: [],
+  exportError: null,
+  importPhase: "idle",
+  importProgress: null,
+  preview: null,
+  result: null,
+  importError: null,
+};
+
+const PREVIEW_KEPT_MS = 25 * 60_000;
+
+interface RunningImport {
+  pending: Promise<InstanceTransferPreview | null>;
+  settledAt: number | null;
+}
+
+const runningImports = new Map<string, RunningImport>();
+
+function currentImport(serverId: string): RunningImport | undefined {
+  const running = runningImports.get(serverId);
+  if (running?.settledAt != null && Date.now() - running.settledAt > PREVIEW_KEPT_MS) runningImports.delete(serverId);
+  return runningImports.get(serverId);
+}
+
+export function createServerTransferStore(serverId: string, calls: ServerTransferCalls) {
+  const runningImport = currentImport(serverId);
+  const [state, setState] = createStore<ServerTransferState>(
+    runningImport ? { ...INITIAL, screen: "import", importPhase: "reading" } : { ...INITIAL },
+  );
+  let disposed = false;
+  onCleanup(() => {
+    disposed = true;
+  });
+
+  const stopProgress = calls.onUploadProgress?.(({ serverId: target, sent, total }) => {
+    if (target !== serverId || state.importPhase !== "reading") return;
+    setState((draft) => {
+      draft.importProgress = { sent, total };
+    });
+  });
+  if (stopProgress) onCleanup(stopProgress);
+
+  createEffect(
+    () => state.screen === "export" && state.exportPhase === "options",
+    (load) => {
+      if (!load) return;
+      void calls
+        .summary(serverId)
+        .then((summary) =>
+          setState((draft) => {
+            draft.summary = summary;
+          }),
+        )
+        .catch((error: unknown) =>
+          setState((draft) => {
+            draft.exportError = message(error, "settings.transfer.export.failed");
+          }),
+        );
+    },
+  );
+
+  function setScreen(screen: InstanceTransferScreen): void {
+    setState((draft) => {
+      draft.screen = screen;
+      draft.exportError = null;
+      draft.importError = null;
+    });
+  }
+
+  function exportFile(options: InstanceExportOptions): void {
+    setState((draft) => {
+      draft.exportPhase = "exporting";
+      draft.exportError = null;
+    });
+    void calls
+      .export(options, serverId)
+      .then((result) => {
+        desktopAnalytics.track("server_transfer_action", {
+          action: "export",
+          result: result.saved ? "succeeded" : "cancelled",
+        });
+        setState((draft) => {
+          draft.exportPhase = result.saved ? "saved" : "options";
+          draft.exportFileName = result.fileName;
+          draft.exportWarnings = result.warnings;
+        });
+      })
+      .catch((error: unknown) => {
+        desktopAnalytics.track("server_transfer_action", {
+          action: "export",
+          result: "failed",
+          failure_code: "export_failed",
+        });
+        setState((draft) => {
+          draft.exportPhase = "options";
+          draft.exportError = message(error, "settings.transfer.export.failed");
+        });
+      });
+  }
+
+  const show = calls.showExport;
+  const showExport = show
+    ? (): void => {
+        void show().catch(report);
+      }
+    : undefined;
+
+  function exportAgain(): void {
+    setState((draft) => {
+      draft.exportPhase = "options";
+      draft.exportFileName = null;
+      draft.exportWarnings = [];
+    });
+  }
+
+  function followImport(running: RunningImport): void {
+    const settle = (change: (draft: ServerTransferState) => void) => {
+      running.settledAt ??= Date.now();
+      if (disposed) return;
+      if (runningImports.get(serverId) === running) runningImports.delete(serverId);
+      setState(change);
+    };
+    void running.pending.then(
+      (preview) =>
+        settle((draft) => {
+          if (preview) draft.preview = preview;
+          draft.importPhase = draft.preview ? "review" : "idle";
+          draft.importProgress = null;
+        }),
+      (error: unknown) =>
+        settle((draft) => {
+          draft.importPhase = draft.preview ? "review" : "idle";
+          draft.importProgress = null;
+          draft.importError = message(error, "settings.transfer.import.openFailed");
+        }),
+    );
+  }
+
+  if (runningImport) followImport(runningImport);
+
+  function choose(): void {
+    setState((draft) => {
+      draft.importPhase = "reading";
+      draft.importProgress = null;
+      draft.importError = null;
+    });
+    const running: RunningImport = { pending: calls.choose(serverId), settledAt: null };
+    runningImports.set(serverId, running);
+    followImport(running);
+  }
+
+  function importFile(keys: string[], includeSettings: boolean, includeServerPreferences = false): void {
+    const token = state.preview?.token;
+    if (!token) return;
+    setState((draft) => {
+      draft.importPhase = "importing";
+      draft.importError = null;
+    });
+    void calls
+      .apply(
+        { token, keys, includeSettings, ...(includeServerPreferences ? { includeServerPreferences } : {}) },
+        serverId,
+      )
+      .then((result) => {
+        desktopAnalytics.track("server_transfer_action", { action: "import", result: "succeeded" });
+        setState((draft) => {
+          draft.importPhase = "done";
+          draft.preview = null;
+          draft.result = result;
+        });
+      })
+      .catch((error: unknown) => {
+        desktopAnalytics.track("server_transfer_action", {
+          action: "import",
+          result: "failed",
+          failure_code: "import_failed",
+        });
+        setState((draft) => {
+          draft.importPhase = "idle";
+          draft.preview = null;
+          draft.importError = message(error, "settings.transfer.import.failed");
+        });
+      });
+  }
+
+  function cancelImport(): void {
+    const token = state.preview?.token;
+    if (token) void calls.discard(token, serverId).catch(report);
+    setState((draft) => {
+      draft.importPhase = "idle";
+      draft.preview = null;
+      draft.importError = null;
+    });
+  }
+
+  function importDone(): void {
+    setState((draft) => {
+      draft.importPhase = "idle";
+      draft.result = null;
+      draft.screen = "home";
+    });
+  }
+
+  return { state, setScreen, exportFile, showExport, exportAgain, choose, importFile, cancelImport, importDone };
+}
+
+function message(
+  error: unknown,
+  fallback:
+    | "settings.transfer.export.failed"
+    | "settings.transfer.import.openFailed"
+    | "settings.transfer.import.failed",
+): string {
+  const { t, errorMessage } = currentText();
+  return errorMessage(error, t(fallback));
+}
+
+function report(error: unknown): void {
+  const { t, errorMessage } = currentText();
+  toast.error(errorMessage(error, t("settings.transfer.import.failed")), {
+    report: { operation: "settings", source: "system", cause_code: "unknown" },
+  });
+}

@@ -1,0 +1,155 @@
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import { plainTaskTitle } from "@openbot/team-client/agent-tasks";
+import { useQueryClient } from "@tanstack/react-query";
+import { router, Stack, useLocalSearchParams } from "expo-router";
+import { Typography } from "heroui-native";
+import Check from "lucide-react-native/icons/check";
+import { useEffect, useRef, useState } from "react";
+import { View } from "react-native";
+import { useCSSVariable } from "uniwind";
+import { BloubAvatar } from "@/features/agents/components/bloub-avatar";
+import { useQueryScope } from "@/features/auth/context/mobile-session-context";
+import { taskStartId } from "@/features/servers/model/task-start-id";
+import { useServerTasks } from "@/features/servers/model/use-server-tasks";
+import { SettingsRow, SettingsSection } from "@/features/settings/components/settings-content";
+import { useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
+import { addStartedTask } from "@/features/workspace/model/task-cache";
+import type { MobileAgent } from "@/features/workspace/model/workspace-types";
+import { SaveError } from "@/shared/components/save-error";
+import { SheetCloseAction } from "@/shared/components/sheet-close-action";
+import { SheetFormField } from "@/shared/components/sheet-form-field";
+import { SheetSaveAction } from "@/shared/components/sheet-save-action";
+import { SheetScrollView } from "@/shared/components/sheet-scroll-view";
+import { haptics } from "@/shared/lib/haptics";
+import { useText } from "@/shared/lib/text";
+import { useDiscardGuard } from "@/shared/lib/use-discard-guard";
+
+const AVATAR_SIZE = 26;
+
+export function NewTaskScreen() {
+  const { t, errorMessage } = useText();
+  const { serverId, agentId: initialAgentId } = useLocalSearchParams<{ serverId: string; agentId?: string }>();
+  const queryScope = useQueryScope();
+  const queryClient = useQueryClient();
+  const accent = String(useCSSVariable("--openbot-accent"));
+  const { startAgentTask } = useMobileWorkspace();
+  const { agents, online, supported } = useServerTasks(serverId, { enabled: false });
+  const [draft, setDraft] = useState("");
+  const [chosenId, setChosenId] = useState(initialAgentId ?? "");
+  const [saving, setSaving] = useState(false);
+  const [finished, setFinished] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const pending = useRef(false);
+  const chosen = agents.find((agent) => agent.id === chosenId);
+  const title = plainTaskTitle(draft);
+  const dirty = title !== "";
+  const canSave = online && supported && Boolean(chosen) && dirty && !finished;
+
+  useDiscardGuard(!finished && (dirty || saving), { busy: () => pending.current });
+  useEffect(() => {
+    if (finished) router.back();
+  }, [finished]);
+
+  async function start() {
+    if (!canSave || !chosen || pending.current) return;
+    pending.current = true;
+    setSaving(true);
+    setError(null);
+    const attempt = taskStartId(serverId, chosen.id, draft);
+    try {
+      const task = await startAgentTask({ agentId: chosen.id, text: draft, clientMessageId: attempt.id }, serverId);
+      addStartedTask(queryClient, queryScope, serverId, task);
+      void haptics.notification("success");
+      setFinished(true);
+    } catch (cause) {
+      attempt.failed();
+      void haptics.notification("error");
+      setError(errorMessage(cause, t("mobile.server.threads.error.start")));
+      pending.current = false;
+      setSaving(false);
+    }
+  }
+
+  const close = () => {
+    void haptics.impact("soft");
+    router.back();
+  };
+
+  return (
+    <SheetScrollView
+      className="bg-sheet"
+      contentContainerClassName="gap-5 px-5 pb-safe-offset-5 pt-5"
+      keyboardDismissMode="interactive"
+      keyboardShouldPersistTaps="handled"
+    >
+      <Stack.Screen options={{ title: t("mobile.server.threads.new") }} />
+      <SheetCloseAction disabled={saving} onPress={close} />
+      <SheetSaveAction
+        dirty={dirty}
+        canSave={canSave}
+        pending={saving}
+        label={t("mobile.server.threads.start")}
+        onSave={() => void start()}
+      />
+      <SheetFormField
+        label={t("mobile.server.threads.ask")}
+        hideLabel
+        appearance="soft"
+        multiline
+        editable={!saving}
+        maxLength={INPUT_LIMITS.messageText}
+        placeholder={t("mobile.server.threads.ask")}
+        value={draft}
+        onChangeText={(value) => {
+          setDraft(value);
+          if (error) setError(null);
+        }}
+      />
+      {agents.length > 0 ? (
+        <SettingsSection title={t("mobile.server.threads.chooseAgent")}>
+          {agents.map((agent) => (
+            <SettingsRow
+              key={agent.id}
+              accessibilityLabel={t("mobile.server.threads.agentLabel", { name: agent.name })}
+              checked={agent.id === chosenId}
+              disclosure={false}
+              leading={<TaskAgentAvatar agent={agent} />}
+              supportingText={agent.title.trim() || undefined}
+              trailing={agent.id === chosenId ? <Check size={18} color={accent} strokeWidth={2} /> : null}
+              onPress={() => {
+                void haptics.selection();
+                setChosenId(agent.id);
+              }}
+            >
+              <Typography.Paragraph numberOfLines={1}>{agent.name}</Typography.Paragraph>
+            </SettingsRow>
+          ))}
+        </SettingsSection>
+      ) : (
+        <Typography.Paragraph className="px-4 text-muted">{t("mobile.server.threads.noAgents")}</Typography.Paragraph>
+      )}
+      {!online || !supported ? (
+        <Typography.Paragraph className="text-muted">
+          {t(online ? "mobile.server.threads.unsupported" : "mobile.server.threads.offline")}
+        </Typography.Paragraph>
+      ) : null}
+      <SaveError error={error} />
+    </SheetScrollView>
+  );
+}
+
+function TaskAgentAvatar({ agent }: { agent: MobileAgent }) {
+  return (
+    <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+      <BloubAvatar
+        agentId={agent.id}
+        serverId={agent.serverId}
+        hue={agent.avatarHue}
+        color={agent.avatarColor}
+        seed={agent.avatarSeed}
+        size={AVATAR_SIZE}
+        animateIdle={false}
+      />
+    </View>
+  );
+}

@@ -1,0 +1,205 @@
+import { useCallback, useMemo, useRef, useState } from "react";
+import {
+  GestureStateManager,
+  type PanGesture,
+  type PanGestureConfig,
+  usePanGesture,
+  useSimultaneousGestures,
+} from "react-native-gesture-handler";
+import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
+import { useSharedValue } from "react-native-reanimated";
+import { scheduleOnRN } from "react-native-worklets";
+import { haptics } from "@/shared/lib/haptics";
+import { isAndroid } from "@/shared/lib/platform";
+import { END_X } from "@/shared/lib/text-direction";
+
+export const PIN_REVEAL_DISTANCE = 88;
+export const PIN_COMMIT_DISTANCE = 144;
+const PIN_DISARM_DISTANCE = 128;
+
+function thresholdFeedback() {
+  void haptics.impact("light");
+}
+
+export function useAgentPinSwipe(
+  openingGesture: PanGesture,
+  onPin: (withHaptic: boolean) => void,
+  pinBlocked: boolean,
+  dragGesture?: PanGesture,
+) {
+  const swipeable = useRef<SwipeableMethods>(null);
+  const restOffset = useSharedValue(0);
+  const pendingPin = useRef<boolean | null>(null);
+  const origin = useSharedValue({ x: 0, y: 0 });
+  const start = useSharedValue(0);
+  const active = useSharedValue(false);
+  const armed = useSharedValue(false);
+  const feedbackPlayed = useSharedValue(false);
+  const committing = useSharedValue(false);
+  const [revealed, setRevealed] = useState(false);
+  const [pinPending, setPinPending] = useState(false);
+
+  const close = useCallback(() => swipeable.current?.close(), []);
+  const restore = useCallback(() => {
+    if (restOffset.get() >= 0) swipeable.current?.close();
+    else if (END_X === 1) swipeable.current?.openRight();
+    else swipeable.current?.openLeft();
+  }, [restOffset]);
+
+  const pin = useCallback(
+    (withHaptic = true) => {
+      if (committing.get()) return;
+      committing.set(true);
+      setPinPending(true);
+      if (pinBlocked) {
+        void haptics.notification("warning");
+        swipeable.current?.close();
+        return;
+      }
+      pendingPin.current = withHaptic;
+      swipeable.current?.close();
+    },
+    [committing, pinBlocked],
+  );
+
+  const onWillOpen = () => {
+    restOffset.set(-PIN_REVEAL_DISTANCE);
+    setRevealed(true);
+  };
+  const onWillClose = () => {
+    restOffset.set(0);
+    setRevealed(false);
+  };
+  const onClose = () => {
+    const withHaptic = pendingPin.current;
+    pendingPin.current = null;
+    committing.set(false);
+    setPinPending(false);
+    if (withHaptic !== null) {
+      if (pinBlocked) void haptics.notification("warning");
+      else onPin(withHaptic);
+    }
+  };
+
+  const config = useMemo<PanGestureConfig>(
+    () => ({
+      manualActivation: true,
+      enableTrackpadTwoFingerGesture: true,
+      block: openingGesture,
+      requireToFail: dragGesture,
+      onTouchesDown: (event) => {
+        "worklet";
+        if (active.get()) return;
+        const touch = event.allTouches[0];
+        if (!touch || event.numberOfTouches > 2 || committing.get()) {
+          GestureStateManager.fail(event.handlerTag);
+          return;
+        }
+        origin.set({ x: touch.absoluteX, y: touch.absoluteY });
+      },
+      onTouchesMove: (event) => {
+        "worklet";
+        if (active.get()) return;
+        const touch = event.allTouches[0];
+        if (!touch || event.numberOfTouches > 2) {
+          GestureStateManager.fail(event.handlerTag);
+          return;
+        }
+        const dx = (touch.absoluteX - origin.get().x) * END_X;
+        const dy = touch.absoluteY - origin.get().y;
+        if (Math.abs(dy) > 10) GestureStateManager.fail(event.handlerTag);
+        else if (dx < -10 || (restOffset.get() < 0 && dx > 10)) GestureStateManager.activate(event.handlerTag);
+        else if (dx > 10) GestureStateManager.fail(event.handlerTag);
+      },
+      onActivate: () => {
+        "worklet";
+        active.set(true);
+        start.set(restOffset.get());
+        armed.set(false);
+        feedbackPlayed.set(false);
+      },
+      onUpdate: (event) => {
+        "worklet";
+        const distance = Math.max(0, -(start.get() + event.translationX * END_X));
+        if (distance >= PIN_COMMIT_DISTANCE && !armed.get()) {
+          armed.set(true);
+          if (!pinBlocked && !feedbackPlayed.get()) {
+            feedbackPlayed.set(true);
+            scheduleOnRN(thresholdFeedback);
+          }
+        } else if (distance < PIN_DISARM_DISTANCE) armed.set(false);
+      },
+      onDeactivate: (event) => {
+        "worklet";
+        if (!event.canceled && armed.get()) scheduleOnRN(pin, false);
+      },
+      onFinalize: (event) => {
+        "worklet";
+        if (!active.get()) return;
+        active.set(false);
+        armed.set(false);
+        if (event.canceled && !committing.get()) scheduleOnRN(restore);
+      },
+    }),
+    [
+      active,
+      armed,
+      committing,
+      dragGesture,
+      feedbackPlayed,
+      openingGesture,
+      origin,
+      pin,
+      pinBlocked,
+      restOffset,
+      restore,
+      start,
+    ],
+  );
+  const gesture = usePanGesture(config);
+
+  const guardOrigin = useSharedValue({ x: 0, y: 0 });
+  const guardVertical = useSharedValue(false);
+  const guardConfig = useMemo<PanGestureConfig>(
+    () => ({
+      manualActivation: true,
+      onTouchesDown: (event) => {
+        "worklet";
+        const touch = event.allTouches[0];
+        if (!touch || event.numberOfTouches > 1) return;
+        guardOrigin.set({ x: touch.absoluteX, y: touch.absoluteY });
+        guardVertical.set(false);
+      },
+      onTouchesMove: (event) => {
+        "worklet";
+        const touch = event.allTouches[0];
+        if (!touch || guardVertical.get()) return;
+        const dx = Math.abs(touch.absoluteX - guardOrigin.get().x);
+        const dy = Math.abs(touch.absoluteY - guardOrigin.get().y);
+        if (dx > 10 && dx > dy) GestureStateManager.fail(event.handlerTag);
+        else if (dy > 10) guardVertical.set(true);
+      },
+    }),
+    [guardOrigin, guardVertical],
+  );
+  const scrollGuard = usePanGesture(guardConfig);
+  const guardedGesture = useSimultaneousGestures(gesture, scrollGuard);
+  const swipeRequires = useMemo(
+    () => [openingGesture, ...(isAndroid ? [scrollGuard] : []), ...(dragGesture ? [dragGesture] : [])],
+    [openingGesture, scrollGuard, dragGesture],
+  );
+
+  return {
+    close,
+    gesture,
+    detectorGesture: isAndroid ? guardedGesture : gesture,
+    swipeRequires,
+    onClose,
+    onWillClose,
+    onWillOpen,
+    pin,
+    pinPending,
+    revealed,
+    swipeable,
+  };
+}

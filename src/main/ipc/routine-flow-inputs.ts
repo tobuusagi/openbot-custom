@@ -1,0 +1,49 @@
+import {
+  type ConnectRoutineFlowInput,
+  type DisconnectRoutineFlowInput,
+  isConnectRoutineFlowInput,
+  isDisconnectRoutineFlowInput,
+  isRemoveRoutineFlowPositionInput,
+  isSaveRoutineFlowPositionInput,
+  isStopRoutineFlowRunInput,
+  isUpdateRoutineFlowLinkInput,
+  type RemoveRoutineFlowPositionInput,
+  type SaveRoutineFlowPositionInput,
+  type StopRoutineFlowRunInput,
+  type UpdateRoutineFlowLinkInput,
+} from "@openbot/contracts/ipc";
+
+export function parseSaveRoutineFlowPosition(value: unknown): SaveRoutineFlowPositionInput {
+  if (!isSaveRoutineFlowPositionInput(value)) throw new Error("Invalid routine flow position.");
+  return { agentId: value.agentId, nodeKey: value.nodeKey, x: value.x, y: value.y };
+}
+
+export function parseRemoveRoutineFlowPosition(value: unknown): RemoveRoutineFlowPositionInput {
+  if (!isRemoveRoutineFlowPositionInput(value)) throw new Error("Invalid routine flow position.");
+  return { agentId: value.agentId, nodeKey: value.nodeKey };
+}
+
+export function parseConnectRoutineFlow(value: unknown): ConnectRoutineFlowInput {
+  if (!isConnectRoutineFlowInput(value)) throw new Error("Invalid routine flow link.");
+  return {
+    routineId: value.routineId,
+    fromAgentId: value.fromAgentId,
+    toAgentId: value.toAgentId,
+    ...(value.instruction === undefined ? {} : { instruction: value.instruction }),
+  };
+}
+
+export function parseDisconnectRoutineFlow(value: unknown): DisconnectRoutineFlowInput {
+  if (!isDisconnectRoutineFlowInput(value)) throw new Error("Invalid routine flow link.");
+  return { linkId: value.linkId };
+}
+
+export function parseUpdateRoutineFlowLink(value: unknown): UpdateRoutineFlowLinkInput {
+  if (!isUpdateRoutineFlowLinkInput(value)) throw new Error("Invalid routine flow link.");
+  return { linkId: value.linkId, instruction: value.instruction };
+}
+
+export function parseStopRoutineFlowRun(value: unknown): StopRoutineFlowRunInput {
+  if (!isStopRoutineFlowRunInput(value)) throw new Error("Invalid routine run.");
+  return { routineId: value.routineId, runId: value.runId };
+}

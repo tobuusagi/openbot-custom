@@ -1,0 +1,237 @@
+import {
+  AGENT_ACCESS_LEVELS,
+  AGENT_ACCESS_ROLE_NAME_LIMIT,
+  type AgentAccessLevel,
+  agentAccessRank,
+} from "@openbot/contracts/ipc";
+import { router, useLocalSearchParams } from "expo-router";
+import { Typography } from "heroui-native";
+import { useRef, useState } from "react";
+import { Alert } from "react-native";
+import { useUniwind } from "uniwind";
+import { BloubAvatar } from "@/features/agents/components/bloub-avatar";
+import { AccessLevelMenu } from "@/features/servers/components/access-level-menu";
+import { AGENT_ACCESS_LEVEL_KEYS } from "@/features/servers/model/server-role";
+import { everyoneLevel, roleLevel, useServerRoles } from "@/features/servers/model/use-server-roles";
+import {
+  SettingsContent,
+  SettingsNote,
+  SettingsRow,
+  SettingsSection,
+} from "@/features/settings/components/settings-content";
+import { SheetFormField } from "@/shared/components/sheet-form-field";
+import { SheetSaveAction } from "@/shared/components/sheet-save-action";
+import { useText } from "@/shared/lib/text";
+import { useDiscardGuard } from "@/shared/lib/use-discard-guard";
+
+function memberLevel(role: AgentAccessLevel, everyone: AgentAccessLevel): AgentAccessLevel {
+  return agentAccessRank(everyone) >= agentAccessRank(role) ? everyone : role;
+}
+
+export function ServerRoleScreen() {
+  const { t, errorMessage } = useText();
+  const { theme } = useUniwind();
+  const {
+    serverId,
+    roleId,
+    everyone: everyonePage,
+  } = useLocalSearchParams<{
+    serverId: string;
+    roleId?: string;
+    everyone?: string;
+  }>();
+  const { available, roles, action, everyone, list, agents, save } = useServerRoles(serverId);
+  const role = roleId ? list?.find((candidate) => candidate.id === roleId) : undefined;
+  const [draftName, setDraftName] = useState<string | undefined>();
+  const name = draftName ?? role?.name ?? "";
+  const trimmed = name.trim();
+  const dirty = Boolean(role) && draftName !== undefined && trimmed !== role?.name;
+  const leaving = useRef(false);
+
+  useDiscardGuard(dirty, { leaving: () => leaving.current, warn: true });
+
+  if (!available || !everyone || !list || !(role || everyonePage))
+    return (
+      <SettingsContent>
+        <SettingsNote>
+          {!available
+            ? t("mobile.server.roles.unavailable")
+            : roles.isError
+              ? errorMessage(roles.error, t("mobile.server.roles.loadFailed"))
+              : !everyone || !list
+                ? t("mobile.server.roles.loading")
+                : t("mobile.server.roles.gone")}
+        </SettingsNote>
+      </SettingsContent>
+    );
+
+  const title = role ? role.name : t("mobile.server.roles.everyone");
+  const everyoneName = t("mobile.server.roles.everyone");
+  const level = (agentId: string) => (role ? roleLevel(role, agentId) : everyoneLevel(everyone, agentId));
+  const floor = (agentId: string) => (role ? everyoneLevel(everyone, agentId) : undefined);
+  const shown = (agentId: string) => {
+    const base = floor(agentId);
+    return base === undefined ? level(agentId) : memberLevel(level(agentId), base);
+  };
+  const give = (agentIds: readonly string[], next: AgentAccessLevel) => {
+    const levels = new Map<string, AgentAccessLevel>();
+    for (const agentId of agentIds) {
+      const base = floor(agentId);
+      const kept = base !== undefined && agentAccessRank(next) <= agentAccessRank(base) ? "none" : next;
+      if (kept !== level(agentId)) levels.set(agentId, kept);
+    }
+    if (levels.size === 0) return;
+    void save((change) => {
+      if (!role) {
+        for (const [agentId, value] of levels) change.everyone[agentId] = value;
+        return;
+      }
+      const target = change.roles.find((candidate) => candidate.id === role.id);
+      if (target) for (const [agentId, value] of levels) target.agents[agentId] = value;
+    });
+  };
+  const shownLevels = agents.map((agent) => shown(agent.id));
+  const [firstLevel] = shownLevels;
+  const commonLevel =
+    firstLevel !== undefined && shownLevels.every((value) => value === firstLevel) ? firstLevel : undefined;
+  const openEveryone = () => router.push({ pathname: "/server-settings/role", params: { serverId, everyone: "1" } });
+
+  return (
+    <SettingsContent>
+      {role ? (
+        <>
+          <SheetFormField
+            label={t("mobile.server.roles.name")}
+            autoCapitalize="words"
+            maxLength={AGENT_ACCESS_ROLE_NAME_LIMIT}
+            value={name}
+            editable={!action.isPending}
+            onChangeText={setDraftName}
+          />
+          <SheetSaveAction
+            dirty={dirty}
+            canSave={trimmed.length > 0}
+            pending={action.isPending}
+            onSave={() =>
+              void save((change) => {
+                const target = change.roles.find((candidate) => candidate.id === role.id);
+                if (target) target.name = trimmed;
+              }).then((saved) => {
+                if (saved) setDraftName(undefined);
+              })
+            }
+          />
+        </>
+      ) : null}
+      <SettingsSection
+        title={t("mobile.server.roles.agents")}
+        footer={
+          action.error
+            ? errorMessage(action.error, t("mobile.server.roles.saveFailed"))
+            : t(role ? "mobile.server.roles.roleHint" : "mobile.server.roles.everyoneHint")
+        }
+      >
+        {agents.length === 0 ? (
+          <SettingsRow disclosure={false}>
+            <Typography.Paragraph className="text-grouped-secondary">
+              {t("mobile.server.roles.noAgents")}
+            </Typography.Paragraph>
+          </SettingsRow>
+        ) : null}
+        {agents.length > 1 ? (
+          <SettingsRow
+            disclosure={false}
+            trailing={
+              <AccessLevelMenu
+                value={commonLevel}
+                options={AGENT_ACCESS_LEVELS.map((value) => ({ value, label: t(AGENT_ACCESS_LEVEL_KEYS[value]) }))}
+                placeholder={t("mobile.server.roles.mixed")}
+                enabled={!action.isPending}
+                dark={theme === "dark"}
+                label={t("mobile.server.roles.setAllLabel", { role: title })}
+                onChange={(next) =>
+                  give(
+                    agents.map((agent) => agent.id),
+                    next,
+                  )
+                }
+              />
+            }
+          >
+            <Typography.Paragraph>{t("mobile.server.roles.setAll")}</Typography.Paragraph>
+          </SettingsRow>
+        ) : null}
+        {agents.map((agent) => {
+          const base = floor(agent.id);
+          const value = shown(agent.id);
+          return (
+            <SettingsRow
+              key={agent.id}
+              disclosure={false}
+              leading={
+                <BloubAvatar
+                  agentId={agent.id}
+                  serverId={agent.serverId}
+                  hue={agent.avatarHue}
+                  color={agent.avatarColor}
+                  seed={agent.avatarSeed}
+                  size={36}
+                  animateIdle={false}
+                />
+              }
+              trailing={
+                <AccessLevelMenu
+                  value={value}
+                  options={AGENT_ACCESS_LEVELS.map((option) => ({
+                    value: option,
+                    label: t(AGENT_ACCESS_LEVEL_KEYS[option]),
+                    disabled: base !== undefined && agentAccessRank(option) < agentAccessRank(base),
+                  }))}
+                  source={base !== undefined && base !== "none" && value === base ? everyoneName : undefined}
+                  enabled={!action.isPending}
+                  dark={theme === "dark"}
+                  label={t("mobile.server.roles.agentLevel", { role: title, agent: agent.name })}
+                  extra={role ? { label: t("mobile.server.roles.changeInEveryone"), onPress: openEveryone } : undefined}
+                  onChange={(next) => give([agent.id], next)}
+                />
+              }
+            >
+              <Typography.Paragraph numberOfLines={1}>{agent.name}</Typography.Paragraph>
+            </SettingsRow>
+          );
+        })}
+      </SettingsSection>
+      {role ? (
+        <SettingsSection>
+          <SettingsRow
+            disclosure={false}
+            disabled={action.isPending}
+            onPress={() =>
+              Alert.alert(
+                t("mobile.server.roles.deleteTitle", { name: role.name }),
+                t("mobile.server.roles.deleteBody"),
+                [
+                  { text: t("common.cancel"), style: "cancel" },
+                  {
+                    text: t("mobile.server.roles.delete"),
+                    style: "destructive",
+                    onPress: () =>
+                      void save((change) => {
+                        change.roles = change.roles.filter((candidate) => candidate.id !== role.id);
+                      }).then((deleted) => {
+                        if (!deleted) return;
+                        leaving.current = true;
+                        router.back();
+                      }),
+                  },
+                ],
+              )
+            }
+          >
+            <Typography.Paragraph className="text-danger-text">{t("mobile.server.roles.delete")}</Typography.Paragraph>
+          </SettingsRow>
+        </SettingsSection>
+      ) : null}
+    </SettingsContent>
+  );
+}

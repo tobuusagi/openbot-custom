@@ -1,0 +1,212 @@
+import type { InstalledSkill } from "@openbot/contracts/ipc";
+import { ArrowUp, Button, MessageCircleQuestionMark, X } from "@openbot/ui";
+import type { AgentMessage, AgentProfile, ComposerMcpServer } from "@openbot/ui/data";
+import { AgentActivityIndicator, nextAgentActivityLabel } from "@openbot/ui/features/conversation/AgentActivity";
+import { ChatMessageRow } from "@openbot/ui/features/conversation/ChatMessageRow";
+import { ComposerEditor } from "@openbot/ui/features/conversation/ComposerEditor";
+import { ComposerNotice } from "@openbot/ui/features/conversation/ComposerNotice";
+import { ComposerStackCard } from "@openbot/ui/features/conversation/ComposerStackCard";
+import { formatChatTimestamp } from "@openbot/ui/features/conversation/chat-timestamp";
+import { type ChatBubbleStyle, ownMessageAuthor } from "@openbot/ui/features/conversation/own-bubble";
+import { useText } from "@openbot/ui/text";
+import type { JSX } from "@solidjs/web";
+import { For, onSettled, Show } from "solid-js";
+import { createScrollFades } from "../../components/createScrollFades";
+import { createComposerRowsResize } from "./createComposerRowsResize";
+
+export interface SideQuestionExchange {
+  id: string;
+  question: string;
+  askedAt: string;
+  answer: string | null;
+  answeredAt: string | null;
+}
+
+export interface SideQuestionPanelProps {
+  agent: AgentProfile;
+  bubbleStyle?: ChatBubbleStyle | undefined;
+  agents: AgentProfile[];
+  exchanges: readonly SideQuestionExchange[];
+  skills?: InstalledSkill[] | undefined;
+  skillsLoadFailed?: boolean | undefined;
+  mcpServers?: ComposerMcpServer[] | undefined;
+  error: string | null;
+  draft: string;
+  focusRequest: number;
+  onDraftChange: (value: string) => void;
+  onAsk: (question: string) => void;
+  onClosePanel: () => void;
+  onOpenLink: (url: string) => void;
+  resizer?: JSX.Element;
+  macWindowControls?: boolean | undefined;
+}
+
+function exchangeMessages(exchange: SideQuestionExchange): AgentMessage[] {
+  const question: AgentMessage = {
+    id: `${exchange.id}:question`,
+    author: "you",
+    body: exchange.question,
+    time: formatChatTimestamp(new Date(exchange.askedAt)),
+    createdAt: exchange.askedAt,
+    kind: "text",
+  };
+  if (exchange.answer === null || exchange.answeredAt === null) return [question];
+  return [
+    question,
+    {
+      id: `${exchange.id}:answer`,
+      author: "agent",
+      body: exchange.answer,
+      time: formatChatTimestamp(new Date(exchange.answeredAt)),
+      createdAt: exchange.answeredAt,
+      kind: "text",
+    },
+  ];
+}
+
+export function SideQuestionPanel(props: SideQuestionPanelProps) {
+  const { t } = useText();
+  const activityLabel = nextAgentActivityLabel();
+  const fades = createScrollFades();
+  onSettled(() => fades.stop);
+  const draftRows = createComposerRowsResize(() => props.agent.id);
+  const asking = () => props.exchanges.at(-1)?.answer === null;
+  const messages = () => props.exchanges.flatMap(exchangeMessages);
+  const ask = () => {
+    const question = props.draft.trim();
+    if (!question || asking()) return;
+    props.onAsk(question);
+  };
+  const author = (message: AgentMessage) =>
+    message.author === "you"
+      ? ownMessageAuthor({
+          name: t("chat.message.you"),
+          style: props.bubbleStyle ?? "classic",
+          agent: props.agent,
+          chatColor: undefined,
+        })
+      : { kind: "agent" as const, name: props.agent.name, agent: props.agent };
+  return (
+    <aside
+      id="side-question-panel"
+      class="browser-panel side-question-panel"
+      aria-label={t("conversation.sidePanel.pane.question")}
+    >
+      {props.resizer}
+      <header class="file-preview-header side-panel-pane-header">
+        <h2 class="side-panel-pane-title">{t("conversation.sidePanel.pane.question")}</h2>
+        <Button
+          type="button"
+          variant="ghost"
+          class="browser-toolbar-button side-panel-pane-close"
+          aria-label={t("conversation.sidePanel.closePanel")}
+          onClick={() => props.onClosePanel()}
+        >
+          <X class="browser-toolbar-icon" />
+        </Button>
+      </header>
+      <Show
+        when={props.exchanges.length > 0}
+        fallback={
+          <div class="side-question-empty">
+            <MessageCircleQuestionMark aria-hidden="true" />
+            <strong>{t("conversation.sideQuestion.emptyTitle")}</strong>
+            <p>{t("conversation.sideQuestion.emptyBody", { name: props.agent.name })}</p>
+          </div>
+        }
+      >
+        <section
+          class={["conversation-scroll side-question-scroll", fades.classes()]}
+          aria-label={t("conversation.sideQuestion.messages")}
+          ref={fades.bind}
+          onScroll={fades.measure}
+        >
+          <div class="virtual-chat-list virtual-chat-list-static" ref={fades.watch}>
+            <For each={messages()} keyed={(message) => message.id}>
+              {(message) => (
+                <div class="virtual-chat-row">
+                  <ChatMessageRow
+                    message={message()}
+                    author={author(message())}
+                    agents={props.agents}
+                    skills={props.skills}
+                    onSelectAgent={() => undefined}
+                    onOpenLink={props.onOpenLink}
+                    onPreview={() => undefined}
+                    onAttachmentAction={() => undefined}
+                    macWindowControls={props.macWindowControls}
+                  />
+                </div>
+              )}
+            </For>
+            <Show when={asking()}>
+              <div class="virtual-chat-row">
+                <AgentActivityIndicator agent={props.agent} label={activityLabel} />
+              </div>
+            </Show>
+          </div>
+        </section>
+      </Show>
+      <div class="composer-wrap">
+        <div class="composer-stack">
+          <ComposerStackCard when={props.error}>
+            {(error) => (
+              <ComposerNotice
+                tone="danger"
+                title={t("conversation.sideQuestion.failed")}
+                body={error()}
+                action={
+                  <Show when={props.draft.trim()}>
+                    <Button variant="outline" size="sm" type="button" disabled={asking()} onClick={ask}>
+                      {t("common.retry")}
+                    </Button>
+                  </Show>
+                }
+              />
+            )}
+          </ComposerStackCard>
+        </div>
+        <form
+          ref={draftRows.form}
+          class="composer side-question-composer"
+          data-compact="true"
+          data-small=""
+          onSubmit={(event) => {
+            event.preventDefault();
+            ask();
+          }}
+        >
+          <div class="composer-input-label" ref={draftRows.label}>
+            <ComposerEditor
+              agentId={props.agent.id}
+              agents={props.agents}
+              skills={props.skills}
+              skillsLoadFailed={props.skillsLoadFailed}
+              mcpServers={props.mcpServers}
+              value={props.draft}
+              placeholder={t("conversation.sideQuestion.placeholder")}
+              ariaLabel={t("conversation.sideQuestion.placeholder")}
+              disabled={false}
+              focusRequest={props.focusRequest}
+              onSubmit={ask}
+              onValueChange={props.onDraftChange}
+            />
+          </div>
+          <div class="composer-toolbar">
+            <div class="composer-primary-actions">
+              <Button
+                type="submit"
+                variant="ghost"
+                class="voice-button"
+                aria-label={t("conversation.sideQuestion.send")}
+                disabled={asking() || props.draft.trim().length === 0}
+              >
+                <ArrowUp aria-hidden="true" />
+              </Button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </aside>
+  );
+}
