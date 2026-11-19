@@ -66,7 +66,8 @@
     {
       "binding": "DB",
       "database_name": "openbot-auth",
-      "migrations_dir": "migrations"
+      "migrations_dir": "migrations",
+      "database_id": "95cbf61d-d3d7-48b4-90e6-791717802b47"
     }
   ],
   "r2_buckets": [
